@@ -1,0 +1,4 @@
+# Backtest-only dependencies (cross-platform, no MetaTrader5 required)
+pandas>=2.0.0
+python-dotenv>=1.0.0
+matplotlib>=1.0.0

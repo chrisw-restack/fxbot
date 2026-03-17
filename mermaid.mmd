@@ -1,0 +1,111 @@
+%% drawio > arrange > insert > mermaid
+flowchart TB
+    subgraph Entry["Entry Points"]
+        Live["main_live.py\n(Windows + MT5)"]
+        BT["run_backtest.py\n(CLI)"]
+    end
+
+    subgraph Data["Data Layer"]
+        MT5Data["MT5 Data Poller\ndata/mt5_data.py"]
+        CSV["Historical Loader\ndata/historical_loader.py"]
+        CSVFiles[("CSV Files\ndata/historical/*.csv")]
+    end
+
+    subgraph Core["Core Engine"]
+        Engine["EventEngine\nengine.py"]
+    end
+
+    subgraph Strategies["Strategies"]
+        Breakout["BreakoutStrategy\nstrategies/breakout.py"]
+        MeanRev["MeanReversionStrategy\nstrategies/mean_reversion.py"]
+        EmaFib["EmaFibRetracementStrategy\nstrategies/ema_fib_retracement.py"]
+    end
+
+    subgraph Pipeline["Signal Pipeline"]
+        Risk["RiskManager\nrisk/risk_manager.py"]
+        Portfolio["PortfolioManager\nportfolio/portfolio_manager.py"]
+    end
+
+    subgraph Execution["Execution Layer"]
+        Base["BaseExecution (ABC)\nexecution/base_execution.py"]
+        MT5Exec["MT5Execution\nexecution/mt5_execution.py"]
+        SimExec["SimulatedExecution\nexecution/simulated_execution.py"]
+    end
+
+    subgraph Output["Output"]
+        Logger["TradeLogger\nutils/trade_logger.py"]
+        Equity["Equity Curve PNG\noutput/"]
+        TradeLog["Trade Log + Summary"]
+    end
+
+    subgraph Models["Data Structures (models.py)"]
+        BarEvent["BarEvent\nsymbol, timeframe, OHLCV"]
+        Signal["Signal\ndirection, entry, stop_loss"]
+        Enriched["EnrichedSignal\n+ lot_size, take_profit"]
+    end
+
+    Config["config.py\nSymbols, Risk %, Pip Sizes,\nMax Trades, Daily Loss Limit"]
+
+    %% Live path
+    Live -->|poll loop| MT5Data
+    MT5Data -->|BarEvent| Engine
+
+    %% Backtest path
+    BT -->|create| BTEngine["BacktestEngine\nbacktest_engine.py"]
+    BTEngine -->|load| CSV
+    CSV -->|read| CSVFiles
+    CSV -->|"BarEvent[]"| BTEngine
+    BTEngine -->|"1. check_fills(bar)"| SimExec
+    BTEngine -->|"2. process_bar(bar)"| Engine
+
+    %% Engine internals
+    Engine -->|"generate_signal(bar)"| Strategies
+    Strategies -.->|"Signal or None"| Engine
+    Engine -->|"process(signal)"| Risk
+    Risk -.->|"EnrichedSignal"| Engine
+    Engine -->|"approve(enriched)"| Portfolio
+    Engine -->|"place_order(...)"| Base
+    Engine -->|"log_open()"| Logger
+
+    %% Execution implementations
+    Base --- MT5Exec
+    Base --- SimExec
+    Live -.->|uses| MT5Exec
+    BTEngine -.->|uses| SimExec
+
+    %% Trade close flow
+    SimExec -->|"closed trades\n(SL/TP hit)"| BTEngine
+    BTEngine -->|"record_close()"| Portfolio
+    BTEngine -->|"log_close()"| Logger
+    BTEngine -->|"notify_trade_closed()"| Engine
+    Engine -->|"notify_loss()"| Strategies
+
+    %% Output
+    Logger --> Equity
+    Logger --> TradeLog
+
+    %% Config
+    Config -.->|params| Risk
+    Config -.->|limits| Portfolio
+    Config -.->|pip sizes| SimExec
+
+    %% Styling
+    classDef entry fill:#4f46e5,stroke:#3730a3,color:#fff
+    classDef data fill:#0891b2,stroke:#0e7490,color:#fff
+    classDef core fill:#dc2626,stroke:#b91c1c,color:#fff
+    classDef strat fill:#16a34a,stroke:#15803d,color:#fff
+    classDef pipe fill:#ea580c,stroke:#c2410c,color:#fff
+    classDef exec fill:#7c3aed,stroke:#6d28d9,color:#fff
+    classDef output fill:#64748b,stroke:#475569,color:#fff
+    classDef model fill:#d97706,stroke:#b45309,color:#fff
+    classDef config fill:#6b7280,stroke:#4b5563,color:#fff
+
+    class Live,BT entry
+    class MT5Data,CSV,CSVFiles data
+    class Engine,BTEngine core
+    class Breakout,MeanRev,EmaFib strat
+    class Risk,Portfolio pipe
+    class Base,MT5Exec,SimExec exec
+    class Logger,Equity,TradeLog output
+    class BarEvent,Signal,Enriched model
+    class Config config

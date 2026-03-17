@@ -1,0 +1,121 @@
+import logging
+
+import MetaTrader5 as mt5
+
+from execution.base_execution import BaseExecution
+
+logger = logging.getLogger(__name__)
+
+MT5_TIMEFRAME_MAP = {
+    'M5':  mt5.TIMEFRAME_M5,
+    'M15': mt5.TIMEFRAME_M15,
+    'H1':  mt5.TIMEFRAME_H1,
+    'H4':  mt5.TIMEFRAME_H4,
+    'D1':  mt5.TIMEFRAME_D1,
+}
+
+
+class MT5Execution(BaseExecution):
+
+    def place_order(
+        self,
+        symbol: str,
+        direction: str,
+        order_type: str,
+        entry_price: float,
+        lot_size: float,
+        sl: float,
+        tp: float,
+        strategy_name: str,
+    ) -> int:
+        tick = mt5.symbol_info_tick(symbol)
+        if tick is None:
+            logger.error(f"Could not get tick for {symbol}")
+            return 0
+
+        if order_type == 'MARKET':
+            action = mt5.TRADE_ACTION_DEAL
+            price = tick.ask if direction == 'BUY' else tick.bid
+            mt5_type = mt5.ORDER_TYPE_BUY if direction == 'BUY' else mt5.ORDER_TYPE_SELL
+        else:
+            # PENDING — infer subtype from direction vs. current price
+            action = mt5.TRADE_ACTION_PENDING
+            price = entry_price
+            current = tick.ask if direction == 'BUY' else tick.bid
+            if direction == 'BUY':
+                mt5_type = mt5.ORDER_TYPE_BUY_STOP if entry_price > current else mt5.ORDER_TYPE_BUY_LIMIT
+            else:
+                mt5_type = mt5.ORDER_TYPE_SELL_STOP if entry_price < current else mt5.ORDER_TYPE_SELL_LIMIT
+
+        request = {
+            'action':       action,
+            'symbol':       symbol,
+            'volume':       lot_size,
+            'type':         mt5_type,
+            'price':        price,
+            'sl':           sl,
+            'tp':           tp,
+            'comment':      strategy_name,
+            'type_time':    mt5.ORDER_TIME_GTC,
+            'type_filling': mt5.ORDER_FILLING_IOC,
+        }
+
+        result = mt5.order_send(request)
+        if result is None or result.retcode != mt5.TRADE_RETCODE_DONE:
+            code = result.retcode if result else 'None'
+            comment = result.comment if result else ''
+            logger.error(f"Order failed for {symbol}: retcode={code} {comment}")
+            return 0
+
+        logger.info(f"Order placed: {symbol} {direction} {order_type} ticket={result.order}")
+        return result.order
+
+    def close_order(self, ticket_id: int) -> bool:
+        positions = mt5.positions_get(ticket=ticket_id)
+        if not positions:
+            logger.warning(f"No open position found for ticket {ticket_id}")
+            return False
+
+        pos = positions[0]
+        close_type = mt5.ORDER_TYPE_SELL if pos.type == mt5.ORDER_TYPE_BUY else mt5.ORDER_TYPE_BUY
+        tick = mt5.symbol_info_tick(pos.symbol)
+        price = tick.bid if pos.type == mt5.ORDER_TYPE_BUY else tick.ask
+
+        request = {
+            'action':       mt5.TRADE_ACTION_DEAL,
+            'position':     ticket_id,
+            'symbol':       pos.symbol,
+            'volume':       pos.volume,
+            'type':         close_type,
+            'price':        price,
+            'type_filling': mt5.ORDER_FILLING_IOC,
+        }
+
+        result = mt5.order_send(request)
+        if result is None or result.retcode != mt5.TRADE_RETCODE_DONE:
+            logger.error(f"Close failed for ticket {ticket_id}: {result}")
+            return False
+        return True
+
+    def get_open_positions(self) -> list[dict]:
+        positions = mt5.positions_get()
+        if not positions:
+            return []
+        return [
+            {
+                'ticket':     p.ticket,
+                'symbol':     p.symbol,
+                'direction':  'BUY' if p.type == mt5.ORDER_TYPE_BUY else 'SELL',
+                'volume':     p.volume,
+                'open_price': p.price_open,
+                'sl':         p.sl,
+                'tp':         p.tp,
+                'profit':     p.profit,
+                'comment':    p.comment,
+            }
+            for p in positions
+        ]
+
+    def get_account_balance(self) -> float:
+        info = mt5.account_info()
+        return info.balance if info else 0.0
