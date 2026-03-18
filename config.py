@@ -1,5 +1,5 @@
 # ── Instruments & Timeframes ─────────────────────────────────────────────────
-SYMBOLS = ['EURUSD', 'GBPUSD', 'AUDUSD', 'NZDUSD', 'USDJPY', 'USDCAD']
+SYMBOLS = ['EURUSD', 'GBPUSD', 'AUDUSD', 'NZDUSD', 'USDJPY', 'USDCAD', 'USDCHF']
 TIMEFRAMES = ['M5', 'M15', 'H1', 'H4', 'D1']
 
 # ── Lot Sizing ────────────────────────────────────────────────────────────────
@@ -13,7 +13,7 @@ DEFAULT_RR_RATIO = 2.0      # 1:2 risk/reward by default
 MIN_SL_PIPS = 5             # Signals with a stop-loss smaller than this are rejected
 
 # ── Portfolio Limits ──────────────────────────────────────────────────────────
-MAX_OPEN_TRADES = 4
+MAX_OPEN_TRADES = 6
 MAX_DAILY_LOSS_PCT = 0.02   # 2% of account balance — pauses trading for the day if hit
 
 # ── Pip Sizes ─────────────────────────────────────────────────────────────────
@@ -25,6 +25,7 @@ PIP_SIZE = {
     'NZDUSD': 0.0001,
     'USDJPY': 0.01,
     'USDCAD': 0.0001,
+    'USDCHF': 0.0001,
 }
 
 # ── Spread ───────────────────────────────────────────────────────────────────
@@ -44,6 +45,7 @@ PIP_VALUE_USD = {
     'NZDUSD': 10.0,
     'USDJPY': 10.0,
     'USDCAD': 10.0,
+    'USDCHF': 10.0,
 }
 
 

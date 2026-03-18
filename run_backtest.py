@@ -7,6 +7,9 @@ Usage:
     python run_backtest.py ema_fib_retracement
     python run_backtest.py ema_fib_retracement_intraday
     python run_backtest.py ict_judas_swing
+    python run_backtest.py the_strat
+    python run_backtest.py the_strat_m15
+    python run_backtest.py live_suite          # all 3 live strategies together
 """
 
 import argparse
@@ -18,6 +21,8 @@ from strategies.mean_reversion import MeanReversionStrategy
 from strategies.ema_fib_retracement import EmaFibRetracementStrategy
 from strategies.ema_fib_retracement_intraday import EmaFibRetracementIntradayStrategy
 from strategies.ict_judas_swing import IctJudasSwingStrategy
+from strategies.gaussian_channel import GaussianChannelStrategy
+from strategies.the_strat import TheStratStrategy
 from data.historical_loader import find_csv
 from data.news_filter import NewsFilter
 
@@ -28,7 +33,7 @@ logging.basicConfig(
 )
 
 # ── Settings — edit these ─────────────────────────────────────────────────────
-SYMBOLS         = ['EURUSD', 'GBPUSD', 'AUDUSD', 'NZDUSD', 'USDJPY', 'USDCAD']
+SYMBOLS         = ['EURUSD', 'GBPUSD', 'AUDUSD', 'NZDUSD', 'USDJPY', 'USDCAD', 'USDCHF']
 # SYMBOLS         = ['EURUSD', 'GBPUSD']
 # SYMBOLS         = ['EURUSD']
 INITIAL_BALANCE = 10_000.0   # starting account balance in USD
@@ -45,13 +50,25 @@ STRATEGIES = {
     'ema_fib_retracement':  EmaFibRetracementStrategy(cooldown_bars=10,invalidate_swing_on_loss=True,min_swing_pips=15,ema_sep_pct=0.001),
     'ema_fib_retracement_intraday': EmaFibRetracementIntradayStrategy(cooldown_bars=10,invalidate_swing_on_loss=True,min_swing_pips=15,ema_sep_pct=0.0005),
     'ict_judas_swing':              IctJudasSwingStrategy(fractal_n=3, min_sl_pips=15, max_sl_pips=30, min_sweep_pips=2.0, require_sweep_pullback=True, require_fvg=False, require_d1_bias=False),
+    'gaussian_channel':             GaussianChannelStrategy(period=144, poles=4, tr_mult=1.414),
+    'the_strat':                    TheStratStrategy(tp_mode='daily', min_sl_pips=8, cooldown_bars=3),
+    'the_strat_m15':                TheStratStrategy(tp_mode='daily', min_sl_pips=5, cooldown_bars=3, tf_bias='H4', tf_intermediate='H1', tf_entry='M15'),
 }
+
+# ── Live suite: all 3 strategies run together ────────────────────────────────
+LIVE_SUITE = [
+    EmaFibRetracementStrategy(cooldown_bars=10, invalidate_swing_on_loss=True, min_swing_pips=15, ema_sep_pct=0.001),
+    TheStratStrategy(tp_mode='daily', min_sl_pips=8, cooldown_bars=3),
+    TheStratStrategy(tp_mode='daily', min_sl_pips=5, cooldown_bars=3, tf_bias='H4', tf_intermediate='H1', tf_entry='M15'),
+]
+
+ALL_CHOICES = list(STRATEGIES.keys()) + ['live_suite']
 
 parser = argparse.ArgumentParser(description='Run a backtest for a given strategy.')
 parser.add_argument(
     'strategy',
-    choices=STRATEGIES.keys(),
-    help='Strategy to backtest: ' + ', '.join(STRATEGIES.keys()),
+    choices=ALL_CHOICES,
+    help='Strategy to backtest: ' + ', '.join(ALL_CHOICES),
 )
 parser.add_argument(
     '--news-filter', choices=['off', 'high', 'high-medium', 'major'],
@@ -74,8 +91,15 @@ parser.add_argument(
 )
 args = parser.parse_args()
 
-strategy = STRATEGIES[args.strategy]
-timeframes_needed = strategy.TIMEFRAMES
+if args.strategy == 'live_suite':
+    strategies_to_run = LIVE_SUITE
+else:
+    strategies_to_run = [STRATEGIES[args.strategy]]
+
+# Collect all timeframes needed across all strategies
+timeframes_needed = set()
+for s in strategies_to_run:
+    timeframes_needed.update(s.TIMEFRAMES)
 
 csv_paths = []
 for symbol in SYMBOLS:
@@ -124,5 +148,6 @@ engine = BacktestEngine(
     initial_balance=INITIAL_BALANCE, rr_ratio=RR_RATIO, spread_pips=SPREAD_PIPS,
     news_filter=news_filter, risk_pct_overrides=RISK_PCT_OVERRIDES,
 )
-engine.add_strategy(strategy, symbols=SYMBOLS)
+for s in strategies_to_run:
+    engine.add_strategy(s, symbols=SYMBOLS)
 engine.run(csv_paths)

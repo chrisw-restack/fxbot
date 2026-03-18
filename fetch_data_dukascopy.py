@@ -20,8 +20,10 @@ import dukascopy_python
 from dukascopy_python import instruments
 
 # ── Configuration — edit these before running ─────────────────────────────────
-SYMBOLS = ['EURUSD', 'GBPUSD', 'AUDUSD', 'NZDUSD', 'USDJPY', 'USDCAD']
-TIMEFRAMES = ['H4']        # Any of: M5, M15, H1, H4, D1
+# SYMBOLS = ['EURUSD', 'GBPUSD', 'AUDUSD', 'NZDUSD', 'USDJPY', 'USDCAD', 'USDCHF']
+# SYMBOLS = ['EURUSD', 'GBPUSD', 'AUDUSD', 'NZDUSD', 'USDJPY', 'USDCAD']
+SYMBOLS = ['USDCHF']
+TIMEFRAMES = ['M5']        # Any of: M5, M15, H1, H4, D1
 START_YEAR = 2016
 END_DATE = datetime(2026, 3, 11)
 OUTPUT_DIR = 'data/historical'
@@ -34,6 +36,7 @@ INSTRUMENT_MAP = {
     'AUDUSD': instruments.INSTRUMENT_FX_MAJORS_AUD_USD,
     'NZDUSD': instruments.INSTRUMENT_FX_MAJORS_NZD_USD,
     'USDJPY': instruments.INSTRUMENT_FX_MAJORS_USD_JPY,
+    'USDCHF': instruments.INSTRUMENT_FX_MAJORS_USD_CHF,
     'USDCAD': instruments.INSTRUMENT_FX_MAJORS_USD_CAD,
 }
 

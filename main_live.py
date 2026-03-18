@@ -22,6 +22,7 @@ from execution.mt5_execution import MT5Execution
 from utils.trade_logger import TradeLogger
 from data.mt5_data import connect, disconnect, reconnect, get_latest_completed_bar, get_recent_bars
 from strategies.ema_fib_retracement import EmaFibRetracementStrategy
+from strategies.the_strat import TheStratStrategy
 from utils.telegram_notifier import TelegramNotifier
 import config
 
@@ -81,12 +82,13 @@ def main():
         # produce a new completed bar.
         # ── DEMO MODE — relaxed filters for execution testing ─────────────
         # Restore these production values once demo testing is complete:
-        #   cooldown_bars=10,
-        #   invalidate_swing_on_loss=True,
-        #   min_swing_pips=15,
-        #   ema_sep_pct=0.001,
-        #   blocked_hours=(16, 17, 18, 19, 20, 21, 22, 23),
-        #   min_d1_atr_pips=50.0,
+        #   EmaFibRetracement:
+        #     cooldown_bars=10,
+        #     invalidate_swing_on_loss=True,
+        #     min_swing_pips=15,
+        #     ema_sep_pct=0.001,
+        #     blocked_hours=(16, 17, 18, 19, 20, 21, 22, 23),
+        #     min_d1_atr_pips=50.0,
         # ────────────────────────────────────────────────────────────────────
         strategies = [
             EmaFibRetracementStrategy(
@@ -96,6 +98,13 @@ def main():
                 ema_sep_pct=0.0,
                 blocked_hours=(),
                 min_d1_atr_pips=0.0,
+            ),
+            TheStratStrategy(
+                tp_mode='daily', min_sl_pips=8, cooldown_bars=3,
+            ),
+            TheStratStrategy(
+                tp_mode='daily', min_sl_pips=5, cooldown_bars=3,
+                tf_bias='H4', tf_intermediate='H1', tf_entry='M15',
             ),
         ]
         for strategy in strategies:
@@ -108,12 +117,14 @@ def main():
 
         # ── Warm-up: feed historical bars so EMAs/ATR/fractals are seeded ────
         # D1 needs ~50 bars for EMA(20) + ATR(14) with margin.
-        # H1 needs ~100 bars for EMA(20) + fractal window + swing detection.
-        WARMUP_BARS = {'D1': 50, 'H1': 100}
+        # H4/H1 need ~100 bars for fractal window + swing detection.
+        # M15 needs ~200 bars for fractal window + swing detection on faster TF.
+        WARMUP_BARS = {'D1': 50, 'H4': 100, 'H1': 100, 'M15': 200}
         logger.info("Warming up strategy state with historical bars...")
         warmup_count = 0
-        # Sort so D1 pairs come before H1 — strategy needs D1 bias seeded first
-        warmup_pairs = sorted(subscribed_pairs, key=lambda p: (p[0], p[1] != 'D1'))
+        # Sort so higher TFs come first — strategies need bias seeded before entry TF
+        TF_ORDER = {'D1': 0, 'H4': 1, 'H1': 2, 'M15': 3, 'M5': 4}
+        warmup_pairs = sorted(subscribed_pairs, key=lambda p: (p[0], TF_ORDER.get(p[1], 99)))
         for symbol, timeframe in warmup_pairs:
             count = WARMUP_BARS.get(timeframe, 50)
             bars = get_recent_bars(symbol, timeframe, count)
