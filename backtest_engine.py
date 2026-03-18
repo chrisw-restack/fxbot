@@ -40,6 +40,7 @@ class BacktestEngine:
         spread_pips: float = config.BACKTEST_SPREAD_PIPS,
         breakeven_at_r: float | None = None,
         news_filter: NewsFilter | None = None,
+        risk_pct_overrides: dict[str, float] | None = None,
     ):
         config.validate()
         self.execution = SimulatedExecution(
@@ -51,6 +52,7 @@ class BacktestEngine:
         self.risk = RiskManager(
             account_balance_fn=self.execution.get_account_balance,
             rr_ratio=rr_ratio,
+            risk_pct_overrides=risk_pct_overrides,
         )
         self.event_engine = EventEngine(
             risk_manager=self.risk,

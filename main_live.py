@@ -60,7 +60,10 @@ def main():
         execution    = MT5Execution()
         portfolio    = PortfolioManager()
         trade_logger = TradeLogger()
-        risk         = RiskManager(account_balance_fn=execution.get_account_balance)
+        risk         = RiskManager(
+            account_balance_fn=execution.get_account_balance,
+            risk_pct_overrides={'EmaFibRetracement': 0.007},
+        )
 
         notifier = TelegramNotifier()
 
@@ -76,12 +79,23 @@ def main():
         # Add or remove strategies here. Each strategy is registered against
         # the full symbol list, but will only fire when its declared timeframes
         # produce a new completed bar.
+        # ── DEMO MODE — relaxed filters for execution testing ─────────────
+        # Restore these production values once demo testing is complete:
+        #   cooldown_bars=10,
+        #   invalidate_swing_on_loss=True,
+        #   min_swing_pips=15,
+        #   ema_sep_pct=0.001,
+        #   blocked_hours=(16, 17, 18, 19, 20, 21, 22, 23),
+        #   min_d1_atr_pips=50.0,
+        # ────────────────────────────────────────────────────────────────────
         strategies = [
             EmaFibRetracementStrategy(
-                cooldown_bars=10,
-                invalidate_swing_on_loss=True,
-                min_swing_pips=15,
-                ema_sep_pct=0.0005,
+                cooldown_bars=0,
+                invalidate_swing_on_loss=False,
+                min_swing_pips=5,
+                ema_sep_pct=0.0,
+                blocked_hours=(),
+                min_d1_atr_pips=0.0,
             ),
         ]
         for strategy in strategies:

@@ -34,12 +34,15 @@ SYMBOLS         = ['EURUSD', 'GBPUSD', 'AUDUSD', 'NZDUSD', 'USDJPY', 'USDCAD']
 INITIAL_BALANCE = 10_000.0   # starting account balance in USD
 RR_RATIO        = 2.0        # risk/reward ratio (overrides config default)
 SPREAD_PIPS     = 2.0        # simulated spread in pips (applied at entry)
+RISK_PCT_OVERRIDES = {
+    'EmaFibRetracement': 0.007,  # 0.7% risk per trade (default is 0.5%)
+}
 # ─────────────────────────────────────────────────────────────────────────────
 
 STRATEGIES = {
     'breakout':             BreakoutStrategy(lookback=20),
     'mean_reversion':       MeanReversionStrategy(lookback=20, std_multiplier=2.0, sl_lookback=5),
-    'ema_fib_retracement':  EmaFibRetracementStrategy(cooldown_bars=10,invalidate_swing_on_loss=True,min_swing_pips=15,ema_sep_pct=0.0005),
+    'ema_fib_retracement':  EmaFibRetracementStrategy(cooldown_bars=10,invalidate_swing_on_loss=True,min_swing_pips=15,ema_sep_pct=0.001),
     'ema_fib_retracement_intraday': EmaFibRetracementIntradayStrategy(cooldown_bars=10,invalidate_swing_on_loss=True,min_swing_pips=15,ema_sep_pct=0.0005),
     'ict_judas_swing':              IctJudasSwingStrategy(fractal_n=3, min_sl_pips=15, max_sl_pips=30, min_sweep_pips=2.0, require_sweep_pullback=True, require_fvg=False, require_d1_bias=False),
 }
@@ -119,7 +122,7 @@ if args.news_filter != 'off':
 
 engine = BacktestEngine(
     initial_balance=INITIAL_BALANCE, rr_ratio=RR_RATIO, spread_pips=SPREAD_PIPS,
-    news_filter=news_filter,
+    news_filter=news_filter, risk_pct_overrides=RISK_PCT_OVERRIDES,
 )
 engine.add_strategy(strategy, symbols=SYMBOLS)
 engine.run(csv_paths)

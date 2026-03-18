@@ -9,13 +9,20 @@ logger = logging.getLogger(__name__)
 
 class RiskManager:
 
-    def __init__(self, account_balance_fn: Callable[[], float], rr_ratio: float | None = None):
+    def __init__(
+        self,
+        account_balance_fn: Callable[[], float],
+        rr_ratio: float | None = None,
+        risk_pct_overrides: dict[str, float] | None = None,
+    ):
         """
         account_balance_fn: callable that returns the current account balance.
         rr_ratio: overrides config.DEFAULT_RR_RATIO when provided.
+        risk_pct_overrides: per-strategy risk % overrides keyed by strategy NAME.
         """
         self._get_balance = account_balance_fn
         self.rr_ratio = rr_ratio if rr_ratio is not None else config.DEFAULT_RR_RATIO
+        self._risk_pct_overrides = risk_pct_overrides or {}
 
     def process(self, signal: Signal) -> EnrichedSignal | None:
         if signal.stop_loss is None:
@@ -44,7 +51,8 @@ class RiskManager:
             lot_size = config.FIXED_LOT_SIZE
         else:
             balance = self._get_balance()
-            risk_amount = balance * config.RISK_PCT
+            risk_pct = self._risk_pct_overrides.get(signal.strategy_name, config.RISK_PCT)
+            risk_amount = balance * risk_pct
             lot_size = risk_amount / (sl_pips * pip_value)
             lot_size = round(lot_size, 2)
             if lot_size < 0.01:
@@ -52,7 +60,7 @@ class RiskManager:
                     f"Lot size clamped | {signal.strategy_name} | {signal.symbol} {signal.direction:<4} | "
                     f"{signal.timestamp.strftime('%Y-%m-%d %H:%M')} | "
                     f"Calculated {lot_size:.4f} lots, clamped to 0.01 "
-                    f"(actual risk {((0.01 * sl_pips * pip_value) / balance * 100):.2f}% vs target {config.RISK_PCT * 100:.1f}%)"
+                    f"(actual risk {((0.01 * sl_pips * pip_value) / balance * 100):.2f}% vs target {risk_pct * 100:.1f}%)"
                 )
                 lot_size = 0.01
 
