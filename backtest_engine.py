@@ -25,7 +25,8 @@ from risk.risk_manager import RiskManager
 from portfolio.portfolio_manager import PortfolioManager
 from execution.simulated_execution import SimulatedExecution
 from utils.trade_logger import TradeLogger
-from data.historical_loader import load_csv, load_and_merge
+from datetime import datetime
+from data.historical_loader import load_csv, load_and_merge, filter_bars
 from data.news_filter import NewsFilter
 
 logger = logging.getLogger(__name__)
@@ -66,18 +67,24 @@ class BacktestEngine:
         """Register a strategy and the symbols it should run on."""
         self.event_engine.register(strategy, symbols)
 
-    def run(self, csv_paths: str | list[str]):
+    def run(self, csv_paths: str | list[str],
+            start_date: datetime | None = None,
+            end_date: datetime | None = None):
         """
         Run the backtest.
 
         csv_paths: a single CSV filepath or a list of CSV filepaths.
         When multiple files are provided, bars are merged and replayed in
         chronological order (correct for multi-symbol / multi-timeframe testing).
+        start_date / end_date: optional date range filter [start, end).
         """
         if isinstance(csv_paths, str):
             bars = load_csv(csv_paths)
         else:
             bars = load_and_merge(csv_paths)
+
+        if start_date or end_date:
+            bars = filter_bars(bars, start=start_date, end=end_date)
 
         logger.info(f"Backtest starting — {len(bars)} bars total")
 

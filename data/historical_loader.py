@@ -122,14 +122,46 @@ def find_csv(symbol: str, timeframe: str, path: str = 'data/historical') -> str 
     return os.path.join(path, matches[0]) if matches else None
 
 
+def filter_bars(
+    bars: list[BarEvent],
+    start: datetime | None = None,
+    end: datetime | None = None,
+) -> list[BarEvent]:
+    """Filter a pre-loaded bar list to a date range [start, end). Inclusive start, exclusive end."""
+    result = bars
+    if start is not None:
+        result = [b for b in result if b.timestamp >= start]
+    if end is not None:
+        result = [b for b in result if b.timestamp < end]
+    return result
+
+
+_TF_DURATION = {
+    'M5': timedelta(minutes=5),
+    'M15': timedelta(minutes=15),
+    'H1': timedelta(hours=1),
+    'H4': timedelta(hours=4),
+    'D1': timedelta(days=1),
+}
+
+
+def bar_close_time(bar: BarEvent) -> datetime:
+    """Return the close time of a bar (open time + timeframe duration)."""
+    return bar.timestamp + _TF_DURATION.get(bar.timeframe, timedelta(hours=1))
+
+
 def load_and_merge(csv_paths: list[str]) -> list[BarEvent]:
     """
-    Load multiple CSV files and return all BarEvents merged and sorted by timestamp.
-    Used for multi-symbol / multi-timeframe backtests.
+    Load multiple CSV files and return all BarEvents merged and sorted by
+    close time. This prevents look-ahead bias: a higher-timeframe bar
+    (e.g. H4) is only processed after all lower-timeframe bars (e.g. M15)
+    that fall within it have been processed first.
+
+    Within the same close time, lower timeframes sort first.
     """
     all_events: list[BarEvent] = []
     for path in csv_paths:
         all_events.extend(load_csv(path))
-    tf_rank = {'D1': 0, 'H4': 1, 'H1': 2, 'M15': 3, 'M5': 4}
-    all_events.sort(key=lambda e: (e.timestamp, tf_rank.get(e.timeframe, 99)))
+    tf_rank = {'M5': 0, 'M15': 1, 'H1': 2, 'H4': 3, 'D1': 4}
+    all_events.sort(key=lambda e: (bar_close_time(e), tf_rank.get(e.timeframe, 99)))
     return all_events

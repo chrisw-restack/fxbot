@@ -3,17 +3,15 @@ Backtest runner.
 
 Usage:
     python run_backtest.py breakout
-    python run_backtest.py mean_reversion
     python run_backtest.py ema_fib_retracement
-    python run_backtest.py ema_fib_retracement_intraday
-    python run_backtest.py ict_judas_swing
     python run_backtest.py the_strat
-    python run_backtest.py the_strat_m15
     python run_backtest.py live_suite          # all 3 live strategies together
+    python run_backtest.py ema_fib_retracement --start-date 2023-01-01 --end-date 2024-06-30
 """
 
 import argparse
 import logging
+from datetime import datetime
 
 from backtest_engine import BacktestEngine
 from strategies.breakout import BreakoutStrategy
@@ -51,15 +49,15 @@ STRATEGIES = {
     'ema_fib_retracement_intraday': EmaFibRetracementIntradayStrategy(cooldown_bars=10,invalidate_swing_on_loss=True,min_swing_pips=15,ema_sep_pct=0.0005),
     'ict_judas_swing':              IctJudasSwingStrategy(fractal_n=3, min_sl_pips=15, max_sl_pips=30, min_sweep_pips=2.0, require_sweep_pullback=True, require_fvg=False, require_d1_bias=False),
     'gaussian_channel':             GaussianChannelStrategy(period=144, poles=4, tr_mult=1.414),
-    'the_strat':                    TheStratStrategy(tp_mode='daily', min_sl_pips=8, cooldown_bars=3),
-    'the_strat_m15':                TheStratStrategy(tp_mode='daily', min_sl_pips=5, cooldown_bars=3, tf_bias='H4', tf_intermediate='H1', tf_entry='M15'),
+    'the_strat':                    TheStratStrategy(min_sl_pips=8, cooldown_bars=3),
+    'the_strat_m15':                TheStratStrategy(min_sl_pips=5, cooldown_bars=3, tf_bias='H4', tf_intermediate='H1', tf_entry='M15'),
 }
 
 # ── Live suite: all 3 strategies run together ────────────────────────────────
 LIVE_SUITE = [
     EmaFibRetracementStrategy(cooldown_bars=10, invalidate_swing_on_loss=True, min_swing_pips=15, ema_sep_pct=0.001),
-    TheStratStrategy(tp_mode='daily', min_sl_pips=8, cooldown_bars=3),
-    TheStratStrategy(tp_mode='daily', min_sl_pips=5, cooldown_bars=3, tf_bias='H4', tf_intermediate='H1', tf_entry='M15'),
+    TheStratStrategy(min_sl_pips=8, cooldown_bars=3),
+    TheStratStrategy(min_sl_pips=5, cooldown_bars=3, tf_bias='H4', tf_intermediate='H1', tf_entry='M15'),
 ]
 
 ALL_CHOICES = list(STRATEGIES.keys()) + ['live_suite']
@@ -88,6 +86,14 @@ parser.add_argument(
 parser.add_argument(
     '--news-hours-after', type=float, default=1.0,
     help='Hours after a news event to block signals (default: 1)',
+)
+parser.add_argument(
+    '--start-date', type=str, default=None,
+    help='Start date for backtest (YYYY-MM-DD). Default: use all available data.',
+)
+parser.add_argument(
+    '--end-date', type=str, default=None,
+    help='End date for backtest (YYYY-MM-DD). Default: use all available data.',
 )
 args = parser.parse_args()
 
@@ -150,4 +156,11 @@ engine = BacktestEngine(
 )
 for s in strategies_to_run:
     engine.add_strategy(s, symbols=SYMBOLS)
-engine.run(csv_paths)
+start_date = datetime.strptime(args.start_date, '%Y-%m-%d') if args.start_date else None
+end_date = datetime.strptime(args.end_date, '%Y-%m-%d') if args.end_date else None
+
+if start_date or end_date:
+    date_range = f"{args.start_date or 'start'} to {args.end_date or 'end'}"
+    print(f"\nDate range: {date_range}")
+
+engine.run(csv_paths, start_date=start_date, end_date=end_date)

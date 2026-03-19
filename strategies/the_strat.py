@@ -5,15 +5,17 @@ from models import BarEvent, Signal
 
 class TheStratStrategy:
     """
-    TheStrat (Rob Smith) D1+H4+H1 strategy.
+    TheStrat (Rob Smith) multi-timeframe strategy.
 
-    D1: Label candles as 1/2U/2D/3. Detect patterns (2-1-2 rev, 3-1-2, 1-2-2,
-        2-1-2 cont, just-3) to set directional bias. Invalidate if price reaches
-        the previous D1 candle's high (BUY) or low (SELL).
-    H4: Swing liquidity filter — if the most recent H4 fractal high (BUY) or
-        low (SELL) is taken, bias is invalidated for the day.
-    H1: Entry via market structure shift (MSS) + fair value gap (FVG) + 50%
-        fibonacci retracement of the H1 swing range.
+    Bias TF: Label candles as 1/2U/2D/3. Detect patterns (2-1-2 rev, 3-1-2,
+        1-2-2, 2-1-2 cont, just-3) to set directional bias. Invalidate if
+        price moves against the bias (above bias bar high for SELL, below
+        bias bar low for BUY).
+    Intermediate TF: Swing liquidity filter — if the intermediate-TF fractal
+        high (BUY) or low (SELL) is taken, bias is invalidated.
+    Entry TF: Entry via market structure shift (MSS) + fair value gap (FVG)
+        + 50% fibonacci retracement of the entry-TF swing range.
+        TP is set by the risk manager (R:R ratio), not by the strategy.
     """
 
     ORDER_TYPE = 'PENDING'
@@ -23,7 +25,6 @@ class TheStratStrategy:
         self,
         fractal_n: int = 1,
         bias_types: set[str] | None = None,
-        tp_mode: str = 'swing',
         min_sl_pips: float = 10.0,
         cooldown_bars: int = 6,
         pip_sizes: dict[str, float] | None = None,
@@ -37,7 +38,6 @@ class TheStratStrategy:
         self.bias_types = bias_types or {
             '2-1-2_rev', '3-1-2', '1-2-2', '2-1-2_cont', '3',
         }
-        self.tp_mode = tp_mode              # 'swing' = H1 range high/low, 'daily' = D1 prev high/low
         self.min_sl_pips = min_sl_pips
         self.cooldown_bars = cooldown_bars
         self.pip_sizes = pip_sizes or {
@@ -358,15 +358,15 @@ class TheStratStrategy:
     # ══════════════════════════════════════════════════════════════════════════
 
     def _check_d1_invalidation(self, s: str, event: BarEvent):
-        """Invalidate bias if price reaches previous D1 candle's high (BUY) or low (SELL)."""
+        """Invalidate bias if price moves against it (above high for SELL, below low for BUY)."""
         if self._d1_invalidated[s]:
             return
         bias = self._d1_bias[s]
-        if bias == 'BUY' and self._d1_prev_high[s] is not None:
-            if event.high >= self._d1_prev_high[s]:
-                self._d1_invalidated[s] = True
-        elif bias == 'SELL' and self._d1_prev_low[s] is not None:
+        if bias == 'BUY' and self._d1_prev_low[s] is not None:
             if event.low <= self._d1_prev_low[s]:
+                self._d1_invalidated[s] = True
+        elif bias == 'SELL' and self._d1_prev_high[s] is not None:
+            if event.high >= self._d1_prev_high[s]:
                 self._d1_invalidated[s] = True
 
     def _check_h4_liquidity(self, s: str, event: BarEvent):
@@ -403,7 +403,7 @@ class TheStratStrategy:
         return (lo + hi) / 2
 
     def _place_pending(self, s: str, event: BarEvent) -> Signal | None:
-        """Place a pending order at 50% of the H1 range."""
+        """Place a pending order at 50% of the entry-TF range."""
         bias = self._d1_bias[s]
         entry = self._calc_entry(s)
         if entry is None or bias is None:
@@ -411,14 +411,10 @@ class TheStratStrategy:
 
         lo, hi = self._h1_range_low[s], self._h1_range_high[s]
 
-        if bias == 'BUY':
-            sl = lo
-            tp = self._d1_prev_high[s] if self.tp_mode == 'daily' else hi
-        else:
-            sl = hi
-            tp = self._d1_prev_low[s] if self.tp_mode == 'daily' else lo
+        # SL at the opposite extreme of the entry range
+        sl = lo if bias == 'BUY' else hi
 
-        if tp is None or sl is None:
+        if sl is None:
             return None
 
         # Validate minimum SL
@@ -429,6 +425,7 @@ class TheStratStrategy:
         self._pend_entry[s] = entry
         self._pend_dir[s] = bias
 
+        # TP left to risk manager (R:R ratio)
         return Signal(
             symbol=s,
             direction=bias,
@@ -437,7 +434,6 @@ class TheStratStrategy:
             stop_loss=sl,
             strategy_name=self.NAME,
             timestamp=event.timestamp,
-            take_profit=tp,
         )
 
     def _cancel_signal(self, s: str, event: BarEvent) -> Signal:

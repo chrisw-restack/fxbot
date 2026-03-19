@@ -22,7 +22,7 @@ from execution.mt5_execution import MT5Execution
 from utils.trade_logger import TradeLogger
 from data.mt5_data import connect, disconnect, reconnect, get_latest_completed_bar, get_recent_bars
 from strategies.ema_fib_retracement import EmaFibRetracementStrategy
-from strategies.the_strat import TheStratStrategy
+
 from utils.telegram_notifier import TelegramNotifier
 import config
 
@@ -98,13 +98,6 @@ def main():
                 ema_sep_pct=0.0,
                 blocked_hours=(),
                 min_d1_atr_pips=0.0,
-            ),
-            TheStratStrategy(
-                tp_mode='daily', min_sl_pips=8, cooldown_bars=3,
-            ),
-            TheStratStrategy(
-                tp_mode='daily', min_sl_pips=5, cooldown_bars=3,
-                tf_bias='H4', tf_intermediate='H1', tf_entry='M15',
             ),
         ]
         for strategy in strategies:

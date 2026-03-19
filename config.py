@@ -32,7 +32,11 @@ PIP_SIZE = {
 # Simulated spread in pips applied at entry during backtesting.
 # Historical bars are bid-based, so spread is added to BUY entries and
 # subtracted from SELL entries to model the ask/bid cost realistically.
-BACKTEST_SPREAD_PIPS = 1.0
+BACKTEST_SPREAD_PIPS = 3.0
+
+# ── Commission ──────────────────────────────────────────────────────────────
+# Round-trip commission per 1.0 standard lot (ICMarkets Raw Spread: $7.00/lot).
+COMMISSION_PER_LOT = 7.0
 
 # ── Pip Values ────────────────────────────────────────────────────────────────
 # USD value of 1 pip per 1 standard lot (100,000 units)

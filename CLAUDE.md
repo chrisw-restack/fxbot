@@ -40,6 +40,7 @@ MT5 / CSV → Event Generator → Strategies
 | Logger | `utils/trade_logger.py` | Trade log + backtest metrics + charts |
 | Notifications | `utils/telegram_notifier.py` | Telegram alerts (live trading) |
 | Param sweep | `param_sweep.py` | Parameter optimization runner |
+| Walk-forward | `walk_forward.py` | Walk-forward validation (rolling train/test) |
 | Dukascopy fetch | `fetch_data_dukascopy.py` | Download historical data from Dukascopy (any TF) |
 | News data fetch | `fetch_news_data.py` | Download Forex Factory calendar from Hugging Face |
 | News filter | `data/news_filter.py` | Block signals near high-impact news events |
@@ -248,7 +249,7 @@ Both output to `data/historical/` with filename format: `<SYMBOL>_<TF>_<YYYYMMDD
 
 On each incoming signal:
 1. Check if symbol already has an open position → block if yes.
-2. Check if `open_trade_count >= MAX_OPEN_TRADES` (default 4) → block if yes.
+2. Check if `open_trade_count >= MAX_OPEN_TRADES` (default 6) → block if yes.
 3. Check if daily loss has exceeded `MAX_DAILY_LOSS_PCT` (default 2%) → block if yes.
 4. If all checks pass, forward to execution.
 
@@ -278,7 +279,7 @@ For `PENDING` orders, the execution layer infers order subtype from direction vs
 ## Config Parameters (`config.py`)
 
 ```python
-SYMBOLS = ['EURUSD', 'GBPUSD', 'AUDUSD', 'NZDUSD', 'USDJPY', 'USDCAD']
+SYMBOLS = ['EURUSD', 'GBPUSD', 'AUDUSD', 'NZDUSD', 'USDJPY', 'USDCAD', 'USDCHF']
 TIMEFRAMES = ['M5', 'M15', 'H1', 'H4', 'D1']
 
 LOT_SIZE_MODE = 'DYNAMIC'   # 'DYNAMIC' or 'FIXED'
@@ -286,9 +287,11 @@ FIXED_LOT_SIZE = 0.01       # used only when LOT_SIZE_MODE = 'FIXED'
 RISK_PCT = 0.005            # 0.5% per trade — used only when LOT_SIZE_MODE = 'DYNAMIC'
 DEFAULT_RR_RATIO = 2.0      # 1:2 risk/reward
 
-MAX_OPEN_TRADES = 4
+MAX_OPEN_TRADES = 6         # increased from 4 to support 3-strategy live suite
 MAX_DAILY_LOSS_PCT = 0.02   # 2% of account balance
 ```
+
+Per-strategy risk overrides are supported via `risk_pct_overrides` dict in `RiskManager` (keyed by strategy NAME). Currently EmaFibRetracement uses 0.7%, all others use the 0.5% default.
 
 ## Live Trading
 
@@ -362,6 +365,44 @@ python param_sweep.py
 ```
 Outputs ranked tables by Total R, Expectancy, and Profit Factor.
 
+## Walk-Forward Validation
+
+Use `walk_forward.py` to validate that optimized parameters generalize to unseen data. This is the primary defence against overfitting. Any parameter changes should pass walk-forward before going live.
+
+```
+python walk_forward.py ema_fib_retracement
+python walk_forward.py the_strat
+python walk_forward.py the_strat_m15
+```
+
+**How it works**: splits data into rolling train/test windows (default 4yr train, 2yr test, 2yr step). For each fold, optimizes parameters on training data, then tests the best params on out-of-sample data. Reports per-fold and aggregate OOS metrics.
+
+**CLI options**:
+- `--train-years N` — training window length (default 4)
+- `--test-years N` — test window length (default 2)
+- `--step-years N` — advance between folds (default 2)
+- `--metric {expectancy,total_r,pf}` — optimization target (default expectancy)
+
+**Interpreting results**: the key metric is **OOS retention** (OOS expectancy / IS expectancy). Above 70% = STRONG (parameters generalize), 40-70% = MODERATE (some overfitting), below 40% = WEAK/FAIL (curve-fit).
+
+**Date filtering**: `filter_bars(bars, start, end)` in `data/historical_loader.py` allows slicing pre-loaded bar data to any date range [start, end). Used by walk-forward internally but also available for manual date-range backtesting.
+
+## Live Suite
+
+The bot runs 3 strategies concurrently in production (`main_live.py`):
+
+| Strategy | Timeframes | Order Type | Key Params |
+|----------|-----------|------------|------------|
+| EmaFibRetracement | D1, H1 | MARKET | cooldown=10, min_swing=15, ema_sep=0.001 |
+| TheStrat D1/H4/H1 | D1, H4, H1 | PENDING | tp_mode=daily, min_sl=8, cooldown=3 |
+| TheStrat H4/H1/M15 | H4, H1, M15 | PENDING | tp_mode=daily, min_sl=5, cooldown=3 |
+
+TheStrat instances auto-generate unique NAMEs from their timeframes (e.g. `TheStrat_D1_H4_H1`) to avoid conflicts in the engine's strategy registry and cancel signal routing.
+
+Backtest all 3 together: `python run_backtest.py live_suite`
+
+All 3 strategies passed walk-forward validation with STRONG retention (94-118%).
+
 ## News Filter
 
 Optional filter that blocks signals near high-impact economic news events (NFP, CPI, FOMC, rate decisions, etc.). Integrated into `engine.py` — signals are checked after strategy generation, before risk processing.
@@ -399,9 +440,12 @@ nf.is_blocked(symbol='EURUSD', timestamp=some_datetime)  # True if blocked
 ## Important Notes
 
 - **USDJPY pip size is 0.01** (not 0.0001). Any strategy doing pip calculations internally must handle this. Use a `pip_sizes` dict parameter.
-- **Backtest spread is 2.0 pips** — realistic average across multiple pairs.
+- **Backtest spread is 3.0 pips** — conservative worst-case average; real raw spreads are typically 0.1-0.5 pips.
+- **Commission is $7.00 per lot round-trip** (ICMarkets Raw Spread) — deducted from PnL at trade close in backtesting.
 - **Break-even stop loss** is supported in `SimulatedExecution` via `breakeven_at_r` parameter, but testing showed it hurts fib retracement strategies.
 
 ## Future Work
-- Walk-forward optimisation framework
-- Additional strategy development
+- Currency exposure limits (max positions per currency to reduce correlation risk)
+- Drawdown throttle (reduce position size or pause after X% peak-to-trough decline)
+- Variable spread model (wider spreads during news/low-liquidity sessions)
+- Additional strategy development (mean-reversion, different asset classes)

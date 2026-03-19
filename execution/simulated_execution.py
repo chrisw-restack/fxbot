@@ -21,11 +21,13 @@ class SimulatedExecution(BaseExecution):
 
     def __init__(self, initial_balance: float, spread_pips: float = 1.0,
                  breakeven_at_r: float | None = None,
-                 rr_ratio: float = config.DEFAULT_RR_RATIO):
+                 rr_ratio: float = config.DEFAULT_RR_RATIO,
+                 commission_per_lot: float = config.COMMISSION_PER_LOT):
         self._balance = initial_balance
         self._spread_pips = spread_pips
         self._breakeven_at_r = breakeven_at_r
         self._rr_ratio = rr_ratio
+        self._commission_per_lot = commission_per_lot
         self._pending: dict[int, dict] = {}   # ticket -> position (not yet filled)
         self._positions: dict[int, dict] = {} # ticket -> position (open/filled)
         self._closed_trades: list[dict] = []
@@ -156,7 +158,8 @@ class SimulatedExecution(BaseExecution):
         else:
             pips = (pos['entry_price'] - exit_price) / pip_size
 
-        pnl = pips * pip_value * pos['lot_size']
+        commission = self._commission_per_lot * pos['lot_size']
+        pnl = pips * pip_value * pos['lot_size'] - commission
         original_sl = pos.get('_original_sl', pos['sl'])
         sl_pips = abs(pos['entry_price'] - original_sl) / pip_size
         r_multiple = round(pips / sl_pips, 2) if sl_pips > 0 else 0.0
@@ -176,6 +179,7 @@ class SimulatedExecution(BaseExecution):
             'result':        result,
             'r_multiple':    r_multiple,
             'pnl':           round(pnl, 2),
+            'commission':    round(commission, 2),
             'open_time':     open_time,
             'close_time':    bar.timestamp,
         }
