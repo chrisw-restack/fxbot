@@ -143,10 +143,20 @@ class GaussianChannelStrategy:
         if filtered_hl2 is None or filtered_tr is None:
             return None
 
+        # Wait for filter to converge before emitting signals
+        # 2× period required: the recursive multi-pole filter takes much longer
+        # than `period` bars to wash out the initial seed values
+        if bar_idx < 2 * self.period:
+            return None
+
         upper = filtered_hl2 + filtered_tr * self.tr_mult
         lower = filtered_hl2 - filtered_tr * self.tr_mult
         self._upper_band[symbol] = upper
         self._lower_band[symbol] = lower
+
+        # Safety: skip if bands are inverted (filter not yet stable)
+        if upper <= lower:
+            return None
 
         # Cooldown check
         if bar_idx <= self._cooldown_until[symbol]:
@@ -154,27 +164,33 @@ class GaussianChannelStrategy:
 
         signal = None
 
-        # BUY: close above upper band, SL at midline
+        # BUY: close above upper band, SL at midline (must be below entry)
         if event.close > upper and self._last_direction[symbol] != 'BUY':
+            sl = filtered_hl2
+            if sl >= event.close:
+                return None  # geometry sanity check
             signal = Signal(
                 symbol=symbol,
                 direction='BUY',
                 order_type=self.ORDER_TYPE,
                 entry_price=event.close,
-                stop_loss=filtered_hl2,
+                stop_loss=sl,
                 strategy_name=self.NAME,
                 timestamp=event.timestamp,
             )
             self._last_direction[symbol] = 'BUY'
 
-        # SELL: close below lower band, SL at midline
+        # SELL: close below lower band, SL at midline (must be above entry)
         elif event.close < lower and self._last_direction[symbol] != 'SELL':
+            sl = filtered_hl2
+            if sl <= event.close:
+                return None  # geometry sanity check
             signal = Signal(
                 symbol=symbol,
                 direction='SELL',
                 order_type=self.ORDER_TYPE,
                 entry_price=event.close,
-                stop_loss=filtered_hl2,
+                stop_loss=sl,
                 strategy_name=self.NAME,
                 timestamp=event.timestamp,
             )

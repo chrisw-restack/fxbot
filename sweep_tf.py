@@ -42,9 +42,7 @@ for combo in COMBOS:
     csv_paths = []
     for sym in SYMBOLS:
         for tf in strat.TIMEFRAMES:
-            path = find_csv(sym, tf)
-            if path:
-                csv_paths.append(path)
+            csv_paths.extend(find_csv(sym, tf))
 
     engine = BacktestEngine(
         initial_balance=INITIAL_BALANCE,

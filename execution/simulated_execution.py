@@ -6,6 +6,13 @@ from models import BarEvent
 
 logger = logging.getLogger(__name__)
 
+# Timeframe granularity in minutes — used to determine which bars are fine enough
+# to check fills and SL/TP against for a given entry timeframe.
+_TF_MINUTES: dict[str, int] = {
+    'M1': 1, 'M5': 5, 'M15': 15, 'M30': 30,
+    'H1': 60, 'H4': 240, 'D1': 1440,
+}
+
 
 class SimulatedExecution(BaseExecution):
     """
@@ -43,19 +50,23 @@ class SimulatedExecution(BaseExecution):
         sl: float,
         tp: float,
         strategy_name: str,
+        entry_timeframe: str | None = None,
+        tp_locked: bool = False,
     ) -> int:
         ticket = self._next_ticket
         self._next_ticket += 1
         self._pending[ticket] = {
-            'ticket':        ticket,
-            'symbol':        symbol,
-            'direction':     direction,
-            'order_type':    order_type,
-            'entry_price':   entry_price,
-            'lot_size':      lot_size,
-            'sl':            sl,
-            'tp':            tp,
-            'strategy_name': strategy_name,
+            'ticket':          ticket,
+            'symbol':          symbol,
+            'direction':       direction,
+            'order_type':      order_type,
+            'entry_price':     entry_price,
+            'lot_size':        lot_size,
+            'sl':              sl,
+            'tp':              tp,
+            'strategy_name':   strategy_name,
+            'entry_timeframe': entry_timeframe,
+            'tp_locked':       tp_locked,
         }
         return ticket
 
@@ -63,25 +74,49 @@ class SimulatedExecution(BaseExecution):
         """
         Called at the start of each bar. Handles fills and SL/TP checks.
         Returns a list of closed trade result dicts for trades closed this bar.
+
+        Fill and SL/TP checks are gated by the entry_timeframe stored on each
+        order (set from the bar that generated the signal):
+
+        - MARKET / PENDING fills: only triggered on bars whose timeframe matches
+          the order's entry_timeframe. This prevents a D1 bias bar (wide range)
+          from filling a pending that was signalled on an H1 bar.
+
+        - SL/TP checks: triggered on any bar whose timeframe is equal to or finer
+          than the entry_timeframe (e.g. H1 entry → check on H1 and M15/M5 if
+          available; D1 entry → check on D1, H4, H1, etc.). This ensures that
+          finer-grained data improves SL/TP accuracy without false triggers from
+          coarser bars.
+
+        Orders without an entry_timeframe (legacy / externally created) fall back
+        to the old behaviour: fills and SL/TP are checked on every bar.
         """
         closed = []
         just_opened = set()
+        bar_minutes = _TF_MINUTES.get(bar.timeframe, 0)
 
         # 1. Fill MARKET orders placed on a previous bar — fill at this bar's open
         for ticket in list(self._pending):
             pos = self._pending[ticket]
-            if pos['symbol'] == bar.symbol and pos['order_type'] == 'MARKET':
-                pos['entry_price'] = self._apply_spread(bar.open, pos['symbol'], pos['direction'])
-                self._recalc_tp(pos)
-                pos['open_time'] = bar.timestamp
-                self._positions[ticket] = self._pending.pop(ticket)
-                just_opened.add(ticket)
-                logger.debug(f"MARKET fill: {pos['symbol']} {pos['direction']} @ {pos['entry_price']:.5f} ticket={ticket}")
+            if pos['symbol'] != bar.symbol or pos['order_type'] != 'MARKET':
+                continue
+            entry_tf = pos.get('entry_timeframe')
+            if entry_tf is not None and bar.timeframe != entry_tf:
+                continue
+            pos['entry_price'] = self._apply_spread(bar.open, pos['symbol'], pos['direction'])
+            self._recalc_tp(pos)
+            pos['open_time'] = bar.timestamp
+            self._positions[ticket] = self._pending.pop(ticket)
+            just_opened.add(ticket)
+            logger.debug(f"MARKET fill: {pos['symbol']} {pos['direction']} @ {pos['entry_price']:.5f} ticket={ticket}")
 
         # 2. Check PENDING limit/stop orders for this symbol
         for ticket in list(self._pending):
             pos = self._pending[ticket]
             if pos['symbol'] != bar.symbol:
+                continue
+            entry_tf = pos.get('entry_timeframe')
+            if entry_tf is not None and bar.timeframe != entry_tf:
                 continue
             if bar.low <= pos['entry_price'] <= bar.high:
                 pos['entry_price'] = self._apply_spread(pos['entry_price'], pos['symbol'], pos['direction'])
@@ -97,6 +132,11 @@ class SimulatedExecution(BaseExecution):
             pos = self._positions[ticket]
             if pos['symbol'] != bar.symbol:
                 continue
+            entry_tf = pos.get('entry_timeframe')
+            if entry_tf is not None:
+                entry_minutes = _TF_MINUTES.get(entry_tf, 0)
+                if bar_minutes > entry_minutes:
+                    continue  # bar is coarser than entry TF — skip to avoid false SL/TP
             result = self._check_sl_tp(pos, bar)
             if result:
                 del self._positions[ticket]
@@ -185,7 +225,10 @@ class SimulatedExecution(BaseExecution):
         }
 
     def _recalc_tp(self, pos: dict):
-        """Recalculate TP from actual fill price so R:R is measured from real entry."""
+        """Recalculate TP from actual fill price so R:R is measured from real entry.
+        Skipped when tp_locked=True (strategy set a fixed price-level TP)."""
+        if pos.get('tp_locked'):
+            return
         sl_dist = abs(pos['entry_price'] - pos['sl'])
         if pos['direction'] == 'BUY':
             pos['tp'] = pos['entry_price'] + sl_dist * self._rr_ratio

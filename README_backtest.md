@@ -1,5 +1,5 @@
   ---
-  Getting a Backtest Running
+  Steps to getting a Backtest Running
 
   Part 1 — Set up your development machine (Linux, one-time)
 

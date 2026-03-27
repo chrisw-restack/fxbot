@@ -80,24 +80,16 @@ def main():
         # Add or remove strategies here. Each strategy is registered against
         # the full symbol list, but will only fire when its declared timeframes
         # produce a new completed bar.
-        # ── DEMO MODE — relaxed filters for execution testing ─────────────
-        # Restore these production values once demo testing is complete:
-        #   EmaFibRetracement:
-        #     cooldown_bars=10,
-        #     invalidate_swing_on_loss=True,
-        #     min_swing_pips=15,
-        #     ema_sep_pct=0.001,
-        #     blocked_hours=(16, 17, 18, 19, 20, 21, 22, 23),
-        #     min_d1_atr_pips=50.0,
-        # ────────────────────────────────────────────────────────────────────
         strategies = [
             EmaFibRetracementStrategy(
+                fib_entry=0.786,
+                fib_tp=2.5,
+                fractal_n=3,
+                min_swing_pips=10,
+                ema_sep_pct=0.001,
                 cooldown_bars=0,
                 invalidate_swing_on_loss=False,
-                min_swing_pips=5,
-                ema_sep_pct=0.0,
-                blocked_hours=(),
-                min_d1_atr_pips=0.0,
+                blocked_hours=(*range(20, 24), *range(0, 9)),  # allow 09:00-19:00 UTC (London + early NY)
             ),
         ]
         for strategy in strategies:

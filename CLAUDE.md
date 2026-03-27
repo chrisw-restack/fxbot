@@ -79,6 +79,7 @@ class Signal:
     strategy_name: str
     timestamp: datetime
     take_profit: float | None = None  # optional — if set, overrides risk manager TP
+    entry_timeframe: str | None = None  # auto-set by engine from the bar that generated the signal
 # Risk manager adds: lot_size, take_profit (if not already set) before passing to execution
 ```
 
@@ -280,16 +281,21 @@ For `PENDING` orders, the execution layer infers order subtype from direction vs
 
 ```python
 SYMBOLS = ['EURUSD', 'GBPUSD', 'AUDUSD', 'NZDUSD', 'USDJPY', 'USDCAD', 'USDCHF']
+# Metals/indices available for backtesting: XAUUSD, USA30, USA500, USA100
+# (pip sizes and pip values for all of these are configured in config.py)
 TIMEFRAMES = ['M5', 'M15', 'H1', 'H4', 'D1']
 
 LOT_SIZE_MODE = 'DYNAMIC'   # 'DYNAMIC' or 'FIXED'
 FIXED_LOT_SIZE = 0.01       # used only when LOT_SIZE_MODE = 'FIXED'
 RISK_PCT = 0.005            # 0.5% per trade — used only when LOT_SIZE_MODE = 'DYNAMIC'
 DEFAULT_RR_RATIO = 2.0      # 1:2 risk/reward
+MIN_RR_RATIO = 1.0          # minimum acceptable R:R — signals below this are rejected
 
-MAX_OPEN_TRADES = 6         # increased from 4 to support 3-strategy live suite
+MAX_OPEN_TRADES = 6         # allows headroom for future multi-strategy expansion
 MAX_DAILY_LOSS_PCT = 0.02   # 2% of account balance
 ```
+
+Pip sizes and values for all instruments (including XAUUSD, USA30, USA500, USA100) are in `config.PIP_SIZE` and `config.PIP_VALUE_USD`. Add new instruments there before backtesting them.
 
 Per-strategy risk overrides are supported via `risk_pct_overrides` dict in `RiskManager` (keyed by strategy NAME). Currently EmaFibRetracement uses 0.7%, all others use the 0.5% default.
 
@@ -371,8 +377,8 @@ Use `walk_forward.py` to validate that optimized parameters generalize to unseen
 
 ```
 python walk_forward.py ema_fib_retracement
-python walk_forward.py the_strat
-python walk_forward.py the_strat_m15
+python walk_forward.py ebp
+python walk_forward.py breakout
 ```
 
 **How it works**: splits data into rolling train/test windows (default 4yr train, 2yr test, 2yr step). For each fold, optimizes parameters on training data, then tests the best params on out-of-sample data. Reports per-fold and aggregate OOS metrics.
@@ -389,19 +395,33 @@ python walk_forward.py the_strat_m15
 
 ## Live Suite
 
-The bot runs 3 strategies concurrently in production (`main_live.py`):
+The bot runs **1 strategy** in production (`main_live.py`):
 
 | Strategy | Timeframes | Order Type | Key Params |
 |----------|-----------|------------|------------|
-| EmaFibRetracement | D1, H1 | MARKET | cooldown=10, min_swing=15, ema_sep=0.001 |
-| TheStrat D1/H4/H1 | D1, H4, H1 | PENDING | tp_mode=daily, min_sl=8, cooldown=3 |
-| TheStrat H4/H1/M15 | H4, H1, M15 | PENDING | tp_mode=daily, min_sl=5, cooldown=3 |
+| EmaFibRetracement | D1, H1 | MARKET | fib_entry=0.786, fib_tp=2.5, fractal_n=3, min_swing=10, ema_sep=0.001, blocked_hours=(20-23, 0-8) |
 
-TheStrat instances auto-generate unique NAMEs from their timeframes (e.g. `TheStrat_D1_H4_H1`) to avoid conflicts in the engine's strategy registry and cancel signal routing.
+Backtest: `python run_backtest.py ema_fib_retracement`
+Walk-forward verdict: MODERATE (all 3 folds OOS positive, +45.1R aggregate OOS).
 
-Backtest all 3 together: `python run_backtest.py live_suite`
+**Validated (not yet live):**
+- **EBP** (H4/H1) — walk-forward STRONG. See `strategy_log/ebp.md`.
+- **EmaFibRunning** (D1/H1) — walk-forward STRONG (+0.106R OOS, 90% retention). See `strategy_log/ema_fib_running.md`.
 
-All 3 strategies passed walk-forward validation with STRONG retention (94-118%).
+**Suspended / shelved:**
+- TheStrat — fails walk-forward after fill-bug fix. See `strategy_log/the_strat.md`.
+- IMS — walk-forward FAIL, too few trades for reliable OOS optimisation. See `strategy_log/ims.md`.
+- EBP Limit — walk-forward FAIL, regime-dependent. See `strategy_log/ebp_limit.md`.
+- Breakout — walk-forward FAIL. Simple N-bar channel breakout has no robust edge on forex H1. See `strategy_log/breakout.md`.
+- GaussianChannel — walk-forward WEAK (+0.046R OOS, 40% retention, fold 2 negative). Also had a warm-up bug (corrupt filter state for first 2×period bars, now fixed). See `strategy_log/gaussian_channel.md`.
+- EmaFibRetracementIntraday — walk-forward FAIL, severe curve-fit. See `strategy_log/ema_fib_retracement_intraday.md`.
+- MeanReversion — no positive sweep combos at all. See `strategy_log/mean_reversion.md`.
+- KeltnerReversion — walk-forward FAIL (aggregate -0.006R, fold 3 collapse). See `strategy_log/keltner_reversion.md`.
+- RangeFade — barely fires (56 trades/10yr best combo), no reliable edge. See `strategy_log/range_fade.md`.
+- SupplyDemand — walk-forward MODERATE (+0.020R OOS, 51% retention) but only 150 OOS trades and fold 1 negative. Insufficient evidence. See `strategy_log/supply_demand.md`.
+- IctJudasSwing — sweep all 108 combos negative (best -0.024R). M5 MSS pattern has no edge at 2:1 R:R. See `strategy_log/ict_judas_swing.md`.
+
+**Strategy logs**: `strategy_log/` folder contains one `.md` per strategy with full parameter, sweep, and walk-forward history.
 
 ## News Filter
 
@@ -440,7 +460,7 @@ nf.is_blocked(symbol='EURUSD', timestamp=some_datetime)  # True if blocked
 ## Important Notes
 
 - **USDJPY pip size is 0.01** (not 0.0001). Any strategy doing pip calculations internally must handle this. Use a `pip_sizes` dict parameter.
-- **Backtest spread is 3.0 pips** — conservative worst-case average; real raw spreads are typically 0.1-0.5 pips.
+- **Backtest spread is 2.0 pips** — conservative average; real raw spreads are typically 0.1-0.5 pips.
 - **Commission is $7.00 per lot round-trip** (ICMarkets Raw Spread) — deducted from PnL at trade close in backtesting.
 - **Break-even stop loss** is supported in `SimulatedExecution` via `breakeven_at_r` parameter, but testing showed it hurts fib retracement strategies.
 

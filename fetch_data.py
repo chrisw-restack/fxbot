@@ -18,12 +18,12 @@ from dotenv import load_dotenv
 
 # ── Configuration — edit these before running ─────────────────────────────────
 # SYMBOLS    = ['EURUSD','GBPUSD','AUDUSD','NZDUSD','USDCAD','USDJPY']
-SYMBOLS    = ['EURUSD']
-TIMEFRAMES = ['M5']
+SYMBOLS    = ['AUDUSD']
+TIMEFRAMES = ['D1']
 # START      = datetime(2025, 4, 15)
 # END        = datetime(2026, 3, 1)
-START      = datetime(2026, 2, 26)
-END        = datetime(2026, 3, 1)
+START      = datetime(2026, 1, 1)
+END        = datetime(2026, 3,20)
 # ─────────────────────────────────────────────────────────────────────────────
 
 load_dotenv()

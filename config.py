@@ -10,6 +10,7 @@ RISK_PCT = 0.005            # 0.5% risk per trade — used only when LOT_SIZE_MO
 
 # ── Risk / Reward ─────────────────────────────────────────────────────────────
 DEFAULT_RR_RATIO = 2.0      # 1:2 risk/reward by default
+MIN_RR_RATIO = 1.0          # Minimum acceptable R:R — signals below this are rejected
 MIN_SL_PIPS = 5             # Signals with a stop-loss smaller than this are rejected
 
 # ── Portfolio Limits ──────────────────────────────────────────────────────────
@@ -26,6 +27,11 @@ PIP_SIZE = {
     'USDJPY': 0.01,
     'USDCAD': 0.0001,
     'USDCHF': 0.0001,
+    # Metals & indices — 1 pip defined as the minimum meaningful unit
+    'XAUUSD': 0.10,   # gold: 1 pip = $0.10 (10 cents per troy oz)
+    'USA30':  1.0,    # Dow Jones: 1 pip = 1 index point
+    'USA500': 0.1,    # S&P 500: 1 pip = 0.1 index point
+    'USA100': 1.0,    # Nasdaq 100: 1 pip = 1 index point
 }
 
 # ── Spread ───────────────────────────────────────────────────────────────────
@@ -50,6 +56,11 @@ PIP_VALUE_USD = {
     'USDJPY': 10.0,
     'USDCAD': 10.0,
     'USDCHF': 10.0,
+    # Metals & indices — USD value per pip per 1 standard lot
+    'XAUUSD': 10.0,   # 100 troy oz × $0.10/pip = $10/lot
+    'USA30':   1.0,   # $1/lot per 1-point move (ICMarkets CFD)
+    'USA500':  1.0,   # $1/lot per 0.1-point move
+    'USA100':  1.0,   # $1/lot per 1-point move
 }
 
 
@@ -76,6 +87,9 @@ def validate():
 
     if DEFAULT_RR_RATIO <= 0:
         errors.append(f"DEFAULT_RR_RATIO must be positive, got {DEFAULT_RR_RATIO}")
+
+    if MIN_RR_RATIO <= 0:
+        errors.append(f"MIN_RR_RATIO must be positive, got {MIN_RR_RATIO}")
 
     if MIN_SL_PIPS < 0:
         errors.append(f"MIN_SL_PIPS must be non-negative, got {MIN_SL_PIPS}")

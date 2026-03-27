@@ -31,3 +31,14 @@ python run_backtest.py the_strat --start-date 2026-01-01 --end-date 2026-06-30
 
 # timezones
 all strats and backtesting converts time to utc, ic markets server uses gmt+3, vps timezone doesnt matter
+
+# time zone conversion
+  ┌─────────┬──────────────┬─────────────────────┬─────────────────────┐
+  │ Session │   NY time    │ UTC (winter, NY=-5) │ UTC (summer, NY=-4) │
+  ├─────────┼──────────────┼─────────────────────┼─────────────────────┤
+  │ Asian   │ 8PM–midnight │ 01:00–05:00         │ 00:00–04:00         │
+  ├─────────┼──────────────┼─────────────────────┼─────────────────────┤
+  │ London  │ 2AM–5AM      │ 07:00–10:00         │ 06:00–09:00         │
+  ├─────────┼──────────────┼─────────────────────┼─────────────────────┤
+  │ NY AM   │ 8AM–11AM     │ 13:00–16:00         │ 12:00–15:00         │
+  └─────────┴──────────────┴─────────────────────┴─────────────────────┘

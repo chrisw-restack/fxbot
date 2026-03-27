@@ -83,6 +83,11 @@ class EventEngine:
             signal = strategy.generate_signal(event)
             if signal is None:
                 continue
+            # Tag the signal with the timeframe of the bar that generated it.
+            # The execution layer uses this to restrict fill/SL-TP checks to
+            # bars of the appropriate granularity.
+            if signal.direction != 'CANCEL':
+                signal.entry_timeframe = event.timeframe
 
             logger.info(
                 f"Signal: {signal.symbol} {signal.direction} {signal.order_type} "
@@ -118,6 +123,8 @@ class EventEngine:
                 sl=enriched.stop_loss,
                 tp=enriched.take_profit,
                 strategy_name=enriched.strategy_name,
+                entry_timeframe=enriched.entry_timeframe,
+                tp_locked=enriched.tp_locked,
             )
 
             if ticket:

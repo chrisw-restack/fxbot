@@ -21,11 +21,11 @@ from dukascopy_python import instruments
 
 # ── Configuration — edit these before running ─────────────────────────────────
 # SYMBOLS = ['EURUSD', 'GBPUSD', 'AUDUSD', 'NZDUSD', 'USDJPY', 'USDCAD', 'USDCHF']
-# SYMBOLS = ['EURUSD', 'GBPUSD', 'AUDUSD', 'NZDUSD', 'USDJPY', 'USDCAD']
-SYMBOLS = ['USDCHF']
-TIMEFRAMES = ['M5']        # Any of: M5, M15, H1, H4, D1
+SYMBOLS = ['USA100', 'USA500', 'USA30', 'XAUUSD']
+# SYMBOLS = ['USDCHF']
+TIMEFRAMES = ['D1']        # Any of: M5, M15, H1, H4, D1
 START_YEAR = 2016
-END_DATE = datetime(2026, 3, 11)
+END_DATE = datetime(2026, 3, 20)
 OUTPUT_DIR = 'data/historical'
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -38,6 +38,10 @@ INSTRUMENT_MAP = {
     'USDJPY': instruments.INSTRUMENT_FX_MAJORS_USD_JPY,
     'USDCHF': instruments.INSTRUMENT_FX_MAJORS_USD_CHF,
     'USDCAD': instruments.INSTRUMENT_FX_MAJORS_USD_CAD,
+    'XAUUSD': instruments.INSTRUMENT_FX_METALS_XAU_USD,       # Gold spot
+    'USA30':  instruments.INSTRUMENT_IDX_AMERICA_E_D_J_IND,   # Dow Jones
+    'USA500': instruments.INSTRUMENT_IDX_AMERICA_E_SANDP_500, # S&P 500
+    'USA100': instruments.INSTRUMENT_IDX_AMERICA_E_NQ_100,    # Nasdaq 100
 }
 
 # Map our timeframe names to dukascopy interval constants
@@ -109,8 +113,15 @@ for symbol in SYMBOLS:
         full_df.index.name = 'time'
         full_df = full_df.reset_index()
 
-        # Round prices to 5 decimal places (3 for JPY pairs)
-        decimals = 3 if 'JPY' in symbol else 5
+        # Round prices: 2dp for indices/gold, 3dp for JPY pairs, 5dp for others
+        if symbol in ('USA30', 'USA500', 'USA100'):
+            decimals = 2
+        elif symbol == 'XAUUSD':
+            decimals = 2
+        elif 'JPY' in symbol:
+            decimals = 3
+        else:
+            decimals = 5
         for col in ['open', 'high', 'low', 'close']:
             full_df[col] = full_df[col].round(decimals)
 

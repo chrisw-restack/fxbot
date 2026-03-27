@@ -6,6 +6,7 @@ on each training window, then validates on unseen test data.
 
 Usage:
     python walk_forward.py ema_fib_retracement
+    python walk_forward.py ebp
     python walk_forward.py the_strat
     python walk_forward.py the_strat_m15
 """
@@ -22,12 +23,19 @@ from backtest_engine import BacktestEngine
 from data.historical_loader import find_csv, load_and_merge, filter_bars
 from strategies.ema_fib_retracement import EmaFibRetracementStrategy
 from strategies.the_strat import TheStratStrategy
+from strategies.ebp import EbpStrategy
+from strategies.ims import ImsStrategy
+from strategies.ebp_limit import EbpLimitStrategy
+from strategies.breakout import BreakoutStrategy
+from strategies.ema_fib_retracement_intraday import EmaFibRetracementIntradayStrategy
+from strategies.ema_fib_running import EmaFibRunningStrategy
+from strategies.gaussian_channel import GaussianChannelStrategy
 
 logging.basicConfig(level=logging.ERROR)
 sys.stdout.reconfigure(line_buffering=True)
 
 # ── Settings ─────────────────────────────────────────────────────────────────
-SYMBOLS         = ['EURUSD', 'GBPUSD', 'AUDUSD', 'NZDUSD', 'USDJPY', 'USDCAD', 'USDCHF']
+SYMBOLS         = ['EURUSD', 'GBPUSD', 'AUDUSD', 'NZDUSD', 'USDJPY', 'USDCAD', 'USDCHF', 'XAUUSD']
 INITIAL_BALANCE = 10_000.0
 RR_RATIO        = 2.0
 SPREAD_PIPS     = 2.0
@@ -50,30 +58,131 @@ STRATEGY_CONFIGS = {
     'ema_fib_retracement': {
         'class': EmaFibRetracementStrategy,
         'timeframes': ['D1', 'H1'],
+        'fixed_params': {
+            'blocked_hours': (*range(20, 24), *range(0, 9)),  # allow 09:00-19:00 UTC
+        },
         'param_grid': {
-            'cooldown_bars':            [0, 5, 10, 20],
+            'fib_entry':                [0.5, 0.618, 0.786],
+            'fib_tp':                   [2.0, 2.5, 3.0],
+            'min_swing_pips':           [10, 20],
+            'ema_sep_pct':              [0.0, 0.001],
+            'cooldown_bars':            [0, 10],
             'invalidate_swing_on_loss': [True, False],
-            'min_swing_pips':           [10, 15, 20],
-            'ema_sep_pct':              [0.0, 0.0005, 0.001],
+        },
+    },
+    'ebp': {
+        'class': EbpStrategy,
+        'timeframes': ['H4', 'H1'],
+        'fixed_params': {
+            'tf_bias': 'H4', 'tf_entry': 'H1', 'require_fvg': False,
+        },
+        'param_grid': {
+            'fractal_n':       [2, 3],
+            'min_retrace_pct': [0.1, 0.25, 0.382],
+            'max_retrace_pct': [0.5, 0.618, 0.75],
         },
     },
     'the_strat': {
         'class': TheStratStrategy,
         'timeframes': ['D1', 'H4', 'H1'],
         'param_grid': {
+            'bias_types':    [
+                frozenset({'2-1-2_rev', '3-1-2', '1-2-2'}),       # rev_only
+                frozenset({'2-1-2_rev', '3-1-2', '1-2-2', '3'}),  # no_cont
+                frozenset({'2-1-2_rev', '3-1-2'}),                  # strong
+            ],
             'min_sl_pips':   [5, 8, 15],
             'cooldown_bars': [0, 3, 6],
+            'fractal_n':     [2, 3],
         },
         'fixed_params': {
             'tf_bias': 'D1', 'tf_intermediate': 'H4', 'tf_entry': 'H1',
+        },
+    },
+    'ims_d1_h4': {
+        'class': ImsStrategy,
+        'timeframes': ['D1', 'H4'],
+        'fixed_params': {
+            'tf_htf': 'D1', 'tf_ltf': 'H4',
+            'ltf_fractal_n': 2,
+            'tp_mode': 'htf_high',
+            'ema_fast': 20, 'ema_slow': 50,
+        },
+        'param_grid': {
+            'fractal_n':    [1, 2],
+            'htf_lookback': [30, 50, 80],
+            'cooldown_bars': [0, 3],
+        },
+    },
+    'ema_fib_running': {
+        'class': EmaFibRunningStrategy,
+        'timeframes': ['D1', 'H1'],
+        'fixed_params': {
+            'fib_entry': 0.618,
+            'min_swing_pips': 30,
+        },
+        'param_grid': {
+            'ema_sep_pct':              [0.0, 0.001],
+            'cooldown_bars':            [0, 10],
+            'invalidate_swing_on_loss': [True, False],
+        },
+    },
+    'ema_fib_intraday': {
+        'class': EmaFibRetracementIntradayStrategy,
+        'timeframes': ['H4', 'M15'],
+        'fixed_params': {
+            'fib_entry': 0.786,
+            'ema_sep_pct': 0.001,
+        },
+        'param_grid': {
+            'min_swing_pips': [10, 20, 30],
+            'cooldown_bars':  [0, 10],
+        },
+    },
+    'breakout': {
+        'class': BreakoutStrategy,
+        'timeframes': ['H1'],
+        'fixed_params': {},
+        'param_grid': {
+            'lookback': [50, 100, 150, 200],
+        },
+    },
+    'ebp_limit_h4': {
+        'class': EbpLimitStrategy,
+        'timeframes': ['D1', 'H4'],
+        'fixed_params': {
+            'tf': 'H4', 'tf_trend': 'D1', 'entry_pct': 0.382,
+            'max_sl_pips': 80,
+        },
+        'param_grid': {
+            'min_range_pips': [40, 60, 80],
+            'ema_fast':       [10, 20],
+            'ema_slow':       [20, 50],
+        },
+    },
+    'gaussian_channel': {
+        'class': GaussianChannelStrategy,
+        'timeframes': ['H4'],
+        'fixed_params': {},
+        'param_grid': {
+            'period':        [72, 144, 288],
+            'poles':         [2, 3, 4],
+            'tr_mult':       [1.0, 1.414, 2.0],
+            'cooldown_bars': [0, 3, 6],
         },
     },
     'the_strat_m15': {
         'class': TheStratStrategy,
         'timeframes': ['H4', 'H1', 'M15'],
         'param_grid': {
-            'min_sl_pips':   [5, 8, 15],
+            'bias_types':    [
+                frozenset({'2-1-2_rev', '3-1-2', '1-2-2'}),       # rev_only
+                frozenset({'2-1-2_rev', '3-1-2', '1-2-2', '3'}),  # no_cont
+                frozenset({'2-1-2_rev', '3-1-2'}),                  # strong
+            ],
+            'min_sl_pips':   [5, 10, 15, 20],
             'cooldown_bars': [0, 3, 6],
+            'fractal_n':     [2, 3],
         },
         'fixed_params': {
             'tf_bias': 'H4', 'tf_intermediate': 'H1', 'tf_entry': 'M15',
@@ -269,10 +378,11 @@ def main():
     csv_paths = []
     for sym in SYMBOLS:
         for tf in timeframes:
-            path = find_csv(sym, tf)
-            if path:
-                csv_paths.append(path)
-                print(f"  Found: {path}")
+            paths = find_csv(sym, tf)
+            if paths:
+                csv_paths.extend(paths)
+                for p in paths:
+                    print(f"  Found: {p}")
             else:
                 print(f"  WARNING: Missing {sym} {tf}")
 

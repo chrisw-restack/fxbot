@@ -65,7 +65,8 @@ class RiskManager:
                 lot_size = 0.01
 
         # ── Take-profit ───────────────────────────────────────────────────────
-        if signal.take_profit is not None:
+        tp_locked = signal.take_profit is not None
+        if tp_locked:
             take_profit = signal.take_profit
         else:
             tp_distance = sl_distance * self.rr_ratio
@@ -73,6 +74,17 @@ class RiskManager:
                 take_profit = signal.entry_price + tp_distance
             else:
                 take_profit = signal.entry_price - tp_distance
+
+        # ── R:R guard ─────────────────────────────────────────────────────────
+        tp_distance = abs(take_profit - signal.entry_price)
+        actual_rr = tp_distance / sl_distance if sl_distance > 0 else 0.0
+        if actual_rr < config.MIN_RR_RATIO:
+            logger.warning(
+                f"Signal rejected | {signal.strategy_name} | {signal.symbol} {signal.direction:<4} | "
+                f"{signal.timestamp.strftime('%Y-%m-%d %H:%M')} | "
+                f"R:R too low: {actual_rr:.2f} (minimum {config.MIN_RR_RATIO})"
+            )
+            return None
 
         return EnrichedSignal(
             symbol=signal.symbol,
@@ -84,4 +96,6 @@ class RiskManager:
             lot_size=lot_size,
             strategy_name=signal.strategy_name,
             timestamp=signal.timestamp,
+            entry_timeframe=signal.entry_timeframe,
+            tp_locked=tp_locked,
         )

@@ -61,6 +61,7 @@ class IctJudasSwingStrategy:
         self.pip_sizes = pip_sizes or {
             'EURUSD': 0.0001, 'GBPUSD': 0.0001, 'AUDUSD': 0.0001,
             'NZDUSD': 0.0001, 'USDJPY': 0.01,   'USDCAD': 0.0001,
+            'USDCHF': 0.0001, 'XAUUSD': 0.10,
         }
         self._window_size = 2 * fractal_n + 1
 

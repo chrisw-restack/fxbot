@@ -48,17 +48,19 @@ class TradeLogger:
         print("\n" + "=" * 100)
         print("TRADE LOG")
         print("=" * 100)
-        print(f"{'Datetime':<20}  {'Symbol':<8}  {'Dir':<5}  {'Result':<6}  {'R':>6}  {'SL Pips':>8}  {'Duration':>9}  Strategy")
-        print("-" * 100)
+        print(f"{'Datetime':<20}  {'Symbol':<8}  {'Dir':<5}  {'Result':<6}  {'R':>6}  {'Entry':>10}  {'SL Pips':>8}  {'Duration':>9}  Strategy")
+        print("-" * 110)
         for t in self._closed_trades:
             open_time = t.get('open_time') or t.get('close_time')
             dt = open_time.strftime('%Y-%m-%d %H:%M') if hasattr(open_time, 'strftime') else str(open_time)
+            entry = t.get('fill_price') or t.get('entry_price')
+            entry_str = f"{entry:>10.5f}" if entry is not None else f"{'—':>10}"
             sl_pips = t.get('sl_pips')
             sl_pips_str = f"{sl_pips:>7.1f}" if sl_pips is not None else f"{'—':>7}"
             duration_str = _format_duration(t.get('duration_hours'))
             print(
                 f"{dt:<20}  {t['symbol']:<8}  {t['direction']:<5}  "
-                f"{t['result']:<6}  {t['r_multiple']:>+6.2f}  {sl_pips_str}  {duration_str:>9}  {t['strategy_name']}"
+                f"{t['result']:<6}  {t['r_multiple']:>+6.2f}  {entry_str}  {sl_pips_str}  {duration_str:>9}  {t['strategy_name']}"
             )
 
     def print_summary(self):
@@ -112,9 +114,16 @@ class TradeLogger:
             else:
                 worst_loss_streak = max(worst_loss_streak, current_streak)
 
+        # Final balance
+        final_balance = self._initial_balance
+        for t in trades:
+            final_balance += t.get('pnl', 0.0)
+
         print("\n" + "=" * 100)
         print("PERFORMANCE SUMMARY")
         print("=" * 100)
+        print(f"  Starting balance   ${self._initial_balance:,.2f}")
+        print(f"  Ending balance     ${final_balance:,.2f}")
         print(f"  Total trades       {total}")
         be_str = f" / {len(bes)}BE" if bes else ""
         print(f"  Win rate           {win_rate:.1f}%  ({len(wins)}W / {len(losses)}L{be_str})")
@@ -126,6 +135,11 @@ class TradeLogger:
         print(f"  Worst loss streak  {worst_loss_streak}")
         print(f"  Avg win            {avg_win_r:.2f}R")
         print(f"  Avg loss           {avg_loss_r:.2f}R")
+
+        total_commission = sum(t.get('commission', 0.0) for t in trades)
+        if total_commission > 0:
+            print(f"  Total commission   ${total_commission:,.2f}")
+
         print("=" * 100)
 
     def plot_equity_curve(self, output_dir: str = 'output'):

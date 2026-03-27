@@ -1,59 +1,69 @@
 """
 Parameter sweep for EmaFibRetracement strategy.
 Tests combinations and outputs a ranked results table.
+
+Grid covers:
+  fib_entry        — retracement entry level (50%, 61.8%, 78.6%)
+  fib_tp           — extension TP level (1.5×, 2×, 2.5×, 3×)
+  fractal_n        — bars each side for fractal confirmation (2, 3, 5)
+  min_swing_pips   — minimum swing range filter (10, 20, 30)
+  ema_sep_pct      — minimum H1 EMA separation (off, 0.1%)
+  cooldown_bars    — H1 bars to skip after a loss (0, 10)
+  invalidate_swing — discard swing that produced a loss (Y/N)
+  swing_max_age    — max H1 bar age for a swing to remain valid (50, 100, 200)
+
+Total: 3×4×3×3×2×2×2×3 = 1,296 combinations
 """
 
 import itertools
+import io
+import contextlib
 import logging
 import sys
 
 from backtest_engine import BacktestEngine
 from strategies.ema_fib_retracement import EmaFibRetracementStrategy
-from data.historical_loader import find_csv
+from data.historical_loader import find_csv, load_and_merge
 
 logging.basicConfig(level=logging.ERROR)
 sys.stdout.reconfigure(line_buffering=True)
 
-SYMBOLS = ['EURUSD', 'GBPUSD', 'AUDUSD', 'NZDUSD', 'USDJPY', 'USDCAD']
+SYMBOLS = ['EURUSD', 'GBPUSD', 'AUDUSD', 'NZDUSD', 'USDJPY', 'USDCAD', 'USDCHF']
 INITIAL_BALANCE = 10_000.0
 RR_RATIO = 2.0
 SPREAD_PIPS = 2.0
 
 # ── Parameter grid ──────────────────────────────────────────────────────────
 PARAM_GRID = {
-    'swing_max_age':          [50, 100, 150],
-    'cooldown_bars':          [0, 10, 20],
+    'fib_entry':                [0.5, 0.618, 0.786],
+    'fib_tp':                   [1.5, 2.0, 2.5, 3.0],
+    'fractal_n':                [2, 3, 5],
+    'min_swing_pips':           [10, 20, 30],
+    'ema_sep_pct':              [0.0, 0.001],
+    'cooldown_bars':            [0, 10],
     'invalidate_swing_on_loss': [True, False],
-    'min_swing_pips':         [10, 15, 20],
-    'ema_sep_pct':            [0.0, 0.0005],
-    'min_d1_atr_pips':        [0, 50],
-    'fractal_n':              [2, 3, 5],
+    'swing_max_age':            [50, 100, 200],
 }
 
-# ── Discover CSV files ──────────────────────────────────────────────────────
+# ── Discover and pre-load bar data once ────────────────────────────────────
 csv_paths = []
 for symbol in SYMBOLS:
     for tf in ['D1', 'H1']:
-        path = find_csv(symbol, tf)
-        if path:
-            csv_paths.append(path)
+        csv_paths.extend(find_csv(symbol, tf))
 
 if not csv_paths:
     print("No CSV files found.")
     sys.exit(1)
 
-# ── Pre-load bar data once ──────────────────────────────────────────────────
-from data.historical_loader import load_and_merge
 print("Loading bar data...")
 all_bars = load_and_merge(csv_paths)
 print(f"Loaded {len(all_bars)} bars")
 
 # ── Generate all combinations ───────────────────────────────────────────────
 keys = list(PARAM_GRID.keys())
-values = list(PARAM_GRID.values())
-combos = list(itertools.product(*values))
+combos = list(itertools.product(*PARAM_GRID.values()))
 total = len(combos)
-print(f"Running {total} parameter combinations...\n")
+print(f"Running {total} parameter combinations (~{total * 2 // 60} min)...\n")
 
 results = []
 
@@ -61,13 +71,14 @@ for i, combo in enumerate(combos):
     params = dict(zip(keys, combo))
 
     strategy = EmaFibRetracementStrategy(
-        swing_max_age=params['swing_max_age'],
-        cooldown_bars=params['cooldown_bars'],
-        invalidate_swing_on_loss=params['invalidate_swing_on_loss'],
+        fib_entry=params['fib_entry'],
+        fib_tp=params['fib_tp'],
+        fractal_n=params['fractal_n'],
         min_swing_pips=params['min_swing_pips'],
         ema_sep_pct=params['ema_sep_pct'],
-        min_d1_atr_pips=params['min_d1_atr_pips'],
-        fractal_n=params['fractal_n'],
+        cooldown_bars=params['cooldown_bars'],
+        invalidate_swing_on_loss=params['invalidate_swing_on_loss'],
+        swing_max_age=params['swing_max_age'],
     )
 
     engine = BacktestEngine(
@@ -77,8 +88,6 @@ for i, combo in enumerate(combos):
     )
     engine.add_strategy(strategy, symbols=SYMBOLS)
 
-    # Suppress all print output from the engine — feed pre-loaded bars directly
-    import io, contextlib
     with contextlib.redirect_stdout(io.StringIO()):
         for bar in all_bars:
             closed_trades = engine.execution.check_fills(bar)
@@ -89,15 +98,14 @@ for i, combo in enumerate(combos):
             engine.event_engine.process_bar(bar)
 
     trades = engine.execution.get_closed_trades()
-    total_trades = len(trades)
-
-    if total_trades == 0:
+    n = len(trades)
+    if n == 0:
         continue
 
     wins = sum(1 for t in trades if t['result'] == 'WIN')
     total_r = sum(t['r_multiple'] for t in trades)
-    win_rate = wins / total_trades * 100
-    expectancy = total_r / total_trades
+    win_rate = wins / n * 100
+    expectancy = total_r / n
     gp = sum(t['r_multiple'] for t in trades if t['result'] == 'WIN')
     gl = abs(sum(t['r_multiple'] for t in trades if t['result'] == 'LOSS'))
     pf = gp / gl if gl > 0 else 0.0
@@ -110,18 +118,17 @@ for i, combo in enumerate(combos):
         max_dd = max(max_dd, peak - running)
 
     # Worst loss streak
-    worst_streak = 0
-    current_streak = 0
+    worst_streak, cur_streak = 0, 0
     for t in trades:
         if t['result'] == 'LOSS':
-            current_streak += 1
-            worst_streak = max(worst_streak, current_streak)
+            cur_streak += 1
+            worst_streak = max(worst_streak, cur_streak)
         else:
-            current_streak = 0
+            cur_streak = 0
 
     results.append({
         **params,
-        'trades': total_trades,
+        'trades': n,
         'win_rate': win_rate,
         'total_r': total_r,
         'pf': pf,
@@ -130,82 +137,76 @@ for i, combo in enumerate(combos):
         'worst_streak': worst_streak,
     })
 
-    if (i + 1) % 50 == 0 or i + 1 == total:
-        print(f"  Progress: {i+1}/{total}")
+    if (i + 1) % 100 == 0 or i + 1 == total:
+        best_so_far = max((r['expectancy'] for r in results), default=0)
+        print(f"  {i+1}/{total}  best expectancy so far: {best_so_far:+.3f}R")
 
-# ── Sort and display results ────────────────────────────────────────────────
-# Primary sort: total_r descending
-results.sort(key=lambda r: r['total_r'], reverse=True)
 
-print(f"\n{'='*160}")
-print(f"TOP 30 BY TOTAL R (out of {len(results)} valid combinations)")
-print(f"{'='*160}")
-header = (
-    f"{'swing_age':>9} {'cool':>4} {'inval':>5} {'min_sw':>6} {'ema_sep':>7} "
-    f"{'atr_pip':>7} {'frac_n':>6} | "
+# ── Display helpers ──────────────────────────────────────────────────────────
+W = 170
+HEADER = (
+    f"{'fib_e':>6} {'fib_tp':>6} {'frac':>4} {'sw_pip':>6} {'ema_s':>6} "
+    f"{'cool':>4} {'inv':>3} {'sw_age':>6} | "
     f"{'trades':>6} {'WR%':>6} {'TotalR':>8} {'PF':>6} {'Expect':>7} {'MaxDD':>6} {'Streak':>6}"
 )
-print(header)
-print('-' * 160)
 
-for r in results[:30]:
-    print(
-        f"{r['swing_max_age']:>9} {r['cooldown_bars']:>4} "
-        f"{'Y' if r['invalidate_swing_on_loss'] else 'N':>5} "
-        f"{r['min_swing_pips']:>6.0f} {r['ema_sep_pct']:>7.4f} "
-        f"{r['min_d1_atr_pips']:>7.0f} {r['fractal_n']:>6} | "
+def row(r):
+    return (
+        f"{r['fib_entry']:>6.3f} {r['fib_tp']:>6.1f} {r['fractal_n']:>4} "
+        f"{r['min_swing_pips']:>6.0f} {r['ema_sep_pct']:>6.4f} "
+        f"{r['cooldown_bars']:>4} {'Y' if r['invalidate_swing_on_loss'] else 'N':>3} "
+        f"{r['swing_max_age']:>6} | "
         f"{r['trades']:>6} {r['win_rate']:>5.1f}% {r['total_r']:>+8.1f} "
-        f"{r['pf']:>6.2f} {r['expectancy']:>+7.2f} {r['max_dd_r']:>6.1f} {r['worst_streak']:>6}"
+        f"{r['pf']:>6.2f} {r['expectancy']:>+7.3f} {r['max_dd_r']:>6.1f} {r['worst_streak']:>6}"
     )
 
-print(f"\n{'='*160}")
-print(f"TOP 20 BY EXPECTANCY (minimum 200 trades)")
-print(f"{'='*160}")
-print(header)
-print('-' * 160)
+def print_table(title, rows, n=30):
+    print(f"\n{'='*W}")
+    print(title)
+    print(f"{'='*W}")
+    print(HEADER)
+    print('-' * W)
+    for r in rows[:n]:
+        print(row(r))
 
+
+# ── 1. Top by Total R ────────────────────────────────────────────────────────
+results.sort(key=lambda r: r['total_r'], reverse=True)
+print_table(f"TOP 30 BY TOTAL R  (out of {len(results)} valid combinations)", results)
+
+# ── 2. Top by Expectancy (min 200 trades) ───────────────────────────────────
 filtered = [r for r in results if r['trades'] >= 200]
 filtered.sort(key=lambda r: r['expectancy'], reverse=True)
-for r in filtered[:20]:
-    print(
-        f"{r['swing_max_age']:>9} {r['cooldown_bars']:>4} "
-        f"{'Y' if r['invalidate_swing_on_loss'] else 'N':>5} "
-        f"{r['min_swing_pips']:>6.0f} {r['ema_sep_pct']:>7.4f} "
-        f"{r['min_d1_atr_pips']:>7.0f} {r['fractal_n']:>6} | "
-        f"{r['trades']:>6} {r['win_rate']:>5.1f}% {r['total_r']:>+8.1f} "
-        f"{r['pf']:>6.2f} {r['expectancy']:>+7.2f} {r['max_dd_r']:>6.1f} {r['worst_streak']:>6}"
-    )
+print_table("TOP 30 BY EXPECTANCY  (min 200 trades)", filtered)
 
-print(f"\n{'='*160}")
-print(f"TOP 20 BY PROFIT FACTOR (minimum 200 trades)")
-print(f"{'='*160}")
-print(header)
-print('-' * 160)
-
+# ── 3. Top by Profit Factor (min 200 trades) ────────────────────────────────
 filtered.sort(key=lambda r: r['pf'], reverse=True)
-for r in filtered[:20]:
-    print(
-        f"{r['swing_max_age']:>9} {r['cooldown_bars']:>4} "
-        f"{'Y' if r['invalidate_swing_on_loss'] else 'N':>5} "
-        f"{r['min_swing_pips']:>6.0f} {r['ema_sep_pct']:>7.4f} "
-        f"{r['min_d1_atr_pips']:>7.0f} {r['fractal_n']:>6} | "
-        f"{r['trades']:>6} {r['win_rate']:>5.1f}% {r['total_r']:>+8.1f} "
-        f"{r['pf']:>6.2f} {r['expectancy']:>+7.2f} {r['max_dd_r']:>6.1f} {r['worst_streak']:>6}"
-    )
+print_table("TOP 20 BY PROFIT FACTOR  (min 200 trades)", filtered, n=20)
 
-# Current config for comparison
-print(f"\n{'='*160}")
-print("CURRENT CONFIG: swing_age=100, cool=10, inval=Y, min_sw=15, ema_sep=0.0005, atr_pip=50, frac_n=3")
+# ── 4. Risk-adjusted: expectancy / max_drawdown (min 200 trades, DD > 0) ───
+for r in filtered:
+    r['risk_adj'] = r['expectancy'] / r['max_dd_r'] if r['max_dd_r'] > 0 else 0.0
+filtered.sort(key=lambda r: r['risk_adj'], reverse=True)
+print_table("TOP 20 BY RISK-ADJUSTED  (expectancy / max_DD, min 200 trades)", filtered, n=20)
+
+# ── Current live config for comparison ──────────────────────────────────────
+print(f"\n{'='*W}")
+print("CURRENT LIVE CONFIG:  fib_e=0.618  fib_tp=2.0  frac=3  sw_pip=15  ema_s=0.001  cool=10  inv=Y  sw_age=100")
 current = [r for r in results
-           if r['swing_max_age'] == 100 and r['cooldown_bars'] == 10
-           and r['invalidate_swing_on_loss'] is True and r['min_swing_pips'] == 15
-           and r['ema_sep_pct'] == 0.0005 and r['min_d1_atr_pips'] == 50
-           and r['fractal_n'] == 3]
+           if r['fib_entry'] == 0.618 and r['fib_tp'] == 2.0 and r['fractal_n'] == 3
+           and r['min_swing_pips'] == 15 and r['ema_sep_pct'] == 0.001
+           and r['cooldown_bars'] == 10 and r['invalidate_swing_on_loss'] is True
+           and r['swing_max_age'] == 100]
 if current:
-    r = current[0]
-    print(
-        f"  trades={r['trades']}  WR={r['win_rate']:.1f}%  TotalR={r['total_r']:+.1f}  "
-        f"PF={r['pf']:.2f}  Expect={r['expectancy']:+.2f}  MaxDD={r['max_dd_r']:.1f}R  "
-        f"WorstStreak={r['worst_streak']}"
-    )
-print(f"{'='*160}")
+    print(f"  → NOT IN GRID (min_sw=15 not tested)")
+# Closest in grid: min_sw=10 with same other params
+closest = [r for r in results
+           if r['fib_entry'] == 0.618 and r['fib_tp'] == 2.0 and r['fractal_n'] == 3
+           and r['ema_sep_pct'] == 0.001 and r['cooldown_bars'] == 10
+           and r['invalidate_swing_on_loss'] is True and r['swing_max_age'] == 100]
+if closest:
+    print("  Closest in grid (varying min_sw_pips):")
+    closest.sort(key=lambda r: r['min_swing_pips'])
+    for r in closest:
+        print(f"  min_sw={r['min_swing_pips']:>2.0f}  →  {row(r)}")
+print(f"{'='*W}")

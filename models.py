@@ -20,10 +20,11 @@ class Signal:
     direction: str      # 'BUY' | 'SELL'
     order_type: str     # 'MARKET' | 'PENDING'
     entry_price: float  # current price (MARKET) or specific level (PENDING)
-    stop_loss: float    # price level — always set by the strategy
+    stop_loss: float    # price level, always set by the strategy
     strategy_name: str
     timestamp: datetime
-    take_profit: float | None = None  # optional — if set, overrides risk manager TP
+    take_profit: float | None = None    # optional, if set overrides risk manager TP
+    entry_timeframe: str | None = None  # set automatically by engine from the bar that generated the signal
 
 
 @dataclass
@@ -38,3 +39,5 @@ class EnrichedSignal:
     lot_size: float
     strategy_name: str
     timestamp: datetime
+    entry_timeframe: str | None = None
+    tp_locked: bool = False  # True when TP is a strategy price level, not R:R calculated

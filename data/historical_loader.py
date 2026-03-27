@@ -88,6 +88,16 @@ def load_csv(filepath: str) -> list[BarEvent]:
         logger.info(f"CSV {filename} appears to be server time — converting to UTC")
         df['time'] = df['time'].apply(lambda t: _server_to_utc(t.to_pydatetime()))
 
+    # Filter out weekend D1 bars from Dukascopy data.
+    # Dukascopy generates D1 bars for Saturdays/Sundays with minimal volume.
+    # These don't exist on MT5/ICMarkets and distort EMA calculations.
+    if timeframe == 'D1':
+        weekend_mask = df['time'].dt.dayofweek >= 5  # Saturday=5, Sunday=6
+        n_weekend = weekend_mask.sum()
+        if n_weekend > 0:
+            logger.info(f"CSV {filename}: dropping {n_weekend} weekend D1 bars")
+            df = df[~weekend_mask].reset_index(drop=True)
+
     events = [
         BarEvent(
             symbol=symbol,
@@ -106,20 +116,22 @@ def load_csv(filepath: str) -> list[BarEvent]:
     return events
 
 
-def find_csv(symbol: str, timeframe: str, path: str = 'data/historical') -> str | None:
+def find_csv(symbol: str, timeframe: str, path: str = 'data/historical') -> list[str]:
     """
-    Find the most recent CSV matching the given symbol and timeframe in the given directory.
-    Returns the full filepath or None if not found.
+    Find all CSVs matching the given symbol and timeframe in the given directory.
+    Returns a list of full filepaths (sorted alphabetically), or an empty list.
+
+    Multiple files for the same symbol/timeframe are supported — load_and_merge
+    handles deduplication of any overlapping bars automatically.
     """
     if not os.path.isdir(path):
-        return None
+        return []
 
     prefix = f"{symbol}_{timeframe}_"
     matches = sorted(
         [f for f in os.listdir(path) if f.startswith(prefix) and f.endswith('.csv')],
-        reverse=True,
     )
-    return os.path.join(path, matches[0]) if matches else None
+    return [os.path.join(path, m) for m in matches]
 
 
 def filter_bars(
@@ -158,10 +170,29 @@ def load_and_merge(csv_paths: list[str]) -> list[BarEvent]:
     that fall within it have been processed first.
 
     Within the same close time, lower timeframes sort first.
+
+    Duplicate bars (same symbol + timeframe + timestamp) from overlapping
+    CSV files are removed — only the first occurrence is kept.
     """
     all_events: list[BarEvent] = []
     for path in csv_paths:
         all_events.extend(load_csv(path))
+
+    # Deduplicate: same symbol + timeframe + timestamp = duplicate bar
+    seen: set[tuple[str, str, datetime]] = set()
+    deduped: list[BarEvent] = []
+    for e in all_events:
+        key = (e.symbol, e.timeframe, e.timestamp)
+        if key not in seen:
+            seen.add(key)
+            deduped.append(e)
+        else:
+            logger.debug(f"Dropping duplicate bar: {e.symbol} {e.timeframe} {e.timestamp}")
+
+    n_dupes = len(all_events) - len(deduped)
+    if n_dupes > 0:
+        logger.info(f"Removed {n_dupes} duplicate bars from overlapping CSV files")
+
     tf_rank = {'M5': 0, 'M15': 1, 'H1': 2, 'H4': 3, 'D1': 4}
-    all_events.sort(key=lambda e: (bar_close_time(e), tf_rank.get(e.timeframe, 99)))
-    return all_events
+    deduped.sort(key=lambda e: (bar_close_time(e), tf_rank.get(e.timeframe, 99)))
+    return deduped

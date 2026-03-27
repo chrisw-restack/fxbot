@@ -21,6 +21,13 @@ from strategies.ema_fib_retracement_intraday import EmaFibRetracementIntradayStr
 from strategies.ict_judas_swing import IctJudasSwingStrategy
 from strategies.gaussian_channel import GaussianChannelStrategy
 from strategies.the_strat import TheStratStrategy
+from strategies.supply_demand import SupplyDemandStrategy
+from strategies.keltner_reversion import KeltnerReversionStrategy
+from strategies.range_fade import RangeFadeStrategy
+from strategies.ema_fib_running import EmaFibRunningStrategy
+from strategies.ebp import EbpStrategy
+from strategies.ebp_limit import EbpLimitStrategy
+from strategies.ims import ImsStrategy
 from data.historical_loader import find_csv
 from data.news_filter import NewsFilter
 
@@ -31,9 +38,8 @@ logging.basicConfig(
 )
 
 # ── Settings — edit these ─────────────────────────────────────────────────────
-SYMBOLS         = ['EURUSD', 'GBPUSD', 'AUDUSD', 'NZDUSD', 'USDJPY', 'USDCAD', 'USDCHF']
-# SYMBOLS         = ['EURUSD', 'GBPUSD']
-# SYMBOLS         = ['EURUSD']
+# SYMBOLS         = ['XAUUSD']
+SYMBOLS         = ['EURUSD', 'GBPUSD', 'AUDUSD', 'NZDUSD', 'USDJPY', 'USDCAD', 'USDCHF', 'XAUUSD']
 INITIAL_BALANCE = 10_000.0   # starting account balance in USD
 RR_RATIO        = 2.0        # risk/reward ratio (overrides config default)
 SPREAD_PIPS     = 2.0        # simulated spread in pips (applied at entry)
@@ -45,19 +51,32 @@ RISK_PCT_OVERRIDES = {
 STRATEGIES = {
     'breakout':             BreakoutStrategy(lookback=20),
     'mean_reversion':       MeanReversionStrategy(lookback=20, std_multiplier=2.0, sl_lookback=5),
-    'ema_fib_retracement':  EmaFibRetracementStrategy(cooldown_bars=10,invalidate_swing_on_loss=True,min_swing_pips=15,ema_sep_pct=0.001),
+    'ema_fib_retracement':  EmaFibRetracementStrategy(fib_entry=0.786,fib_tp=2.5,fractal_n=3,min_swing_pips=10,ema_sep_pct=0.001,cooldown_bars=0,invalidate_swing_on_loss=False,blocked_hours=(*range(20,24),*range(0,9))),
     'ema_fib_retracement_intraday': EmaFibRetracementIntradayStrategy(cooldown_bars=10,invalidate_swing_on_loss=True,min_swing_pips=15,ema_sep_pct=0.0005),
     'ict_judas_swing':              IctJudasSwingStrategy(fractal_n=3, min_sl_pips=15, max_sl_pips=30, min_sweep_pips=2.0, require_sweep_pullback=True, require_fvg=False, require_d1_bias=False),
     'gaussian_channel':             GaussianChannelStrategy(period=144, poles=4, tr_mult=1.414),
     'the_strat':                    TheStratStrategy(min_sl_pips=8, cooldown_bars=3),
     'the_strat_m15':                TheStratStrategy(min_sl_pips=5, cooldown_bars=3, tf_bias='H4', tf_intermediate='H1', tf_entry='M15'),
+    'supply_demand':                SupplyDemandStrategy(),
+    'keltner_reversion':            KeltnerReversionStrategy(),
+    'range_fade':                   RangeFadeStrategy(),
+    'ema_fib_running':              EmaFibRunningStrategy(fib_entry=0.618, min_swing_pips=30, ema_sep_pct=0.001, cooldown_bars=0, invalidate_swing_on_loss=True),
+    'ebp':                          EbpStrategy(tf_bias='H4', tf_entry='H1', fractal_n=2, min_retrace_pct=0.382, max_retrace_pct=0.618, require_fvg=False),
+    'ebp_mss_sl':                   EbpStrategy(tf_bias='H4', tf_entry='H1', fractal_n=2, min_retrace_pct=0.382, max_retrace_pct=0.618, require_fvg=False, sl_mode='mss_bar'),
+    'ebp_symmetric_sl':             EbpStrategy(tf_bias='H4', tf_entry='H1', fractal_n=2, min_retrace_pct=0.382, max_retrace_pct=0.618, require_fvg=False, sl_mode='symmetric'),
+    'ebp_limit_h4':                 EbpLimitStrategy(tf='H4'),
+    'ebp_limit_h1':                 EbpLimitStrategy(tf='H1'),
+    'ebp_limit_d1':                 EbpLimitStrategy(tf='D1'),
+    'ebp_limit_h4_ema':             EbpLimitStrategy(tf='H4', min_range_pips=60, entry_pct=0.382, tf_trend='D1', ema_fast=10, ema_slow=20),
+    'ims_d1_h4':                    ImsStrategy(tf_htf='D1', tf_ltf='H4', fractal_n=1, ltf_fractal_n=2, htf_lookback=50, tp_mode='htf_high', cooldown_bars=0, ema_fast=20, ema_slow=50),
+    'ims_h4_h1':                    ImsStrategy(tf_htf='H4', tf_ltf='H1', fractal_n=1, ltf_fractal_n=2, htf_lookback=50, tp_mode='htf_high', cooldown_bars=0, ema_fast=20, ema_slow=50),
+    'ims_h4_m15':                   ImsStrategy(tf_htf='H4', tf_ltf='M15', fractal_n=1, ltf_fractal_n=2, htf_lookback=50, tp_mode='htf_high', cooldown_bars=0, ema_fast=20, ema_slow=50),
 }
 
 # ── Live suite: all 3 strategies run together ────────────────────────────────
+# TheStrat suspended pending re-validation with corrected simulator
 LIVE_SUITE = [
-    EmaFibRetracementStrategy(cooldown_bars=10, invalidate_swing_on_loss=True, min_swing_pips=15, ema_sep_pct=0.001),
-    TheStratStrategy(min_sl_pips=8, cooldown_bars=3),
-    TheStratStrategy(min_sl_pips=5, cooldown_bars=3, tf_bias='H4', tf_intermediate='H1', tf_entry='M15'),
+    EmaFibRetracementStrategy(fib_entry=0.786, fib_tp=2.5, fractal_n=3, min_swing_pips=10, ema_sep_pct=0.001, cooldown_bars=0, invalidate_swing_on_loss=False, blocked_hours=(*range(20,24),*range(0,9))),
 ]
 
 ALL_CHOICES = list(STRATEGIES.keys()) + ['live_suite']
@@ -110,10 +129,11 @@ for s in strategies_to_run:
 csv_paths = []
 for symbol in SYMBOLS:
     for tf in timeframes_needed:
-        path = find_csv(symbol, tf)
-        if path:
-            csv_paths.append(path)
-            print(f"Found: {path}")
+        paths = find_csv(symbol, tf)
+        if paths:
+            csv_paths.extend(paths)
+            for p in paths:
+                print(f"Found: {p}")
         else:
             print(f"WARNING: No CSV found for {symbol} {tf} in data/historical/ — skipping")
 

@@ -14,6 +14,8 @@ class BaseExecution(ABC):
         sl: float,
         tp: float,
         strategy_name: str,
+        entry_timeframe: str | None = None,
+        tp_locked: bool = False,
     ) -> int:
         """Place an order. Returns ticket ID (> 0) on success, 0 on failure."""
         ...
