@@ -60,7 +60,7 @@ STRATEGIES = {
     'supply_demand':                SupplyDemandStrategy(),
     'keltner_reversion':            KeltnerReversionStrategy(),
     'range_fade':                   RangeFadeStrategy(),
-    'ema_fib_running':              EmaFibRunningStrategy(fib_entry=0.618, min_swing_pips=30, ema_sep_pct=0.001, cooldown_bars=0, invalidate_swing_on_loss=True),
+    'ema_fib_running':              EmaFibRunningStrategy(fib_entry=0.786, fib_tp=2.5, fractal_n=2, min_swing_pips=30, ema_sep_pct=0.0, cooldown_bars=0, invalidate_swing_on_loss=True, blocked_hours=(*range(20,24),*range(0,9))),
     'ebp':                          EbpStrategy(tf_bias='H4', tf_entry='H1', fractal_n=2, min_retrace_pct=0.382, max_retrace_pct=0.618, require_fvg=False),
     'ebp_mss_sl':                   EbpStrategy(tf_bias='H4', tf_entry='H1', fractal_n=2, min_retrace_pct=0.382, max_retrace_pct=0.618, require_fvg=False, sl_mode='mss_bar'),
     'ebp_symmetric_sl':             EbpStrategy(tf_bias='H4', tf_entry='H1', fractal_n=2, min_retrace_pct=0.382, max_retrace_pct=0.618, require_fvg=False, sl_mode='symmetric'),

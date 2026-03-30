@@ -30,11 +30,15 @@ class PortfolioManager:
     def approve(self, signal: EnrichedSignal) -> bool:
         """
         Returns True if the signal is allowed to proceed to execution.
-        Checks: one position per symbol, max open trades.
+        Checks: one position per (symbol, strategy), max open trades.
         Daily loss check is separate — call is_daily_loss_exceeded() before approve().
         """
-        if signal.symbol in self._open_positions:
-            logger.warning(f"Blocked: {signal.symbol} already has an open position")
+        key = (signal.symbol, signal.strategy_name)
+        if key in self._open_positions:
+            logger.warning(
+                f"Blocked: {signal.symbol} already has an open position "
+                f"for {signal.strategy_name}"
+            )
             return False
 
         if len(self._open_positions) >= config.MAX_OPEN_TRADES:
@@ -47,15 +51,17 @@ class PortfolioManager:
         return True
 
     def record_open(self, signal: EnrichedSignal, ticket: int):
-        self._open_positions[signal.symbol] = {'ticket': ticket, 'signal': signal}
-        logger.debug(f"Position recorded: {signal.symbol} ticket={ticket}")
+        key = (signal.symbol, signal.strategy_name)
+        self._open_positions[key] = {'ticket': ticket, 'signal': signal}
+        logger.debug(f"Position recorded: {signal.symbol} ({signal.strategy_name}) ticket={ticket}")
 
-    def record_close(self, symbol: str, pnl: float):
+    def record_close(self, symbol: str, pnl: float, strategy_name: str = ''):
         """Call when a position is closed. pnl in account currency."""
-        self._open_positions.pop(symbol, None)
+        key = (symbol, strategy_name)
+        self._open_positions.pop(key, None)
         if pnl < 0:
             self._daily_loss += abs(pnl)
-        logger.debug(f"Position closed: {symbol} pnl={pnl:.2f} daily_loss={self._daily_loss:.2f}")
+        logger.debug(f"Position closed: {symbol} ({strategy_name}) pnl={pnl:.2f} daily_loss={self._daily_loss:.2f}")
 
     def is_daily_loss_exceeded(self, account_balance: float) -> bool:
         limit = account_balance * config.MAX_DAILY_LOSS_PCT

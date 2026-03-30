@@ -116,14 +116,18 @@ STRATEGY_CONFIGS = {
     'ema_fib_running': {
         'class': EmaFibRunningStrategy,
         'timeframes': ['D1', 'H1'],
+        'symbols': ['EURUSD', 'GBPUSD', 'AUDUSD', 'NZDUSD', 'USDJPY', 'USDCAD', 'USDCHF'],
         'fixed_params': {
-            'fib_entry': 0.618,
             'min_swing_pips': 30,
+            'cooldown_bars': 0,
+            'invalidate_swing_on_loss': True,
+            'blocked_hours': (*range(20, 24), *range(0, 9)),  # 09:00-19:00 UTC (session sweep winner)
         },
         'param_grid': {
-            'ema_sep_pct':              [0.0, 0.001],
-            'cooldown_bars':            [0, 10],
-            'invalidate_swing_on_loss': [True, False],
+            'fib_entry':   [0.618, 0.786],
+            'fib_tp':      [2.0, 2.5, 3.0],
+            'fractal_n':   [2, 3],
+            'ema_sep_pct': [0.0, 0.001],
         },
     },
     'ema_fib_intraday': {
@@ -241,7 +245,7 @@ def run_backtest(bars: list, strategy, symbols: list[str],
         for bar in bars:
             closed_trades = engine.execution.check_fills(bar)
             for trade in closed_trades:
-                engine.portfolio.record_close(trade['symbol'], trade['pnl'])
+                engine.portfolio.record_close(trade['symbol'], trade['pnl'], trade.get('strategy_name', ''))
                 engine.trade_logger.log_close(trade['ticket'], trade)
                 engine.event_engine.notify_trade_closed(trade)
             engine.event_engine.process_bar(bar)

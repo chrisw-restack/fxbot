@@ -22,6 +22,7 @@ from execution.mt5_execution import MT5Execution
 from utils.trade_logger import TradeLogger
 from data.mt5_data import connect, disconnect, reconnect, get_latest_completed_bar, get_recent_bars
 from strategies.ema_fib_retracement import EmaFibRetracementStrategy
+from strategies.ema_fib_running import EmaFibRunningStrategy
 
 from utils.telegram_notifier import TelegramNotifier
 import config
@@ -88,7 +89,17 @@ def main():
                 ema_sep_pct=0.001,
                 cooldown_bars=10,
                 invalidate_swing_on_loss=True,
-                blocked_hours=(*range(20, 24), *range(0, 9)),  # allow 09:00-19:00 UTC (London + early NY)
+                blocked_hours=(*range(20, 24), *range(0, 9)),  # allow 09:00-19:00 UTC
+            ),
+            EmaFibRunningStrategy(
+                fib_entry=0.786,
+                fib_tp=2.5,
+                fractal_n=2,
+                min_swing_pips=30,
+                ema_sep_pct=0.0,
+                cooldown_bars=0,
+                invalidate_swing_on_loss=True,
+                blocked_hours=(*range(20, 24), *range(0, 9)),  # allow 09:00-19:00 UTC
             ),
         ]
         for strategy in strategies:
@@ -160,7 +171,7 @@ def main():
                             pnl=pnl,
                             strategy=strategy_name,
                         )
-                        portfolio.record_close(pos['symbol'], pnl)
+                        portfolio.record_close(pos['symbol'], pnl, strategy_name)
                         event_engine.notify_trade_closed({
                             'symbol':        pos['symbol'],
                             'strategy_name': strategy_name,

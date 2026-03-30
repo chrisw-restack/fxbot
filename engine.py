@@ -154,7 +154,7 @@ class EventEngine:
                     and pos['strategy_name'] == signal.strategy_name
                     and pos.get('open_time') is None):
                 self.execution.close_order(pos['ticket'])
-                self.portfolio.record_close(signal.symbol, 0.0)
+                self.portfolio.record_close(signal.symbol, 0.0, signal.strategy_name)
                 logger.info(
                     f"Cancelled pending order: {signal.symbol} "
                     f"ticket={pos['ticket']} ({signal.strategy_name})"

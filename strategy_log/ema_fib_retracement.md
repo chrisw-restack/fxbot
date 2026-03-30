@@ -170,7 +170,16 @@ Folds 1 and 2 improve without GBPUSD, but fold 3 (2024–2026) collapses to near
 
 ---
 
+## Running alongside EmaFibRunning
+
+Portfolio manager now keys positions by `(symbol, strategy_name)` — both strategies can hold concurrent positions on the same symbol. Blocking analysis (IS, 7 pairs, 2016–2026):
+
+- EmaFibRunning blocking EmaFibRetracement: **17 trades (all losses)** — EmaFibRunning's occupancy filters out bad EmaFibRetracement entries, saving 17R.
+- EmaFibRetracement blocking EmaFibRunning: **101 trades (+76.6R net)** — EmaFibRetracement's pending orders were suppressing 45% of EmaFibRunning's signals, especially GBPUSD (35 blocked, +40R).
+
+Combined unblocked IS result: 519 trades, +284.1R, MaxDD 28.5R (~14.3%). Peak simultaneous positions: 5.
+
 ## Next Steps
 
-- [ ] Monitor demo performance against backtest expectancy (+0.56R/trade)
+- [ ] Monitor demo performance against backtest expectancy (+0.774R/trade solo, +0.547R combined)
 - [ ] Add `'XAUUSD': 0.10` to strategy pip_sizes if running gold seriously

@@ -249,10 +249,12 @@ Both output to `data/historical/` with filename format: `<SYMBOL>_<TF>_<YYYYMMDD
 ## Portfolio Manager Logic
 
 On each incoming signal:
-1. Check if symbol already has an open position → block if yes.
+1. Check if **(symbol, strategy_name)** already has an open position → block if yes. Multiple strategies may hold positions on the same symbol simultaneously (one slot per strategy per symbol).
 2. Check if `open_trade_count >= MAX_OPEN_TRADES` (default 6) → block if yes.
 3. Check if daily loss has exceeded `MAX_DAILY_LOSS_PCT` (default 2%) → block if yes.
 4. If all checks pass, forward to execution.
+
+`record_close(symbol, pnl, strategy_name)` requires `strategy_name` to identify the correct slot.
 
 ## Execution Interface
 
@@ -395,18 +397,24 @@ python walk_forward.py breakout
 
 ## Live Suite
 
-The bot runs **1 strategy** in production (`main_live.py`):
+The bot runs **2 strategies** in production (`main_live.py`), both on 7 FX pairs. Each strategy gets its own position slot per symbol — they can hold concurrent positions on the same symbol independently.
 
 | Strategy | Timeframes | Order Type | Key Params |
 |----------|-----------|------------|------------|
 | EmaFibRetracement | D1, H1 | PENDING | fib_entry=0.786, fib_tp=3.0, fractal_n=3, min_swing=10, ema_sep=0.001, cooldown=10, invalidate=True, blocked_hours=(20-23, 0-8) |
+| EmaFibRunning | D1, H1 | PENDING | fib_entry=0.786, fib_tp=2.5, fractal_n=2, min_swing=30, ema_sep=0.0, cooldown=0, invalidate=True, blocked_hours=(20-23, 0-8) |
 
-Backtest: `python run_backtest.py ema_fib_retracement`
-Walk-forward verdict: MODERATE (all 3 folds OOS positive, +110.9R aggregate OOS, +0.427R expectancy, 67% retention). Full IS backtest 2016–2026: +250.5R, +0.56R expectancy, PF=1.63.
+Combined backtest (2016–2026, unblocked): 519 trades, +284.1R, +0.547R expectancy, MaxDD 28.5R (~14.3%).
+Max simultaneous open positions across both strategies: 5. MAX_OPEN_TRADES cap (6) gives adequate headroom.
+
+EmaFibRetracement: `python run_backtest.py ema_fib_retracement`
+Walk-forward: MODERATE (+110.9R OOS, +0.427R expect, 67% retention). IS 2016–2026: +247.8R, +0.774R expect, PF=1.89.
+
+EmaFibRunning: `python run_backtest.py ema_fib_running`
+Walk-forward: MODERATE (folds 1&2 positive, fold 3 sparse/12 OOS trades). IS 2016–2026: +82.7R, +0.371R expect, PF=1.53.
 
 **Validated (not yet live):**
 - **EBP** (H4/H1) — walk-forward STRONG. See `strategy_log/ebp.md`.
-- **EmaFibRunning** (D1/H1) — walk-forward STRONG (+0.106R OOS, 90% retention). See `strategy_log/ema_fib_running.md`.
 
 **Suspended / shelved:**
 - TheStrat — fails walk-forward after fill-bug fix. See `strategy_log/the_strat.md`.

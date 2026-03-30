@@ -92,7 +92,7 @@ class BacktestEngine:
             # 1. Check if any open positions closed this bar (SL/TP hit)
             closed_trades = self.execution.check_fills(bar)
             for trade in closed_trades:
-                self.portfolio.record_close(trade['symbol'], trade['pnl'])
+                self.portfolio.record_close(trade['symbol'], trade['pnl'], trade.get('strategy_name', ''))
                 self.trade_logger.log_close(trade['ticket'], trade)
                 self.event_engine.notify_trade_closed(trade)
 
