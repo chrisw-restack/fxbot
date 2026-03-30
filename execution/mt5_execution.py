@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime, timezone
 
 import MetaTrader5 as mt5
 
@@ -73,9 +74,25 @@ class MT5Execution(BaseExecution):
         return result.order
 
     def close_order(self, ticket_id: int) -> bool:
+        # Cancel a pending order if it exists
+        orders = mt5.orders_get(ticket=ticket_id)
+        if orders:
+            request = {
+                'action': mt5.TRADE_ACTION_REMOVE,
+                'order':  ticket_id,
+            }
+            result = mt5.order_send(request)
+            if result is None or result.retcode != mt5.TRADE_RETCODE_DONE:
+                code = result.retcode if result else 'None'
+                logger.error(f"Cancel pending order failed for ticket {ticket_id}: retcode={code}")
+                return False
+            logger.info(f"Pending order cancelled: ticket={ticket_id}")
+            return True
+
+        # Otherwise close a filled position
         positions = mt5.positions_get(ticket=ticket_id)
         if not positions:
-            logger.warning(f"No open position found for ticket {ticket_id}")
+            logger.warning(f"No open position or pending order found for ticket {ticket_id}")
             return False
 
         pos = positions[0]
@@ -100,23 +117,52 @@ class MT5Execution(BaseExecution):
         return True
 
     def get_open_positions(self) -> list[dict]:
+        result = []
+
+        # Filled/open positions
         positions = mt5.positions_get()
-        if not positions:
-            return []
-        return [
-            {
-                'ticket':     p.ticket,
-                'symbol':     p.symbol,
-                'direction':  'BUY' if p.type == mt5.ORDER_TYPE_BUY else 'SELL',
-                'volume':     p.volume,
-                'open_price': p.price_open,
-                'sl':         p.sl,
-                'tp':         p.tp,
-                'profit':     p.profit,
-                'comment':    p.comment,
-            }
-            for p in positions
-        ]
+        if positions:
+            result.extend([
+                {
+                    'ticket':        p.ticket,
+                    'symbol':        p.symbol,
+                    'direction':     'BUY' if p.type == mt5.ORDER_TYPE_BUY else 'SELL',
+                    'volume':        p.volume,
+                    'open_price':    p.price_open,
+                    'sl':            p.sl,
+                    'tp':            p.tp,
+                    'profit':        p.profit,
+                    'comment':       p.comment,
+                    'strategy_name': p.comment,
+                    'open_time':     datetime.fromtimestamp(p.time, tz=timezone.utc),
+                }
+                for p in positions
+            ])
+
+        # Pending (unfilled) orders — included so _handle_cancel can find and delete them
+        orders = mt5.orders_get()
+        if orders:
+            result.extend([
+                {
+                    'ticket':        o.ticket,
+                    'symbol':        o.symbol,
+                    'direction':     'BUY' if o.type in (
+                        mt5.ORDER_TYPE_BUY_LIMIT, mt5.ORDER_TYPE_BUY_STOP,
+                    ) else 'SELL',
+                    'volume':        o.volume_current,
+                    'open_price':    o.price_open,
+                    'sl':            o.sl,
+                    'tp':            o.tp,
+                    'profit':        0.0,
+                    'comment':       o.comment,
+                    'strategy_name': o.comment,
+                    # No open_time key — _handle_cancel uses open_time is None to
+                    # identify pending orders
+                }
+                for o in orders
+            ])
+
+        return result
 
     def get_account_balance(self) -> float:
         info = mt5.account_info()

@@ -399,10 +399,10 @@ The bot runs **1 strategy** in production (`main_live.py`):
 
 | Strategy | Timeframes | Order Type | Key Params |
 |----------|-----------|------------|------------|
-| EmaFibRetracement | D1, H1 | MARKET | fib_entry=0.786, fib_tp=2.5, fractal_n=3, min_swing=10, ema_sep=0.001, blocked_hours=(20-23, 0-8) |
+| EmaFibRetracement | D1, H1 | PENDING | fib_entry=0.786, fib_tp=3.0, fractal_n=3, min_swing=10, ema_sep=0.001, cooldown=10, invalidate=True, blocked_hours=(20-23, 0-8) |
 
 Backtest: `python run_backtest.py ema_fib_retracement`
-Walk-forward verdict: MODERATE (all 3 folds OOS positive, +45.1R aggregate OOS).
+Walk-forward verdict: MODERATE (all 3 folds OOS positive, +110.9R aggregate OOS, +0.427R expectancy, 67% retention). Full IS backtest 2016–2026: +250.5R, +0.56R expectancy, PF=1.63.
 
 **Validated (not yet live):**
 - **EBP** (H4/H1) — walk-forward STRONG. See `strategy_log/ebp.md`.

@@ -26,7 +26,7 @@ class SimulatedExecution(BaseExecution):
     - Newly opened positions are not checked for SL/TP on their opening bar.
     """
 
-    def __init__(self, initial_balance: float, spread_pips: float = 1.0,
+    def __init__(self, initial_balance: float, spread_pips: dict[str, float] | float = 0.1,
                  breakeven_at_r: float | None = None,
                  rr_ratio: float = config.DEFAULT_RR_RATIO,
                  commission_per_lot: float = config.COMMISSION_PER_LOT):
@@ -237,7 +237,11 @@ class SimulatedExecution(BaseExecution):
 
     def _apply_spread(self, price: float, symbol: str, direction: str) -> float:
         pip_size = config.PIP_SIZE.get(symbol, 0.0001)
-        spread_price = self._spread_pips * pip_size
+        if isinstance(self._spread_pips, dict):
+            spread_pips = self._spread_pips.get(symbol, 0.1)
+        else:
+            spread_pips = self._spread_pips
+        spread_price = spread_pips * pip_size
         return price + spread_price if direction == 'BUY' else price - spread_price
 
     def close_order(self, ticket_id: int) -> bool:

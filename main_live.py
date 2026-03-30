@@ -63,7 +63,6 @@ def main():
         trade_logger = TradeLogger()
         risk         = RiskManager(
             account_balance_fn=execution.get_account_balance,
-            risk_pct_overrides={'EmaFibRetracement': 0.007},
         )
 
         notifier = TelegramNotifier()
@@ -83,12 +82,12 @@ def main():
         strategies = [
             EmaFibRetracementStrategy(
                 fib_entry=0.786,
-                fib_tp=2.5,
+                fib_tp=3.0,
                 fractal_n=3,
                 min_swing_pips=10,
                 ema_sep_pct=0.001,
-                cooldown_bars=0,
-                invalidate_swing_on_loss=False,
+                cooldown_bars=10,
+                invalidate_swing_on_loss=True,
                 blocked_hours=(*range(20, 24), *range(0, 9)),  # allow 09:00-19:00 UTC (London + early NY)
             ),
         ]
@@ -148,6 +147,7 @@ def main():
                         del tracked_tickets[ticket]
                         pnl = pos.get('profit', 0.0)
                         result = 'WIN' if pnl > 0 else ('BE' if pnl == 0 else 'LOSS')
+                        strategy_name = pos.get('comment', 'unknown')
                         logger.info(
                             f"Trade closed by broker: {pos['symbol']} {pos['direction']} "
                             f"ticket={ticket} result={result} pnl={pnl:.2f}"
@@ -158,9 +158,14 @@ def main():
                             result=result,
                             r_multiple=0.0,
                             pnl=pnl,
-                            strategy=pos.get('comment', 'unknown'),
+                            strategy=strategy_name,
                         )
                         portfolio.record_close(pos['symbol'], pnl)
+                        event_engine.notify_trade_closed({
+                            'symbol':        pos['symbol'],
+                            'strategy_name': strategy_name,
+                            'result':        result,
+                        })
                 # Update tracked positions with latest profit values
                 for p in current_positions:
                     tracked_tickets[p['ticket']] = p

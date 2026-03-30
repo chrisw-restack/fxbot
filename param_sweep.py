@@ -31,7 +31,6 @@ sys.stdout.reconfigure(line_buffering=True)
 SYMBOLS = ['EURUSD', 'GBPUSD', 'AUDUSD', 'NZDUSD', 'USDJPY', 'USDCAD', 'USDCHF']
 INITIAL_BALANCE = 10_000.0
 RR_RATIO = 2.0
-SPREAD_PIPS = 2.0
 
 # ── Parameter grid ──────────────────────────────────────────────────────────
 PARAM_GRID = {
@@ -79,12 +78,12 @@ for i, combo in enumerate(combos):
         cooldown_bars=params['cooldown_bars'],
         invalidate_swing_on_loss=params['invalidate_swing_on_loss'],
         swing_max_age=params['swing_max_age'],
+        blocked_hours=(*range(20, 24), *range(0, 9)),  # proven winner: allow 09:00-19:00 UTC
     )
 
     engine = BacktestEngine(
         initial_balance=INITIAL_BALANCE,
         rr_ratio=RR_RATIO,
-        spread_pips=SPREAD_PIPS,
     )
     engine.add_strategy(strategy, symbols=SYMBOLS)
 

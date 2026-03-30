@@ -32,13 +32,30 @@ PIP_SIZE = {
     'USA30':  1.0,    # Dow Jones: 1 pip = 1 index point
     'USA500': 0.1,    # S&P 500: 1 pip = 0.1 index point
     'USA100': 1.0,    # Nasdaq 100: 1 pip = 1 index point
+    'USTEC':  1.0,    # Nasdaq 100 (ICMarkets name): 1 pip = 1 index point
 }
 
 # ── Spread ───────────────────────────────────────────────────────────────────
-# Simulated spread in pips applied at entry during backtesting.
+# Per-symbol spread in pips applied at entry during backtesting.
 # Historical bars are bid-based, so spread is added to BUY entries and
 # subtracted from SELL entries to model the ask/bid cost realistically.
-BACKTEST_SPREAD_PIPS = 3.0
+# Based on observed ICMarkets raw-spread averages across typical trading hours.
+# XAUUSD: $0.11 price spread / pip_size $0.10 = 1.1 pips.
+# USTEC/USA100: 10 index points (= 10 pips at pip_size 1.0).
+BACKTEST_SPREAD_PIPS: dict[str, float] = {
+    'EURUSD': 0.1,
+    'GBPUSD': 0.1,
+    'AUDUSD': 0.1,
+    'NZDUSD': 0.1,
+    'USDJPY': 0.1,
+    'USDCAD': 0.1,
+    'USDCHF': 0.1,
+    'XAUUSD': 1.1,
+    'USTEC':  10.0,
+    'USA100': 10.0,
+    'USA30':  2.0,    # not measured — conservative placeholder
+    'USA500': 2.0,    # not measured — conservative placeholder
+}
 
 # ── Commission ──────────────────────────────────────────────────────────────
 # Round-trip commission per 1.0 standard lot (ICMarkets Raw Spread: $7.00/lot).
@@ -61,6 +78,7 @@ PIP_VALUE_USD = {
     'USA30':   1.0,   # $1/lot per 1-point move (ICMarkets CFD)
     'USA500':  1.0,   # $1/lot per 0.1-point move
     'USA100':  1.0,   # $1/lot per 1-point move
+    'USTEC':   1.0,   # $1/lot per 1-point move (ICMarkets name for Nasdaq 100)
 }
 
 
@@ -94,8 +112,9 @@ def validate():
     if MIN_SL_PIPS < 0:
         errors.append(f"MIN_SL_PIPS must be non-negative, got {MIN_SL_PIPS}")
 
-    if BACKTEST_SPREAD_PIPS < 0:
-        errors.append(f"BACKTEST_SPREAD_PIPS must be non-negative, got {BACKTEST_SPREAD_PIPS}")
+    for sym, spread in BACKTEST_SPREAD_PIPS.items():
+        if spread < 0:
+            errors.append(f"BACKTEST_SPREAD_PIPS['{sym}'] must be non-negative, got {spread}")
 
     for sym in SYMBOLS:
         if sym not in PIP_SIZE:

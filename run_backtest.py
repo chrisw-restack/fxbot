@@ -39,19 +39,19 @@ logging.basicConfig(
 
 # ── Settings — edit these ─────────────────────────────────────────────────────
 # SYMBOLS         = ['XAUUSD']
-SYMBOLS         = ['EURUSD', 'GBPUSD', 'AUDUSD', 'NZDUSD', 'USDJPY', 'USDCAD', 'USDCHF', 'XAUUSD']
+# SYMBOLS         = ['EURUSD', 'GBPUSD', 'AUDUSD', 'NZDUSD', 'USDJPY', 'USDCAD', 'USDCHF', 'XAUUSD']
+SYMBOLS         = ['EURUSD', 'GBPUSD', 'AUDUSD', 'NZDUSD', 'USDJPY', 'USDCAD', 'USDCHF']
+# SYMBOLS         = [  'XAUUSD']
+# SYMBOLS         = [  'USA100']
 INITIAL_BALANCE = 10_000.0   # starting account balance in USD
 RR_RATIO        = 2.0        # risk/reward ratio (overrides config default)
-SPREAD_PIPS     = 2.0        # simulated spread in pips (applied at entry)
-RISK_PCT_OVERRIDES = {
-    'EmaFibRetracement': 0.007,  # 0.7% risk per trade (default is 0.5%)
-}
+RISK_PCT_OVERRIDES = {}
 # ─────────────────────────────────────────────────────────────────────────────
 
 STRATEGIES = {
     'breakout':             BreakoutStrategy(lookback=20),
     'mean_reversion':       MeanReversionStrategy(lookback=20, std_multiplier=2.0, sl_lookback=5),
-    'ema_fib_retracement':  EmaFibRetracementStrategy(fib_entry=0.786,fib_tp=2.5,fractal_n=3,min_swing_pips=10,ema_sep_pct=0.001,cooldown_bars=0,invalidate_swing_on_loss=False,blocked_hours=(*range(20,24),*range(0,9))),
+    'ema_fib_retracement':  EmaFibRetracementStrategy(fib_entry=0.786,fib_tp=3.0,fractal_n=3,min_swing_pips=10,ema_sep_pct=0.001,cooldown_bars=10,invalidate_swing_on_loss=True,blocked_hours=(*range(20,24),*range(0,9))),
     'ema_fib_retracement_intraday': EmaFibRetracementIntradayStrategy(cooldown_bars=10,invalidate_swing_on_loss=True,min_swing_pips=15,ema_sep_pct=0.0005),
     'ict_judas_swing':              IctJudasSwingStrategy(fractal_n=3, min_sl_pips=15, max_sl_pips=30, min_sweep_pips=2.0, require_sweep_pullback=True, require_fvg=False, require_d1_bias=False),
     'gaussian_channel':             GaussianChannelStrategy(period=144, poles=4, tr_mult=1.414),
@@ -76,7 +76,7 @@ STRATEGIES = {
 # ── Live suite: all 3 strategies run together ────────────────────────────────
 # TheStrat suspended pending re-validation with corrected simulator
 LIVE_SUITE = [
-    EmaFibRetracementStrategy(fib_entry=0.786, fib_tp=2.5, fractal_n=3, min_swing_pips=10, ema_sep_pct=0.001, cooldown_bars=0, invalidate_swing_on_loss=False, blocked_hours=(*range(20,24),*range(0,9))),
+    EmaFibRetracementStrategy(fib_entry=0.786, fib_tp=3.0, fractal_n=3, min_swing_pips=10, ema_sep_pct=0.001, cooldown_bars=10, invalidate_swing_on_loss=True, blocked_hours=(*range(20,24),*range(0,9))),
 ]
 
 ALL_CHOICES = list(STRATEGIES.keys()) + ['live_suite']
@@ -171,7 +171,7 @@ if args.news_filter != 'off':
         news_filter = None
 
 engine = BacktestEngine(
-    initial_balance=INITIAL_BALANCE, rr_ratio=RR_RATIO, spread_pips=SPREAD_PIPS,
+    initial_balance=INITIAL_BALANCE, rr_ratio=RR_RATIO,
     news_filter=news_filter, risk_pct_overrides=RISK_PCT_OVERRIDES,
 )
 for s in strategies_to_run:

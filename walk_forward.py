@@ -19,6 +19,7 @@ import logging
 import sys
 from datetime import datetime
 
+import config
 from backtest_engine import BacktestEngine
 from data.historical_loader import find_csv, load_and_merge, filter_bars
 from strategies.ema_fib_retracement import EmaFibRetracementStrategy
@@ -38,7 +39,6 @@ sys.stdout.reconfigure(line_buffering=True)
 SYMBOLS         = ['EURUSD', 'GBPUSD', 'AUDUSD', 'NZDUSD', 'USDJPY', 'USDCAD', 'USDCHF', 'XAUUSD']
 INITIAL_BALANCE = 10_000.0
 RR_RATIO        = 2.0
-SPREAD_PIPS     = 2.0
 
 # Walk-forward windows
 TRAIN_YEARS = 4
@@ -49,15 +49,14 @@ STEP_YEARS  = 2      # how far to advance between folds
 OPTIMIZATION_METRIC = 'expectancy'   # 'expectancy', 'total_r', or 'pf'
 MIN_TRADES = 50                      # minimum trades for a param combo to qualify
 
-RISK_PCT_OVERRIDES = {
-    'EmaFibRetracement': 0.007,
-}
+RISK_PCT_OVERRIDES = {}
 
 # ── Strategy configs ─────────────────────────────────────────────────────────
 STRATEGY_CONFIGS = {
     'ema_fib_retracement': {
         'class': EmaFibRetracementStrategy,
         'timeframes': ['D1', 'H1'],
+        'symbols': ['EURUSD', 'GBPUSD', 'AUDUSD', 'NZDUSD', 'USDJPY', 'USDCAD', 'USDCHF'],
         'fixed_params': {
             'blocked_hours': (*range(20, 24), *range(0, 9)),  # allow 09:00-19:00 UTC
         },
@@ -226,7 +225,8 @@ def generate_folds(
 
 
 def run_backtest(bars: list, strategy, symbols: list[str],
-                 initial_balance: float, rr_ratio: float, spread_pips: float,
+                 initial_balance: float, rr_ratio: float,
+                 spread_pips: dict[str, float] | float = config.BACKTEST_SPREAD_PIPS,
                  risk_pct_overrides: dict | None = None) -> dict:
     """Run a single backtest on pre-filtered bars. Returns metrics dict."""
     engine = BacktestEngine(
@@ -310,7 +310,7 @@ def optimize(all_bars, train_start, train_end, strategy_class,
 
         m = run_backtest(
             train_bars, strategy, symbols,
-            INITIAL_BALANCE, RR_RATIO, SPREAD_PIPS, RISK_PCT_OVERRIDES,
+            INITIAL_BALANCE, RR_RATIO, config.BACKTEST_SPREAD_PIPS, RISK_PCT_OVERRIDES,
         )
 
         all_results.append({**params, **m})
@@ -336,7 +336,7 @@ def test_oos(all_bars, test_start, test_end, strategy_class,
 
     return run_backtest(
         test_bars, strategy, symbols,
-        INITIAL_BALANCE, RR_RATIO, SPREAD_PIPS, RISK_PCT_OVERRIDES,
+        INITIAL_BALANCE, RR_RATIO, config.BACKTEST_SPREAD_PIPS, RISK_PCT_OVERRIDES,
     )
 
 
@@ -372,11 +372,12 @@ def main():
     param_grid = cfg['param_grid']
     fixed_params = cfg.get('fixed_params', {})
     timeframes = cfg['timeframes']
+    symbols = cfg.get('symbols', SYMBOLS)
 
     # ── Load all bar data once ───────────────────────────────────────────────
     print("Discovering CSV files...")
     csv_paths = []
-    for sym in SYMBOLS:
+    for sym in symbols:
         for tf in timeframes:
             paths = find_csv(sym, tf)
             if paths:
@@ -416,7 +417,7 @@ def main():
         print(f"  Optimizing ({n_combos} combos, metric={args.metric})...")
         best_params, is_metrics, _ = optimize(
             all_bars, fold['train_start'], fold['train_end'],
-            strategy_class, param_grid, fixed_params, SYMBOLS, args.metric,
+            strategy_class, param_grid, fixed_params, symbols, args.metric,
         )
 
         if best_params is None:
@@ -433,7 +434,7 @@ def main():
         # Test on out-of-sample window
         oos_metrics = test_oos(
             all_bars, fold['test_start'], fold['test_end'],
-            strategy_class, best_params, fixed_params, SYMBOLS,
+            strategy_class, best_params, fixed_params, symbols,
         )
 
         print(f"  Out-of-sample: trades={oos_metrics['trades']}  WR={oos_metrics['win_rate']}%  "

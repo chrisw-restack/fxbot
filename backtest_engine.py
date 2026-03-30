@@ -38,7 +38,7 @@ class BacktestEngine:
         self,
         initial_balance: float = 10_000.0,
         rr_ratio: float | None = None,
-        spread_pips: float = config.BACKTEST_SPREAD_PIPS,
+        spread_pips: dict[str, float] | float = config.BACKTEST_SPREAD_PIPS,
         breakeven_at_r: float | None = None,
         news_filter: NewsFilter | None = None,
         risk_pct_overrides: dict[str, float] | None = None,
