@@ -59,12 +59,13 @@ PIP_SIZE = {
 # XAUUSD: $0.11 price spread / pip_size $0.10 = 1.1 pips.
 # USTEC/USA100: 10 index points (= 10 pips at pip_size 1.0).
 BACKTEST_SPREAD_PIPS: dict[str, float] = {
+    # Measured via measure_spreads.py on ICMarkets Raw demo, active session (p95), 2026-04-01
     'EURUSD': 0.1,
-    'GBPUSD': 0.1,
+    'GBPUSD': 0.2,
     'AUDUSD': 0.1,
-    'NZDUSD': 0.1,
+    'NZDUSD': 0.4,
     'USDJPY': 0.1,
-    'USDCAD': 0.1,
+    'USDCAD': 0.2,
     'USDCHF': 0.1,
     # FX crosses — placeholders, calibrate with measure_spreads.py on VPS
     'AUDCAD': 0.5,
