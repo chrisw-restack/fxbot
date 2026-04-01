@@ -199,12 +199,17 @@ def main():
                         for strat in strategies:
                             if hasattr(strat, 'get_status'):
                                 status = strat.get_status(symbol)
-                                logger.info(
-                                    f"Status {symbol}: D1={status['d1_bias']} H1={status['h1_bias']} "
-                                    f"ATR={status['atr_pips']}p EMA_sep={status['ema_sep']} "
-                                    f"swing={status['swing']} ({status['swing_pips']}p age {status['swing_age']}) "
-                                    f"→ {status['blocker']}"
-                                )
+                                parts = [f"D1={status.get('d1_bias')} H1={status.get('h1_bias')}",
+                                         f"ATR={status.get('atr_pips')}p",
+                                         f"EMA_sep={status.get('ema_sep')}"]
+                                if 'swing' in status:
+                                    parts.append(
+                                        f"swing={status['swing']} "
+                                        f"({status['swing_pips']}p age {status['swing_age']})"
+                                    )
+                                if 'blocker' in status:
+                                    parts.append(f"→ {status['blocker']}")
+                                logger.info(f"Status [{strat.NAME}] {symbol}: " + "  ".join(parts))
 
                 consecutive_failures = 0
             except Exception:
