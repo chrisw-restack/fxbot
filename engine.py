@@ -125,6 +125,7 @@ class EventEngine:
                 strategy_name=enriched.strategy_name,
                 entry_timeframe=enriched.entry_timeframe,
                 tp_locked=enriched.tp_locked,
+                signal_time=enriched.timestamp,
             )
 
             if ticket:

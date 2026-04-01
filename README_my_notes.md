@@ -14,7 +14,6 @@ some ideas I am considering in light of your previous response how to mature/mak
 NEVER RR LESS THAN 1, 1:1 IS THE LOWEST
 
 
-
 # notes
 the strat best performance on all data showed using min sl of 5, but walkforward test shows 15 is better, so ill change it
 

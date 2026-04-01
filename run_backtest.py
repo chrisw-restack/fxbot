@@ -28,6 +28,8 @@ from strategies.ema_fib_running import EmaFibRunningStrategy
 from strategies.ebp import EbpStrategy
 from strategies.ebp_limit import EbpLimitStrategy
 from strategies.ims import ImsStrategy
+from strategies.smc_zone import SmcZoneStrategy
+from strategies.bigbeluga_sd import BigBelugaSdStrategy
 from data.historical_loader import find_csv
 from data.news_filter import NewsFilter
 
@@ -71,12 +73,20 @@ STRATEGIES = {
     'ims_d1_h4':                    ImsStrategy(tf_htf='D1', tf_ltf='H4', fractal_n=1, ltf_fractal_n=2, htf_lookback=50, tp_mode='htf_high', cooldown_bars=0, ema_fast=20, ema_slow=50),
     'ims_h4_h1':                    ImsStrategy(tf_htf='H4', tf_ltf='H1', fractal_n=1, ltf_fractal_n=2, htf_lookback=50, tp_mode='htf_high', cooldown_bars=0, ema_fast=20, ema_slow=50),
     'ims_h4_m15':                   ImsStrategy(tf_htf='H4', tf_ltf='M15', fractal_n=1, ltf_fractal_n=2, htf_lookback=50, tp_mode='htf_high', cooldown_bars=0, ema_fast=20, ema_slow=50),
+    'smc_zone':                     SmcZoneStrategy(swing_length=3,  tf_entry='H1', zone_atr_mult=0.4, sl_buffer_atr=0.5, d1_ema_period=50, blocked_hours=(*range(20,24),*range(0,9))),
+    'smc_zone_h1_sl10':             SmcZoneStrategy(swing_length=10, tf_entry='H1', zone_atr_mult=0.4, sl_buffer_atr=0.5, d1_ema_period=50, blocked_hours=(*range(20,24),*range(0,9))),
+    'smc_zone_h4':                  SmcZoneStrategy(swing_length=3, tf_entry='H4', zone_atr_mult=2.0, sl_buffer_atr=0.5, zone_leg_atr=0.0, d1_ema_period=50, blocked_hours=(*range(20,24),*range(0,9))),
+    'smc_zone_h4_leg15':            SmcZoneStrategy(swing_length=3, tf_entry='H4', zone_atr_mult=2.0, sl_buffer_atr=0.5, zone_leg_atr=1.5, d1_ema_period=50, blocked_hours=(*range(20,24),*range(0,9))),
+    'smc_zone_h4_leg20':            SmcZoneStrategy(swing_length=3, tf_entry='H4', zone_atr_mult=2.0, sl_buffer_atr=0.5, zone_leg_atr=2.0, d1_ema_period=50, blocked_hours=(*range(20,24),*range(0,9))),
+    'smc_zone_h4_leg25':            SmcZoneStrategy(swing_length=3, tf_entry='H4', zone_atr_mult=2.0, sl_buffer_atr=0.5, zone_leg_atr=2.5, d1_ema_period=50, blocked_hours=(*range(20,24),*range(0,9))),
+    'bigbeluga_h4':                 BigBelugaSdStrategy(tf_entry='H4', atr_period=200, zone_atr_mult=2.0, sl_buffer_atr=0.5, require_volume=True,  d1_ema_period=50, cooldown_bars=15, blocked_hours=(*range(20,24),*range(0,9))),
+    'bigbeluga_h4_novol':           BigBelugaSdStrategy(tf_entry='H4', atr_period=200, zone_atr_mult=2.0, sl_buffer_atr=0.5, require_volume=False, d1_ema_period=50, cooldown_bars=15, blocked_hours=(*range(20,24),*range(0,9))),
 }
 
-# ── Live suite: all 3 strategies run together ────────────────────────────────
-# TheStrat suspended pending re-validation with corrected simulator
+# ── Live suite: both live strategies run together ────────────────────────────
 LIVE_SUITE = [
     EmaFibRetracementStrategy(fib_entry=0.786, fib_tp=3.0, fractal_n=3, min_swing_pips=10, ema_sep_pct=0.001, cooldown_bars=10, invalidate_swing_on_loss=True, blocked_hours=(*range(20,24),*range(0,9))),
+    EmaFibRunningStrategy(fib_entry=0.786, fib_tp=2.5, fractal_n=2, min_swing_pips=30, ema_sep_pct=0.0, cooldown_bars=0, invalidate_swing_on_loss=True, blocked_hours=(*range(20,24),*range(0,9))),
 ]
 
 ALL_CHOICES = list(STRATEGIES.keys()) + ['live_suite']
@@ -113,6 +123,10 @@ parser.add_argument(
 parser.add_argument(
     '--end-date', type=str, default=None,
     help='End date for backtest (YYYY-MM-DD). Default: use all available data.',
+)
+parser.add_argument(
+    '--breakeven-at-r', type=float, default=None,
+    help='Move SL to break-even once price reaches N×R in profit (e.g. 2.0, 3.0, 5.0). Default: off.',
 )
 args = parser.parse_args()
 
@@ -173,6 +187,7 @@ if args.news_filter != 'off':
 engine = BacktestEngine(
     initial_balance=INITIAL_BALANCE, rr_ratio=RR_RATIO,
     news_filter=news_filter, risk_pct_overrides=RISK_PCT_OVERRIDES,
+    breakeven_at_r=args.breakeven_at_r,
 )
 for s in strategies_to_run:
     engine.add_strategy(s, symbols=SYMBOLS)

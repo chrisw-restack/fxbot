@@ -21,9 +21,9 @@ from dukascopy_python import instruments
 
 # ── Configuration — edit these before running ─────────────────────────────────
 # SYMBOLS = ['EURUSD', 'GBPUSD', 'AUDUSD', 'NZDUSD', 'USDJPY', 'USDCAD', 'USDCHF']
-SYMBOLS = ['USA100', 'USA500', 'USA30', 'XAUUSD']
-# SYMBOLS = ['USDCHF']
-TIMEFRAMES = ['D1']        # Any of: M5, M15, H1, H4, D1
+# SYMBOLS = ['USA100', 'USA500', 'USA30', 'XAUUSD']
+SYMBOLS = ['AUDCAD', 'AUDJPY', 'AUDNZD', 'CADJPY', 'EURAUD', 'EURCAD', 'EURCHF', 'EURGBP', 'EURJPY', 'GBPAUD', 'GBPCAD', 'GBPJPY', 'GBPNZD', 'NZDJPY']
+TIMEFRAMES = ['M5']        # Any of: M5, M15, H1, H4, D1
 START_YEAR = 2016
 END_DATE = datetime(2026, 3, 20)
 OUTPUT_DIR = 'data/historical'
@@ -38,6 +38,20 @@ INSTRUMENT_MAP = {
     'USDJPY': instruments.INSTRUMENT_FX_MAJORS_USD_JPY,
     'USDCHF': instruments.INSTRUMENT_FX_MAJORS_USD_CHF,
     'USDCAD': instruments.INSTRUMENT_FX_MAJORS_USD_CAD,
+    'AUDCAD': instruments.INSTRUMENT_FX_CROSSES_AUD_CAD,
+    'AUDJPY': instruments.INSTRUMENT_FX_CROSSES_AUD_JPY,
+    'AUDNZD': instruments.INSTRUMENT_FX_CROSSES_AUD_NZD,
+    'CADJPY': instruments.INSTRUMENT_FX_CROSSES_CAD_JPY,
+    'EURAUD': instruments.INSTRUMENT_FX_CROSSES_EUR_AUD,
+    'EURCAD': instruments.INSTRUMENT_FX_CROSSES_EUR_CAD,
+    'EURCHF': instruments.INSTRUMENT_FX_CROSSES_EUR_CHF,
+    'EURGBP': instruments.INSTRUMENT_FX_CROSSES_EUR_GBP,
+    'EURJPY': instruments.INSTRUMENT_FX_CROSSES_EUR_JPY,
+    'GBPAUD': instruments.INSTRUMENT_FX_CROSSES_GBP_AUD,
+    'GBPCAD': instruments.INSTRUMENT_FX_CROSSES_GBP_CAD,
+    'GBPJPY': instruments.INSTRUMENT_FX_CROSSES_GBP_JPY,
+    'GBPNZD': instruments.INSTRUMENT_FX_CROSSES_GBP_NZD,
+    'NZDJPY': instruments.INSTRUMENT_FX_CROSSES_NZD_JPY,
     'XAUUSD': instruments.INSTRUMENT_FX_METALS_XAU_USD,       # Gold spot
     'USA30':  instruments.INSTRUMENT_IDX_AMERICA_E_D_J_IND,   # Dow Jones
     'USA500': instruments.INSTRUMENT_IDX_AMERICA_E_SANDP_500, # S&P 500

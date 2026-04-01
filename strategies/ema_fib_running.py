@@ -77,6 +77,9 @@ class EmaFibRunningStrategy:
             'EURUSD': 0.0001, 'GBPUSD': 0.0001, 'AUDUSD': 0.0001,
             'NZDUSD': 0.0001, 'USDJPY': 0.01,   'USDCAD': 0.0001,
             'USDCHF': 0.0001,
+            # JPY crosses — must be explicit; fallback default is 0.0001 (wrong for JPY)
+            'AUDJPY': 0.01, 'CADJPY': 0.01, 'EURJPY': 0.01,
+            'GBPJPY': 0.01, 'NZDJPY': 0.01,
         }
 
         self._window_size = 2 * fractal_n + 1

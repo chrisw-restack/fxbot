@@ -72,13 +72,31 @@ STRATEGY_CONFIGS = {
     'ebp': {
         'class': EbpStrategy,
         'timeframes': ['H4', 'H1'],
+        'symbols': ['EURUSD', 'GBPUSD', 'AUDUSD', 'NZDUSD', 'USDJPY', 'USDCAD', 'USDCHF', 'XAUUSD'],
         'fixed_params': {
-            'tf_bias': 'H4', 'tf_entry': 'H1', 'require_fvg': False,
+            'tf_bias': 'H4', 'tf_entry': 'H1',
+            'min_retrace_pct': 0.1,  # sweep showed minimal impact
         },
         'param_grid': {
-            'fractal_n':       [2, 3],
-            'min_retrace_pct': [0.1, 0.25, 0.382],
+            'fractal_n':       [1, 2, 3],
             'max_retrace_pct': [0.5, 0.618, 0.75],
+            'require_fvg':     [True, False],
+            'sl_mode':         ['mss_bar', 'structural'],
+        },
+    },
+    'ebp_h1m15': {
+        'class': EbpStrategy,
+        'timeframes': ['H1', 'M15'],
+        'symbols': ['EURUSD', 'GBPUSD', 'AUDUSD', 'NZDUSD', 'USDJPY', 'USDCAD', 'USDCHF', 'XAUUSD'],
+        'fixed_params': {
+            'tf_bias': 'H1', 'tf_entry': 'M15',
+            'min_retrace_pct': 0.1,  # sweep showed minimal impact
+        },
+        'param_grid': {
+            'fractal_n':       [1, 2, 3],
+            'max_retrace_pct': [0.5, 0.618, 0.75],
+            'require_fvg':     [True, False],
+            'sl_mode':         ['mss_bar', 'structural'],
         },
     },
     'the_strat': {
@@ -296,7 +314,7 @@ def compute_metrics(trades: list[dict]) -> dict:
 
 
 def optimize(all_bars, train_start, train_end, strategy_class,
-             param_grid, fixed_params, symbols, metric):
+             param_grid, fixed_params, symbols, metric, min_trades=MIN_TRADES):
     """Optimize parameters on a training window. Returns best params and metrics."""
     train_bars = filter_bars(all_bars, start=train_start, end=train_end)
 
@@ -319,7 +337,7 @@ def optimize(all_bars, train_start, train_end, strategy_class,
 
         all_results.append({**params, **m})
 
-        if m['trades'] < MIN_TRADES:
+        if m['trades'] < min_trades:
             continue
 
         score = m[metric]
@@ -368,6 +386,10 @@ def main():
         '--metric', choices=['expectancy', 'total_r', 'pf'],
         default=OPTIMIZATION_METRIC,
         help=f'Metric to optimize (default: {OPTIMIZATION_METRIC})',
+    )
+    parser.add_argument(
+        '--min-trades', type=int, default=MIN_TRADES,
+        help=f'Minimum IS trades for a combo to qualify (default: {MIN_TRADES})',
     )
     args = parser.parse_args()
 
@@ -418,14 +440,15 @@ def main():
         print(f"{'='*90}")
 
         # Optimize on training window
-        print(f"  Optimizing ({n_combos} combos, metric={args.metric})...")
+        print(f"  Optimizing ({n_combos} combos, metric={args.metric}, min_trades={args.min_trades})...")
         best_params, is_metrics, _ = optimize(
             all_bars, fold['train_start'], fold['train_end'],
             strategy_class, param_grid, fixed_params, symbols, args.metric,
+            min_trades=args.min_trades,
         )
 
         if best_params is None:
-            print(f"  No valid params found (all had < {MIN_TRADES} trades). Skipping fold.")
+            print(f"  No valid params found (all had < {args.min_trades} trades). Skipping fold.")
             continue
 
         params_str = ', '.join(f'{k}={v}' for k, v in best_params.items())

@@ -54,6 +54,7 @@ class EbpStrategy:
         use_fvg_entry: bool = False,
         require_fvg: bool = True,
         sl_mode: str = 'structural',  # 'structural' | 'mss_bar' | 'symmetric'
+        blocked_hours: tuple = (),     # entry-TF bars during these UTC hours are skipped
     ):
         self.tf_bias = tf_bias
         self.tf_entry = tf_entry
@@ -63,6 +64,7 @@ class EbpStrategy:
         self.use_fvg_entry = use_fvg_entry
         self.require_fvg = require_fvg
         self.sl_mode = sl_mode
+        self._blocked = frozenset(blocked_hours)
 
         self.TIMEFRAMES = [tf_bias, tf_entry]
         self.NAME = f'EBP_{tf_bias}_{tf_entry}'
@@ -177,6 +179,9 @@ class EbpStrategy:
     def _on_entry_bar(self, symbol: str, bar: BarEvent) -> Signal | None:
         bias = self._bias[symbol]
         if bias is None:
+            return None
+
+        if self._blocked and bar.timestamp.hour in self._blocked:
             return None
 
         self._entry_bars[symbol].append(bar)

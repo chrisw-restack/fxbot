@@ -44,6 +44,7 @@ MT5 / CSV → Event Generator → Strategies
 | Dukascopy fetch | `fetch_data_dukascopy.py` | Download historical data from Dukascopy (any TF) |
 | News data fetch | `fetch_news_data.py` | Download Forex Factory calendar from Hugging Face |
 | News filter | `data/news_filter.py` | Block signals near high-impact news events |
+| Spread monitor | `measure_spreads.py` | Poll live MT5 bid/ask to measure real spreads (run on VPS) |
 
 ## Key Design Rules
 
@@ -346,6 +347,16 @@ Columns: `time, open, high, low, close, tick_volume` (MT5) or `time, open, high,
 **Trade log** (printed as table and/or saved to CSV):
 `datetime | symbol | direction | result | r_multiple | strategy`
 
+**Closed trade dict fields** (available in analysis scripts via `engine.execution.get_closed_trades()`):
+- `ticket`, `symbol`, `direction`, `strategy_name`
+- `entry_price`, `exit_price`, `sl`, `tp`, `sl_pips`
+- `result` — `'WIN'` | `'LOSS'` | `'BE'`
+- `r_multiple` — profit in units of initial risk
+- `pnl`, `commission`, `lot_size`
+- `open_time`, `close_time`
+- `duration_hours` — time from fill to close
+- `pending_hours` — time from signal emission to fill (PENDING orders only; `None` for MARKET orders)
+
 **Performance summary**:
 - Total trades, win rate %, total R
 - Profit factor (gross profit R ÷ gross loss R)
@@ -390,6 +401,7 @@ python walk_forward.py breakout
 - `--test-years N` — test window length (default 2)
 - `--step-years N` — advance between folds (default 2)
 - `--metric {expectancy,total_r,pf}` — optimization target (default expectancy)
+- `--min-trades N` — minimum IS trades required to include a parameter combo (default 50). Raise to 100+ for sparse strategies to avoid selecting combos that "won" due to 1-2 lucky trades.
 
 **Interpreting results**: the key metric is **OOS retention** (OOS expectancy / IS expectancy). Above 70% = STRONG (parameters generalize), 40-70% = MODERATE (some overfitting), below 40% = WEAK/FAIL (curve-fit).
 
@@ -413,8 +425,8 @@ Walk-forward: MODERATE (+110.9R OOS, +0.427R expect, 67% retention). IS 2016–2
 EmaFibRunning: `python run_backtest.py ema_fib_running`
 Walk-forward: MODERATE (folds 1&2 positive, fold 3 sparse/12 OOS trades). IS 2016–2026: +82.7R, +0.371R expect, PF=1.53.
 
-**Validated (not yet live):**
-- **EBP** (H4/H1) — walk-forward STRONG. See `strategy_log/ebp.md`.
+**Needs more data (not live):**
+- **EBP** (H1/M15) — INCONCLUSIVE. Real IS edge found (+0.460R, PF 1.86) with mss_bar SL + max_retrace=0.5. WF WEAK on both H4/H1 and H1/M15 stacks — all 3 folds chose identical H1/M15 params (positive sign) but fold 3 OOS failed. Too few OOS trades (10–20/fold) to distinguish edge from noise. Needs 50+ demo trades. See `strategy_log/ebp.md`.
 
 **Suspended / shelved:**
 - TheStrat — fails walk-forward after fill-bug fix. See `strategy_log/the_strat.md`.
@@ -428,6 +440,8 @@ Walk-forward: MODERATE (folds 1&2 positive, fold 3 sparse/12 OOS trades). IS 201
 - RangeFade — barely fires (56 trades/10yr best combo), no reliable edge. See `strategy_log/range_fade.md`.
 - SupplyDemand — walk-forward MODERATE (+0.020R OOS, 51% retention) but only 150 OOS trades and fold 1 negative. Insufficient evidence. See `strategy_log/supply_demand.md`.
 - IctJudasSwing — sweep all 108 combos negative (best -0.024R). M5 MSS pattern has no edge at 2:1 R:R. See `strategy_log/ict_judas_swing.md`.
+- SmcZone — SHELVED: swing pivot zones + fractal BOS + wick rejection. Best IS: +0.318R, 43.9% WR, PF 1.57, but only 11 trades/yr — too sparse for walk-forward. WR ceiling ~40–44% across all configs. See `strategy_log/smc_zone.md`.
+- BigBelugaSd — SHELVED: 3-candle momentum zone detection. WR 33.4% (breakeven), expectancy ~0R. Volume filter useless with tick volume (FX has no centralised exchange). See `strategy_log/bigbeluga_sd.md`.
 
 **Strategy logs**: `strategy_log/` folder contains one `.md` per strategy with full parameter, sweep, and walk-forward history.
 
@@ -468,9 +482,9 @@ nf.is_blocked(symbol='EURUSD', timestamp=some_datetime)  # True if blocked
 ## Important Notes
 
 - **USDJPY pip size is 0.01** (not 0.0001). Any strategy doing pip calculations internally must handle this. Use a `pip_sizes` dict parameter.
-- **Backtest spread is 2.0 pips** — conservative average; real raw spreads are typically 0.1-0.5 pips.
+- **Backtest spread is 2.0 pips** — conservative average. ICMarkets Raw typical spreads during London/NY session are 0.1–0.5 pips on majors; p95 is likely 1.0–1.2 pips. Use `measure_spreads.py` on the VPS during active hours to get symbol-accurate values. Current 2.0 pips setting understates real performance by ~1 pip per trade.
 - **Commission is $7.00 per lot round-trip** (ICMarkets Raw Spread) — deducted from PnL at trade close in backtesting.
-- **Break-even stop loss** is supported in `SimulatedExecution` via `breakeven_at_r` parameter, but testing showed it hurts fib retracement strategies.
+- **Break-even stop loss** is supported via `--breakeven-at-r N` in `run_backtest.py` (e.g. `--breakeven-at-r 2.0`). Tested at 2R, 3R, 5R, 7R, 10R for EmaFibRetracement — all levels hurt performance. At 2R: −52R net vs baseline (14 wins saved, 178R of large wins lost). Large wins (12R+) require price to briefly retrace through the BE trigger before continuing. Do not use for fib retracement strategies.
 
 ## Future Work
 - Currency exposure limits (max positions per currency to reduce correlation risk)

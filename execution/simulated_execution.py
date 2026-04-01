@@ -52,6 +52,7 @@ class SimulatedExecution(BaseExecution):
         strategy_name: str,
         entry_timeframe: str | None = None,
         tp_locked: bool = False,
+        signal_time=None,
     ) -> int:
         ticket = self._next_ticket
         self._next_ticket += 1
@@ -67,6 +68,7 @@ class SimulatedExecution(BaseExecution):
             'strategy_name':   strategy_name,
             'entry_timeframe': entry_timeframe,
             'tp_locked':       tp_locked,
+            'signal_time':     signal_time,
         }
         return ticket
 
@@ -192,6 +194,8 @@ class SimulatedExecution(BaseExecution):
 
         open_time = pos.get('open_time')
         duration_hours = round((bar.timestamp - open_time).total_seconds() / 3600, 1) if open_time else None
+        signal_time = pos.get('signal_time')
+        pending_hours = round((open_time - signal_time).total_seconds() / 3600, 1) if (open_time and signal_time) else None
 
         if pos['direction'] == 'BUY':
             pips = (exit_price - pos['entry_price']) / pip_size
@@ -214,6 +218,7 @@ class SimulatedExecution(BaseExecution):
             'sl':            original_sl,
             'tp':            pos['tp'],
             'sl_pips':        round(sl_pips, 1),
+            'pending_hours': pending_hours,
             'duration_hours': duration_hours,
             'lot_size':      pos['lot_size'],
             'result':        result,

@@ -27,6 +27,22 @@ PIP_SIZE = {
     'USDJPY': 0.01,
     'USDCAD': 0.0001,
     'USDCHF': 0.0001,
+    # FX crosses — non-JPY
+    'AUDCAD': 0.0001,
+    'AUDNZD': 0.0001,
+    'EURAUD': 0.0001,
+    'EURCAD': 0.0001,
+    'EURCHF': 0.0001,
+    'EURGBP': 0.0001,
+    'GBPAUD': 0.0001,
+    'GBPCAD': 0.0001,
+    'GBPNZD': 0.0001,
+    # FX crosses — JPY (1 pip = 0.01)
+    'AUDJPY': 0.01,
+    'CADJPY': 0.01,
+    'EURJPY': 0.01,
+    'GBPJPY': 0.01,
+    'NZDJPY': 0.01,
     # Metals & indices — 1 pip defined as the minimum meaningful unit
     'XAUUSD': 0.10,   # gold: 1 pip = $0.10 (10 cents per troy oz)
     'USA30':  1.0,    # Dow Jones: 1 pip = 1 index point
@@ -50,6 +66,21 @@ BACKTEST_SPREAD_PIPS: dict[str, float] = {
     'USDJPY': 0.1,
     'USDCAD': 0.1,
     'USDCHF': 0.1,
+    # FX crosses — placeholders, calibrate with measure_spreads.py on VPS
+    'AUDCAD': 0.5,
+    'AUDNZD': 0.5,
+    'AUDJPY': 0.4,
+    'CADJPY': 0.5,
+    'EURAUD': 0.5,
+    'EURCAD': 0.5,
+    'EURCHF': 0.5,
+    'EURGBP': 0.3,
+    'EURJPY': 0.3,
+    'GBPAUD': 0.8,
+    'GBPCAD': 0.8,
+    'GBPJPY': 0.4,
+    'GBPNZD': 0.8,
+    'NZDJPY': 0.5,
     'XAUUSD': 1.1,
     'USTEC':  10.0,
     'USA100': 10.0,
@@ -73,6 +104,23 @@ PIP_VALUE_USD = {
     'USDJPY': 10.0,
     'USDCAD': 10.0,
     'USDCHF': 10.0,
+    # FX crosses — approximate USD value per pip per 1 standard lot.
+    # Actual value varies with exchange rate; these are typical-rate estimates.
+    # Counter currency converted to USD: 10 units of counter / rate.
+    'AUDCAD':  7.5,   # 10 CAD / ~1.33 USDCAD
+    'AUDNZD':  6.0,   # 10 NZD × ~0.60 NZDUSD
+    'AUDJPY':  7.0,   # 1000 JPY / ~143 USDJPY
+    'CADJPY':  7.0,
+    'EURAUD':  6.5,   # 10 AUD × ~0.65 AUDUSD
+    'EURCAD':  7.5,
+    'EURCHF': 11.0,   # 10 CHF / ~0.91 USDCHF
+    'EURGBP': 12.5,   # 10 GBP × ~1.25 GBPUSD
+    'EURJPY':  7.0,
+    'GBPAUD':  6.5,
+    'GBPCAD':  7.5,
+    'GBPJPY':  7.0,
+    'GBPNZD':  6.0,
+    'NZDJPY':  7.0,
     # Metals & indices — USD value per pip per 1 standard lot
     'XAUUSD': 10.0,   # 100 troy oz × $0.10/pip = $10/lot
     'USA30':   1.0,   # $1/lot per 1-point move (ICMarkets CFD)
