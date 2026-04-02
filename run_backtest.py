@@ -30,6 +30,7 @@ from strategies.ebp_limit import EbpLimitStrategy
 from strategies.ims import ImsStrategy
 from strategies.smc_zone import SmcZoneStrategy
 from strategies.bigbeluga_sd import BigBelugaSdStrategy
+from strategies.smc_reversal import SmcReversalStrategy
 from data.historical_loader import find_csv
 from data.news_filter import NewsFilter
 
@@ -42,9 +43,9 @@ logging.basicConfig(
 # ── Settings — edit these ─────────────────────────────────────────────────────
 # SYMBOLS         = ['XAUUSD']
 # SYMBOLS         = ['EURUSD', 'GBPUSD', 'AUDUSD', 'NZDUSD', 'USDJPY', 'USDCAD', 'USDCHF', 'XAUUSD']
-SYMBOLS         = ['EURUSD', 'GBPUSD', 'AUDUSD', 'NZDUSD', 'USDJPY', 'USDCAD', 'USDCHF']
+# SYMBOLS         = ['EURUSD', 'GBPUSD', 'AUDUSD', 'NZDUSD', 'USDJPY', 'USDCAD', 'USDCHF']
 # SYMBOLS         = [  'XAUUSD']
-# SYMBOLS         = [  'USA100']
+SYMBOLS         = [  'USA100']
 INITIAL_BALANCE = 10_000.0   # starting account balance in USD
 RR_RATIO        = 2.0        # risk/reward ratio (overrides config default)
 RISK_PCT_OVERRIDES = {}
@@ -81,6 +82,8 @@ STRATEGIES = {
     'smc_zone_h4_leg25':            SmcZoneStrategy(swing_length=3, tf_entry='H4', zone_atr_mult=2.0, sl_buffer_atr=0.5, zone_leg_atr=2.5, d1_ema_period=50, blocked_hours=(*range(20,24),*range(0,9))),
     'bigbeluga_h4':                 BigBelugaSdStrategy(tf_entry='H4', atr_period=200, zone_atr_mult=2.0, sl_buffer_atr=0.5, require_volume=True,  d1_ema_period=50, cooldown_bars=15, blocked_hours=(*range(20,24),*range(0,9))),
     'bigbeluga_h4_novol':           BigBelugaSdStrategy(tf_entry='H4', atr_period=200, zone_atr_mult=2.0, sl_buffer_atr=0.5, require_volume=False, d1_ema_period=50, cooldown_bars=15, blocked_hours=(*range(20,24),*range(0,9))),
+    'smc_reversal':                 SmcReversalStrategy(fractal_n=3, fvg_window=4, ob_max_per_tf=3, wiggle_room_pct=0.003, sl_buffer_pct=0.0006, multiple_trades_per_bias=True),
+    'smc_reversal_single':          SmcReversalStrategy(fractal_n=3, fvg_window=4, ob_max_per_tf=3, wiggle_room_pct=0.003, sl_buffer_pct=0.0006, multiple_trades_per_bias=False),
 }
 
 # ── Live suite: both live strategies run together ────────────────────────────

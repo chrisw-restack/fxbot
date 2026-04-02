@@ -442,6 +442,7 @@ Walk-forward: MODERATE (folds 1&2 positive, fold 3 sparse/12 OOS trades). IS 201
 - IctJudasSwing — sweep all 108 combos negative (best -0.024R). M5 MSS pattern has no edge at 2:1 R:R. See `strategy_log/ict_judas_swing.md`.
 - SmcZone — SHELVED: swing pivot zones + fractal BOS + wick rejection. Best IS: +0.318R, 43.9% WR, PF 1.57, but only 11 trades/yr — too sparse for walk-forward. WR ceiling ~40–44% across all configs. See `strategy_log/smc_zone.md`.
 - BigBelugaSd — SHELVED: 3-candle momentum zone detection. WR 33.4% (breakeven), expectancy ~0R. Volume filter useless with tick volume (FX has no centralised exchange). See `strategy_log/bigbeluga_sd.md`.
+- SmcReversal — SHELVED: ICT-style D1 bias + M15/H4/H1 OB confluence + M5 NY killzone entry (NAS100). Best IS +0.220R (59 trades/10yr), WF FAIL (-0.022R OOS aggregate). Root cause: too few trades per fold (10–25 OOS) for reliable parameter selection. Fold 3 (2024–2026) was positive (+0.200R OOS). Revival path: expand to USA30+USA500 to triple trade count. See `strategy_log/smc_reversal.md`.
 
 **Strategy logs**: `strategy_log/` folder contains one `.md` per strategy with full parameter, sweep, and walk-forward history.
 

@@ -30,6 +30,7 @@ class MT5Execution(BaseExecution):
         strategy_name: str,
         entry_timeframe: str | None = None,  # informational — MT5 handles fills natively
         tp_locked: bool = False,              # informational — MT5 uses the tp price directly
+        signal_time=None,                     # informational — not used by MT5 execution
     ) -> int:
         tick = mt5.symbol_info_tick(symbol)
         if tick is None:

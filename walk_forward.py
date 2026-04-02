@@ -31,6 +31,7 @@ from strategies.breakout import BreakoutStrategy
 from strategies.ema_fib_retracement_intraday import EmaFibRetracementIntradayStrategy
 from strategies.ema_fib_running import EmaFibRunningStrategy
 from strategies.gaussian_channel import GaussianChannelStrategy
+from strategies.smc_reversal import SmcReversalStrategy
 
 logging.basicConfig(level=logging.ERROR)
 sys.stdout.reconfigure(line_buffering=True)
@@ -207,6 +208,24 @@ STRATEGY_CONFIGS = {
         },
         'fixed_params': {
             'tf_bias': 'H4', 'tf_intermediate': 'H1', 'tf_entry': 'M15',
+        },
+    },
+    # ICT-style SMC reversal across all 3 US equity indices.
+    # Multi-symbol expands trade count from ~6/yr (USA100 only) to ~18/yr.
+    'smc_reversal': {
+        'class': SmcReversalStrategy,
+        'timeframes': ['D1', 'H4', 'H1', 'M15', 'M5'],
+        'symbols': ['USA100', 'USA30', 'USA500'],
+        'min_trades': 30,   # ~3 symbols × ~10 trades each per IS window
+        'fixed_params': {
+            'ob_max_per_tf': 3,
+        },
+        'param_grid': {
+            'fractal_n':                [2, 3, 5],
+            'fvg_window':               [2, 4, 6],
+            'wiggle_room_pct':          [0.0, 0.002, 0.003, 0.006],
+            'sl_buffer_pct':            [0.0003, 0.0006, 0.001],
+            'multiple_trades_per_bias': [True, False],
         },
     },
 }
@@ -399,6 +418,7 @@ def main():
     fixed_params = cfg.get('fixed_params', {})
     timeframes = cfg['timeframes']
     symbols = cfg.get('symbols', SYMBOLS)
+    min_trades = cfg.get('min_trades', args.min_trades)
 
     # ── Load all bar data once ───────────────────────────────────────────────
     print("Discovering CSV files...")
@@ -440,15 +460,15 @@ def main():
         print(f"{'='*90}")
 
         # Optimize on training window
-        print(f"  Optimizing ({n_combos} combos, metric={args.metric}, min_trades={args.min_trades})...")
+        print(f"  Optimizing ({n_combos} combos, metric={args.metric}, min_trades={min_trades})...")
         best_params, is_metrics, _ = optimize(
             all_bars, fold['train_start'], fold['train_end'],
             strategy_class, param_grid, fixed_params, symbols, args.metric,
-            min_trades=args.min_trades,
+            min_trades=min_trades,
         )
 
         if best_params is None:
-            print(f"  No valid params found (all had < {args.min_trades} trades). Skipping fold.")
+            print(f"  No valid params found (all had < {min_trades} trades). Skipping fold.")
             continue
 
         params_str = ', '.join(f'{k}={v}' for k, v in best_params.items())
