@@ -19,7 +19,7 @@ class SmcReversalStrategy:
     """
     ICT-style multi-timeframe reversal strategy for US equity indices.
 
-    Designed for USA100, USA30, and USA500. All price-level parameters are expressed
+    Designed for USTEC, US30, and US500. All price-level parameters are expressed
     as fractions of the current price so they scale automatically across symbols.
 
     Structure:

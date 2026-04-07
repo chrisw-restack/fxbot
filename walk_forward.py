@@ -16,7 +16,10 @@ import itertools
 import io
 import contextlib
 import logging
+import multiprocessing
+import os
 import sys
+from concurrent.futures import ProcessPoolExecutor
 from datetime import datetime
 
 import config
@@ -32,6 +35,7 @@ from strategies.ema_fib_retracement_intraday import EmaFibRetracementIntradayStr
 from strategies.ema_fib_running import EmaFibRunningStrategy
 from strategies.gaussian_channel import GaussianChannelStrategy
 from strategies.smc_reversal import SmcReversalStrategy
+from strategies.three_line_strike import ThreeLineStrikeStrategy
 
 logging.basicConfig(level=logging.ERROR)
 sys.stdout.reconfigure(line_buffering=True)
@@ -51,6 +55,7 @@ OPTIMIZATION_METRIC = 'expectancy'   # 'expectancy', 'total_r', or 'pf'
 MIN_TRADES = 50                      # minimum trades for a param combo to qualify
 
 RISK_PCT_OVERRIDES = {}
+N_WORKERS = 2  # parallel workers
 
 # ── Strategy configs ─────────────────────────────────────────────────────────
 STRATEGY_CONFIGS = {
@@ -210,12 +215,31 @@ STRATEGY_CONFIGS = {
             'tf_bias': 'H4', 'tf_intermediate': 'H1', 'tf_entry': 'M15',
         },
     },
+    'engulfing': {
+        'class': ThreeLineStrikeStrategy,
+        'timeframes': ['M5'],
+        'symbols': ['EURUSD', 'AUDUSD', 'NZDUSD', 'USDJPY', 'USDCAD'],
+        'min_trades': 30,   # ~5 pairs × ~3–5 trades/yr each in a 4yr IS window
+        'fixed_params': {
+            'allowed_hours': tuple(range(13, 18)),  # NY session only
+            'sma_sep_pips': 5.0,
+            'sl_mode': 'fractal',
+            'fractal_n': 3,
+            'pip_sizes': {'USDJPY': 0.01},
+        },
+        'param_grid': {
+            'min_prev_body_pips': [0.0, 3.0, 5.0],
+            'engulf_ratio':       [1.0, 1.5, 2.0],
+            'max_sl_pips':        [15, 20],
+            'rr_ratio':           [2.0, 2.5],
+        },
+    },
     # ICT-style SMC reversal across all 3 US equity indices.
-    # Multi-symbol expands trade count from ~6/yr (USA100 only) to ~18/yr.
+    # Multi-symbol expands trade count from ~6/yr (USTEC only) to ~18/yr.
     'smc_reversal': {
         'class': SmcReversalStrategy,
         'timeframes': ['D1', 'H4', 'H1', 'M15', 'M5'],
-        'symbols': ['USA100', 'USA30', 'USA500'],
+        'symbols': ['USTEC', 'US30', 'US500'],
         'min_trades': 30,   # ~3 symbols × ~10 trades each per IS window
         'fixed_params': {
             'ob_max_per_tf': 3,
@@ -229,6 +253,40 @@ STRATEGY_CONFIGS = {
         },
     },
 }
+
+
+# ── Parallel IS optimisation worker ──────────────────────────────────────────
+# Module-level so ProcessPoolExecutor can pickle it.
+
+_WF_BARS = None  # set once per worker process via initializer
+
+
+def _init_wf_worker(bars):
+    global _WF_BARS
+    _WF_BARS = bars
+
+
+def _run_wf_combo(args):
+    """Run one param combo on the pre-loaded training bars. Returns merged params+metrics dict.
+
+    If 'rr_ratio' appears in params or fixed_params it is extracted and passed to the
+    BacktestEngine rather than the strategy constructor (RR is an engine param, not a
+    strategy param).
+    """
+    params, strategy_class, fixed_params, symbols = args
+    try:
+        full_params = {**fixed_params, **params}
+        rr = full_params.pop('rr_ratio', RR_RATIO)
+        strategy = strategy_class(**full_params)
+        m = run_backtest(
+            _WF_BARS, strategy, symbols,
+            INITIAL_BALANCE, rr, config.BACKTEST_SPREAD_PIPS, RISK_PCT_OVERRIDES,
+        )
+        return {**params, **m}
+    except Exception:
+        return {**params, 'trades': 0, 'win_rate': 0, 'total_r': 0,
+                'expectancy': 0, 'pf': 0, 'max_dd_r': 0,
+                'worst_loss_streak': 0, 'best_win_streak': 0}
 
 
 # ── Core functions ───────────────────────────────────────────────────────────
@@ -333,37 +391,46 @@ def compute_metrics(trades: list[dict]) -> dict:
 
 
 def optimize(all_bars, train_start, train_end, strategy_class,
-             param_grid, fixed_params, symbols, metric, min_trades=MIN_TRADES):
+             param_grid, fixed_params, symbols, metric, min_trades=MIN_TRADES, n_workers=1):
     """Optimize parameters on a training window. Returns best params and metrics."""
     train_bars = filter_bars(all_bars, start=train_start, end=train_end)
 
     keys = list(param_grid.keys())
-    combos = list(itertools.product(*param_grid.values()))
+    combos = [dict(zip(keys, c)) for c in itertools.product(*param_grid.values())]
+
+    if n_workers > 1:
+        task_args = [(params, strategy_class, fixed_params, symbols) for params in combos]
+        with ProcessPoolExecutor(
+            max_workers=n_workers,
+            mp_context=multiprocessing.get_context('fork'),
+            initializer=_init_wf_worker,
+            initargs=(train_bars,),
+        ) as executor:
+            all_results = list(executor.map(_run_wf_combo, task_args))
+    else:
+        all_results = []
+        for params in combos:
+            full_params = {**fixed_params, **params}
+            rr = full_params.pop('rr_ratio', RR_RATIO)
+            strategy = strategy_class(**full_params)
+            m = run_backtest(
+                train_bars, strategy, symbols,
+                INITIAL_BALANCE, rr, config.BACKTEST_SPREAD_PIPS, RISK_PCT_OVERRIDES,
+            )
+            all_results.append({**params, **m})
+
     best_score = -float('inf')
     best_params = None
     best_metrics = None
-    all_results = []
 
-    for combo in combos:
-        params = dict(zip(keys, combo))
-        full_params = {**fixed_params, **params}
-        strategy = strategy_class(**full_params)
-
-        m = run_backtest(
-            train_bars, strategy, symbols,
-            INITIAL_BALANCE, RR_RATIO, config.BACKTEST_SPREAD_PIPS, RISK_PCT_OVERRIDES,
-        )
-
-        all_results.append({**params, **m})
-
-        if m['trades'] < min_trades:
+    for result in all_results:
+        if result['trades'] < min_trades:
             continue
-
-        score = m[metric]
+        score = result[metric]
         if score > best_score:
             best_score = score
-            best_params = params
-            best_metrics = m
+            best_params = {k: result[k] for k in keys}
+            best_metrics = {k: result[k] for k in result if k not in keys}
 
     return best_params, best_metrics, all_results
 
@@ -373,11 +440,12 @@ def test_oos(all_bars, test_start, test_end, strategy_class,
     """Test best parameters on out-of-sample window."""
     test_bars = filter_bars(all_bars, start=test_start, end=test_end)
     full_params = {**fixed_params, **best_params}
+    rr = full_params.pop('rr_ratio', RR_RATIO)
     strategy = strategy_class(**full_params)
 
     return run_backtest(
         test_bars, strategy, symbols,
-        INITIAL_BALANCE, RR_RATIO, config.BACKTEST_SPREAD_PIPS, RISK_PCT_OVERRIDES,
+        INITIAL_BALANCE, rr, config.BACKTEST_SPREAD_PIPS, RISK_PCT_OVERRIDES,
     )
 
 
@@ -409,6 +477,10 @@ def main():
     parser.add_argument(
         '--min-trades', type=int, default=MIN_TRADES,
         help=f'Minimum IS trades for a combo to qualify (default: {MIN_TRADES})',
+    )
+    parser.add_argument(
+        '--workers', type=int, default=N_WORKERS,
+        help=f'Parallel worker processes for IS optimisation (default: {N_WORKERS})',
     )
     args = parser.parse_args()
 
@@ -460,11 +532,11 @@ def main():
         print(f"{'='*90}")
 
         # Optimize on training window
-        print(f"  Optimizing ({n_combos} combos, metric={args.metric}, min_trades={min_trades})...")
+        print(f"  Optimizing ({n_combos} combos, metric={args.metric}, min_trades={min_trades}, workers={args.workers})...")
         best_params, is_metrics, _ = optimize(
             all_bars, fold['train_start'], fold['train_end'],
             strategy_class, param_grid, fixed_params, symbols, args.metric,
-            min_trades=min_trades,
+            min_trades=min_trades, n_workers=args.workers,
         )
 
         if best_params is None:

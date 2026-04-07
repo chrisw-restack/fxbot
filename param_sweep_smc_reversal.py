@@ -27,7 +27,7 @@ from data.historical_loader import find_csv, load_and_merge
 logging.basicConfig(level=logging.ERROR)
 sys.stdout.reconfigure(line_buffering=True)
 
-SYMBOLS = ['USA100', 'USA30', 'USA500']
+SYMBOLS = ['USTEC', 'US30', 'US500']
 TIMEFRAMES = ['D1', 'H4', 'H1', 'M15', 'M5']
 INITIAL_BALANCE = 10_000.0
 RR_RATIO = 2.0

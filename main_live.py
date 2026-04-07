@@ -23,6 +23,7 @@ from utils.trade_logger import TradeLogger
 from data.mt5_data import connect, disconnect, reconnect, get_latest_completed_bar, get_recent_bars
 from strategies.ema_fib_retracement import EmaFibRetracementStrategy
 from strategies.ema_fib_running import EmaFibRunningStrategy
+from strategies.three_line_strike import ThreeLineStrikeStrategy
 
 from utils.telegram_notifier import TelegramNotifier
 import config
@@ -64,6 +65,7 @@ def main():
         trade_logger = TradeLogger()
         risk         = RiskManager(
             account_balance_fn=execution.get_account_balance,
+            rr_ratio=2.5,  # engulfing uses 2.5R (fib strategies set their own TP and bypass this)
         )
 
         notifier = TelegramNotifier()
@@ -78,32 +80,46 @@ def main():
 
         # ── Register strategies ───────────────────────────────────────────────
         # Add or remove strategies here. Each strategy is registered against
-        # the full symbol list, but will only fire when its declared timeframes
+        # its target symbol list and will only fire when its declared timeframes
         # produce a new completed bar.
-        strategies = [
-            EmaFibRetracementStrategy(
-                fib_entry=0.786,
-                fib_tp=3.0,
-                fractal_n=3,
-                min_swing_pips=10,
-                ema_sep_pct=0.001,
-                cooldown_bars=10,
-                invalidate_swing_on_loss=True,
-                blocked_hours=(*range(20, 24), *range(0, 9)),  # allow 09:00-19:00 UTC
-            ),
-            EmaFibRunningStrategy(
-                fib_entry=0.786,
-                fib_tp=2.5,
-                fractal_n=2,
-                min_swing_pips=30,
-                ema_sep_pct=0.0,
-                cooldown_bars=0,
-                invalidate_swing_on_loss=True,
-                blocked_hours=(*range(20, 24), *range(0, 9)),  # allow 09:00-19:00 UTC
-            ),
-        ]
-        for strategy in strategies:
+        ema_fib = EmaFibRetracementStrategy(
+            fib_entry=0.786,
+            fib_tp=3.0,
+            fractal_n=3,
+            min_swing_pips=10,
+            ema_sep_pct=0.001,
+            cooldown_bars=10,
+            invalidate_swing_on_loss=True,
+            blocked_hours=(*range(20, 24), *range(0, 9)),  # allow 09:00-19:00 UTC
+        )
+        ema_fib_running = EmaFibRunningStrategy(
+            fib_entry=0.786,
+            fib_tp=2.5,
+            fractal_n=2,
+            min_swing_pips=30,
+            ema_sep_pct=0.0,
+            cooldown_bars=0,
+            invalidate_swing_on_loss=True,
+            blocked_hours=(*range(20, 24), *range(0, 9)),  # allow 09:00-19:00 UTC
+        )
+        engulfing = ThreeLineStrikeStrategy(
+            sl_mode='fractal',
+            fractal_n=3,
+            min_prev_body_pips=3.0,
+            engulf_ratio=1.5,
+            max_sl_pips=15,
+            allowed_hours=tuple(range(13, 18)),  # NY session: 13:00-17:00 UTC
+            sma_sep_pips=5.0,
+            pip_sizes={'USDJPY': 0.01},
+        )
+
+        strategies = [ema_fib, ema_fib_running, engulfing]
+
+        # EmaFib strategies run on all configured symbols
+        for strategy in [ema_fib, ema_fib_running]:
             event_engine.register(strategy, config.SYMBOLS)
+        # Engulfing runs on 5 pairs only (GBPUSD negative on NY; USDCHF poor IS)
+        event_engine.register(engulfing, ['EURUSD', 'AUDUSD', 'NZDUSD', 'USDJPY', 'USDCAD'])
 
         # ── Bar-detection state ───────────────────────────────────────────────
         # Tracks the timestamp of the last processed bar per (symbol, timeframe).
@@ -114,7 +130,7 @@ def main():
         # D1 needs ~50 bars for EMA(20) + ATR(14) with margin.
         # H4/H1 need ~100 bars for fractal window + swing detection.
         # M15 needs ~200 bars for fractal window + swing detection on faster TF.
-        WARMUP_BARS = {'D1': 50, 'H4': 100, 'H1': 100, 'M15': 200}
+        WARMUP_BARS = {'D1': 50, 'H4': 100, 'H1': 100, 'M15': 200, 'M5': 250}
         logger.info("Warming up strategy state with historical bars...")
         warmup_count = 0
         # Sort so higher TFs come first — strategies need bias seeded before entry TF

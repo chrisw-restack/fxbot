@@ -34,10 +34,11 @@ PIP_SIZE = {
     'EURUSD': 0.0001, 'GBPUSD': 0.0001, 'AUDUSD': 0.0001,
     'NZDUSD': 0.0001, 'USDJPY': 0.01,   'USDCAD': 0.0001,
     'USDCHF': 0.0001, 'XAUUSD': 0.1,    'XAGUSD': 0.01,
-    'USA30':  1.0,    'USA500': 0.1,     'USA100': 0.1,
+    'US30':  1.0,    'US500': 0.1,     'USTEC': 1.0,
+    'DE40':  1.0,
 }
 
-DEFAULT_SYMBOLS = ['EURUSD', 'GBPUSD', 'AUDUSD', 'NZDUSD', 'USDJPY', 'USDCAD', 'USDCHF']
+DEFAULT_SYMBOLS = ['EURUSD', 'GBPUSD', 'AUDUSD', 'NZDUSD', 'USDJPY', 'USDCAD', 'USDCHF', 'XAUUSD', 'USTEC', 'US500', 'US30', 'DE40', 'XAGUSD']
 
 # ── Args ─────────────────────────────────────────────────────────────────────
 parser = argparse.ArgumentParser(description='Measure live MT5 bid/ask spreads.')
@@ -65,7 +66,20 @@ if not mt5.initialize(login=login, password=password, server=server):
     sys.exit(1)
 
 info = mt5.account_info()
-print(f"Connected: account {info.login}  balance {info.balance:.2f} {info.currency}\n")
+print(f"Connected: account {info.login}  balance {info.balance:.2f} {info.currency}")
+
+terminal = mt5.terminal_info()
+server_time = mt5.symbol_info_tick('EURUSD')
+import datetime as _dt
+local_now = _dt.datetime.now()
+utc_now   = _dt.datetime.now(_dt.timezone.utc)
+srv_ts    = _dt.datetime.fromtimestamp(server_time.time, _dt.timezone.utc) if server_time else None
+print(f"Local time : {local_now.strftime('%Y-%m-%d %H:%M:%S')} (machine local)")
+print(f"UTC time   : {utc_now.strftime('%Y-%m-%d %H:%M:%S')} UTC")
+if srv_ts:
+    offset_h = round((srv_ts - utc_now).total_seconds() / 3600)
+    print(f"Server time: {srv_ts.strftime('%Y-%m-%d %H:%M:%S')}  (UTC{offset_h:+d}, broker tick timestamp)")
+print()
 
 # ── Collect ──────────────────────────────────────────────────────────────────
 spreads: dict[str, list[float]] = defaultdict(list)

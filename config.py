@@ -45,10 +45,10 @@ PIP_SIZE = {
     'NZDJPY': 0.01,
     # Metals & indices — 1 pip defined as the minimum meaningful unit
     'XAUUSD': 0.10,   # gold: 1 pip = $0.10 (10 cents per troy oz)
-    'USA30':  1.0,    # Dow Jones: 1 pip = 1 index point
-    'USA500': 0.1,    # S&P 500: 1 pip = 0.1 index point
-    'USA100': 1.0,    # Nasdaq 100: 1 pip = 1 index point
-    'USTEC':  1.0,    # Nasdaq 100 (ICMarkets name): 1 pip = 1 index point
+    'US30':   1.0,    # Dow Jones: 1 pip = 1 index point
+    'US500':  0.1,    # S&P 500: 1 pip = 0.1 index point
+    'USTEC':  1.0,    # Nasdaq 100: 1 pip = 1 index point
+    'DE40':   1.0,    # DAX 40: 1 pip = 1 index point
 }
 
 # ── Spread ───────────────────────────────────────────────────────────────────
@@ -57,15 +57,15 @@ PIP_SIZE = {
 # subtracted from SELL entries to model the ask/bid cost realistically.
 # Based on observed ICMarkets raw-spread averages across typical trading hours.
 # XAUUSD: $0.11 price spread / pip_size $0.10 = 1.1 pips.
-# USTEC/USA100: 10 index points (= 10 pips at pip_size 1.0).
+# USTEC: 10 index points (= 10 pips at pip_size 1.0).
 BACKTEST_SPREAD_PIPS: dict[str, float] = {
-    # Measured via measure_spreads.py on ICMarkets Raw demo, active session (p95), 2026-04-01
+    # Measured via measure_spreads.py on ICMarkets Raw demo, active session (p95), 2026-04-02
     'EURUSD': 0.1,
     'GBPUSD': 0.2,
-    'AUDUSD': 0.1,
-    'NZDUSD': 0.4,
-    'USDJPY': 0.1,
-    'USDCAD': 0.2,
+    'AUDUSD': 0.2,
+    'NZDUSD': 0.6,
+    'USDJPY': 0.2,
+    'USDCAD': 0.3,
     'USDCHF': 0.1,
     # FX crosses — placeholders, calibrate with measure_spreads.py on VPS
     'AUDCAD': 0.5,
@@ -83,10 +83,10 @@ BACKTEST_SPREAD_PIPS: dict[str, float] = {
     'GBPNZD': 0.8,
     'NZDJPY': 0.5,
     'XAUUSD': 1.1,
-    'USTEC':  10.0,
-    'USA100': 10.0,
-    'USA30':  2.0,    # not measured — conservative placeholder
-    'USA500': 2.0,    # not measured — conservative placeholder
+    'USTEC':  0.9,    # measured via measure_spreads.py on ICMarkets Raw demo, active session, 2026-04-02
+    'US30':   0.7,    # measured 2026-04-02
+    'US500':  3.0,    # measured 2026-04-02
+    'DE40':   0.8,    # measured 2026-04-02
 }
 
 # ── Commission ──────────────────────────────────────────────────────────────
@@ -124,10 +124,10 @@ PIP_VALUE_USD = {
     'NZDJPY':  7.0,
     # Metals & indices — USD value per pip per 1 standard lot
     'XAUUSD': 10.0,   # 100 troy oz × $0.10/pip = $10/lot
-    'USA30':   1.0,   # $1/lot per 1-point move (ICMarkets CFD)
-    'USA500':  1.0,   # $1/lot per 0.1-point move
-    'USA100':  1.0,   # $1/lot per 1-point move
-    'USTEC':   1.0,   # $1/lot per 1-point move (ICMarkets name for Nasdaq 100)
+    'US30':    1.0,   # $1/lot per 1-point move (ICMarkets CFD) — verify with check_pip_values.py
+    'US500':   1.0,   # $1/lot per 0.1-point move — verify with check_pip_values.py
+    'USTEC':   1.0,   # $1/lot per 1-point move — verify with check_pip_values.py
+    'DE40':    1.0,   # ~1 EUR/lot per 1-point move; verify with check_pip_values.py
 }
 
 

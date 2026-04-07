@@ -2,9 +2,9 @@
 
 ## Summary
 
-ICT-style SMC reversal strategy for NAS100 (USA100). Requires D1 bias via SSL/BSL sweep, multi-timeframe OB confluence (M15 always required + at least one of H4/H1), and a 5M engulfing entry bar during the NY morning killzone (9:45–11:00 AM ET).
+ICT-style SMC reversal strategy for US equity indices (USTEC/US30/US500). Requires D1 bias via SSL/BSL sweep, multi-timeframe OB confluence (M15 always required + at least one of H4/H1), and a 5M engulfing entry bar during the NY morning killzone (9:45–11:00 AM ET).
 
-**Status: SHELVED** — Walk-forward FAIL. Aggregate OOS -0.022R. Root cause: too few trades per window for reliable optimisation.
+**Status: SHELVED** — Walk-forward FAIL on both NAS100-only and 3-symbol (NAS100+DOW+SPX) runs. Regime-dependent: folds covering COVID crash and rate-hike periods lose badly OOS; only 2024–2026 fold is positive. Likely reflects discretionary setup that requires current market context (trending/recovering) that cannot be systematically captured.
 
 ---
 
@@ -35,9 +35,9 @@ Key pattern: `multiple_trades_per_bias=False` dominates the top of IS tables wit
 
 ---
 
-## Walk-Forward Validation
+## Walk-Forward Validation — Run 1: NAS100 only
 
-**Settings:** 3 folds, 4yr train / 2yr test / 2yr step, symbol=USA100, min_trades=15, metric=expectancy. Grid: 162 combos.
+**Settings:** 3 folds, 4yr train / 2yr test / 2yr step, symbol=USTEC, min_trades=15, metric=expectancy. Grid: 162 combos.
 
 | Fold | OOS Period | IS Trades | IS Exp | OOS Trades | OOS Exp | OOS WR | OOS PF | Retention |
 |------|-----------|-----------|--------|-----------|---------|--------|--------|-----------|
@@ -46,35 +46,54 @@ Key pattern: `multiple_trades_per_bias=False` dominates the top of IS tables wit
 | 3 | 2024–2026 | 74 | +0.135R | 25 | +0.200R | 40.0% | 1.33 | +148% |
 | **Agg** | | | | **46** | **-0.022R** | **32.6%** | | **-62%** |
 
-**Best IS params per fold:**
-- Fold 1: `frac=2, fvg=4, wiggle=50, sl=10, multi=False`
-- Fold 2: `frac=2, fvg=2, wiggle=100, sl=10, multi=False`
-- Fold 3: `frac=5, fvg=6, wiggle=0, sl=20, multi=True`
+FAIL. Fold 1/2 had too few IS trades (18–27) to find real edge in a 162-combo grid.
 
-**Interpretation: FAIL.** Aggregate OOS loses money. Params inconsistent across folds (classic curve-fit signature). Fold 1 and 2 had only 18–27 IS trades — statistically insufficient to find a real edge in a 162-combo grid.
+---
+
+## Walk-Forward Validation — Run 2: USTEC + US30 + US500
+
+Parameters converted to price-relative (pct-based) for multi-symbol scaling.
+
+**Sweep (all data 2016–2026, 3 symbols, 216 combos):**
+
+Best IS combo: `frac=2, fvg_w=2, wiggle=0.6%, sl_buf=0.1%, multi=N`
+→ 169 trades, 39.1% WR, +29R total, PF 1.28, +0.172R expectancy, MaxDD 10R
+
+**Walk-forward:** 3 folds, 4yr train / 2yr test / 2yr step, min_trades=30, 216 combos.
+
+| Fold | OOS Period | IS Trades | IS Exp | OOS Trades | OOS Exp | OOS WR | OOS PF | Retention |
+|------|-----------|-----------|--------|-----------|---------|--------|--------|-----------|
+| 1 | 2020–2022 | 56 | +0.232R | 32 | -0.344R | 21.9% | 0.56 | -148% |
+| 2 | 2022–2024 | 56 | +0.125R | 21 | -0.286R | 23.8% | 0.62 | -229% |
+| 3 | 2024–2026 | 36 | +0.333R | 20 | +0.050R | 35.0% | 1.08 | +15% |
+| **Agg** | | | | **73** | **-0.219R** | **27.4%** | | **-121%** |
+
+FAIL. Aggregate OOS -0.219R, -16R total. Params inconsistent across folds (`fvg=4` vs `fvg=2` vs `fvg=2`; `frac=2` vs `frac=2` vs `frac=5`).
+
+**Regime-dependent pattern:** Fold 3 OOS (2024–2026) shows faint positive edge (+0.050R). Folds 1 and 2 covering COVID crash and 2022 rate hike period collapse to ~22-24% WR — well below the ~33% breakeven at 2:1 RR. The setup may be context-dependent in ways that a 2-bar entry trigger cannot systematically capture.
 
 ---
 
 ## Root Cause
 
-Single-symbol single-session selectivity. The setup fires ~5–6 times/year for `multi=False` or ~15/yr for `multi=True` on NAS100. With 4yr IS windows this gives 20–27 trades (multi=False) or ~60 (multi=True) — too few for reliable parameter selection, especially fold 1/2 which are pre-2022.
+The strategy's signal quality degrades severely in volatile/choppy/trending-against regimes (COVID 2020, rate hike 2022). In those periods OBs get violated quickly and engulf signals fail. The 9:45–11 AM ET killzone alone is not sufficient to filter regime. Each fold selects different optimal params, suggesting the optimizer is finding noise, not signal.
 
 ---
 
-## Options for Revival
+## Conclusion
 
-1. **Expand to USA30 and USA500** — running all 3 major US indices together would approximately triple trade count. The ICT OB logic should transfer across correlated indices.
-2. **Loosen confluence** — allow H4+H1 without requiring M15, which was the original design. More trades but slightly lower quality.
-3. **Discretionary use only** — the setup logic is well-specified for hand-trading (validated with a 2R winner on 2026-03-18). Systematic validation may not be feasible given inherent selectivity.
+The setup is sound for discretionary hand-trading where the trader reads current macro regime, correlated timeframe structure, and news context before entering. The 2026-03-18 live winner (2R, NAS100) is an example of correct discretionary use. But codifying regime-selection into the strategy has proven insufficient, and the systematic version lacks the robustness to pass walk-forward across different market conditions over a 10-year period.
+
+**Discretionary use only.**
 
 ---
 
 ## History
 
-- **2026-03-18**: Live trade on USA100 — BUY, entered at 2:1 killzone confirmation, hit 2R TP. Setup: D1 LONG bias, H4+M15 OB confluence, 9:45 AM NY open signal.
-- Strategy built from scratch during Claude session. Multiple logic iterations:
-  1. Original: any 2-of-3 HTF confluence → 281 trades IS
-  2. M15 always required + day reset fix → 234 trades IS
-  3. FVG validation replaces engulfing displacement → 199 trades IS
-- Parameter sweep: 288 combos, 254 qualifying. Best IS: `frac=2, fvg=2, wiggle=100, multi=False` → +0.220R expectancy, 59 trades/10yr
-- Walk-forward: FAIL (2026-04-01)
+- **2026-03-18**: Live trade on USTEC — BUY, entered at 2:1 killzone confirmation, hit 2R TP. Setup: D1 LONG bias, H4+M15 OB confluence, 9:45 AM NY open signal.
+- Strategy built from scratch. Logic iterations: any 2-of-3 confluence (281 trades) → M15 required + day reset fix (234 trades) → FVG validation (199 trades on USTEC alone).
+- Run 1 sweep: USTEC only, 288 combos. Best IS: +0.220R, 59 trades/10yr.
+- Run 1 WF: FAIL (2026-04-01). Too few IS trades.
+- Expanded to US30+US500. Parameters converted to pct-based for cross-symbol scaling.
+- Run 2 sweep: 3 symbols (USTEC/US30/US500), 216 combos. Best IS: +0.172R, 169 trades/10yr.
+- Run 2 WF: FAIL (2026-04-02). Regime-dependent, OOS folds 1-2 collapse.

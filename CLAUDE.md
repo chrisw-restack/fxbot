@@ -284,7 +284,7 @@ For `PENDING` orders, the execution layer infers order subtype from direction vs
 
 ```python
 SYMBOLS = ['EURUSD', 'GBPUSD', 'AUDUSD', 'NZDUSD', 'USDJPY', 'USDCAD', 'USDCHF']
-# Metals/indices available for backtesting: XAUUSD, USA30, USA500, USA100
+# Metals/indices available for backtesting: XAUUSD, US30, US500, USTEC, DE40
 # (pip sizes and pip values for all of these are configured in config.py)
 TIMEFRAMES = ['M5', 'M15', 'H1', 'H4', 'D1']
 
@@ -298,7 +298,7 @@ MAX_OPEN_TRADES = 6         # allows headroom for future multi-strategy expansio
 MAX_DAILY_LOSS_PCT = 0.02   # 2% of account balance
 ```
 
-Pip sizes and values for all instruments (including XAUUSD, USA30, USA500, USA100) are in `config.PIP_SIZE` and `config.PIP_VALUE_USD`. Add new instruments there before backtesting them.
+Pip sizes and values for all instruments (including XAUUSD, US30, US500, USTEC, DE40) are in `config.PIP_SIZE` and `config.PIP_VALUE_USD`. Add new instruments there before backtesting them.
 
 Per-strategy risk overrides are supported via `risk_pct_overrides` dict in `RiskManager` (keyed by strategy NAME). Currently EmaFibRetracement uses 0.7%, all others use the 0.5% default.
 
@@ -402,6 +402,9 @@ python walk_forward.py breakout
 - `--step-years N` — advance between folds (default 2)
 - `--metric {expectancy,total_r,pf}` — optimization target (default expectancy)
 - `--min-trades N` — minimum IS trades required to include a parameter combo (default 50). Raise to 100+ for sparse strategies to avoid selecting combos that "won" due to 1-2 lucky trades.
+- `--workers N` — parallel worker processes for IS optimisation (default 2). Use 1 for true sequential execution (no fork overhead, no memory pressure).
+
+**`rr_ratio` in param grids**: add `'rr_ratio': [2.0, 2.5]` to a strategy's `param_grid` in `STRATEGY_CONFIGS` to sweep R:R targets. It is automatically extracted from the params dict before passing to the strategy constructor and forwarded to the BacktestEngine instead.
 
 **Interpreting results**: the key metric is **OOS retention** (OOS expectancy / IS expectancy). Above 70% = STRONG (parameters generalize), 40-70% = MODERATE (some overfitting), below 40% = WEAK/FAIL (curve-fit).
 
@@ -409,21 +412,26 @@ python walk_forward.py breakout
 
 ## Live Suite
 
-The bot runs **2 strategies** in production (`main_live.py`), both on 7 FX pairs. Each strategy gets its own position slot per symbol — they can hold concurrent positions on the same symbol independently.
+The bot runs **3 strategies** in production (`main_live.py`). EmaFib strategies run on 7 FX pairs; Engulfing runs on 5 pairs. Each strategy gets its own position slot per symbol — they can hold concurrent positions on the same symbol independently.
 
-| Strategy | Timeframes | Order Type | Key Params |
-|----------|-----------|------------|------------|
-| EmaFibRetracement | D1, H1 | PENDING | fib_entry=0.786, fib_tp=3.0, fractal_n=3, min_swing=10, ema_sep=0.001, cooldown=10, invalidate=True, blocked_hours=(20-23, 0-8) |
-| EmaFibRunning | D1, H1 | PENDING | fib_entry=0.786, fib_tp=2.5, fractal_n=2, min_swing=30, ema_sep=0.0, cooldown=0, invalidate=True, blocked_hours=(20-23, 0-8) |
+| Strategy | Timeframes | Order Type | Symbols | Key Params |
+|----------|-----------|------------|---------|------------|
+| EmaFibRetracement | D1, H1 | PENDING | 7 pairs | fib_entry=0.786, fib_tp=3.0, fractal_n=3, min_swing=10, ema_sep=0.001, cooldown=10, invalidate=True, blocked_hours=(20-23, 0-8) |
+| EmaFibRunning | D1, H1 | PENDING | 7 pairs | fib_entry=0.786, fib_tp=2.5, fractal_n=2, min_swing=30, ema_sep=0.0, cooldown=0, invalidate=True, blocked_hours=(20-23, 0-8) |
+| Engulfing | M5 | MARKET | 5 pairs | fractal_n=3, min_body=3.0, engulf_ratio=1.5, max_sl=15, NY session (13-17 UTC), sma_sep=5.0, rr=2.5 |
 
-Combined backtest (2016–2026, unblocked): 519 trades, +284.1R, +0.547R expectancy, MaxDD 28.5R (~14.3%).
-Max simultaneous open positions across both strategies: 5. MAX_OPEN_TRADES cap (6) gives adequate headroom.
+EmaFib combined (2016–2026): 519 trades, +284.1R, +0.547R expectancy, MaxDD 28.5R (~14.3%).
+MAX_OPEN_TRADES cap is 6 — observed peak across all 3 strategies is ~7–8 (adequate headroom for demo).
 
-EmaFibRetracement: `python run_backtest.py ema_fib_retracement`
+EmaFibRetracement: `python3 run_backtest.py ema_fib_retracement`
 Walk-forward: MODERATE (+110.9R OOS, +0.427R expect, 67% retention). IS 2016–2026: +247.8R, +0.774R expect, PF=1.89.
 
-EmaFibRunning: `python run_backtest.py ema_fib_running`
+EmaFibRunning: `python3 run_backtest.py ema_fib_running`
 Walk-forward: MODERATE (folds 1&2 positive, fold 3 sparse/12 OOS trades). IS 2016–2026: +82.7R, +0.371R expect, PF=1.53.
+
+Engulfing: `python3 run_backtest.py three_line_strike`
+Walk-forward: STRONG (all 3 folds OOS positive, +0.237R agg OOS, 178% retention). IS 2016–2026 (5 pairs): +22R, +0.22R expect, PF=1.37. ~10 trades/yr. RR=2.5 validated by WF fold 3 (2024–2026).
+Engulfing symbols: EURUSD, AUDUSD, NZDUSD, USDJPY, USDCAD (GBPUSD negative on NY session; USDCHF poor IS).
 
 **Needs more data (not live):**
 - **EBP** (H1/M15) — INCONCLUSIVE. Real IS edge found (+0.460R, PF 1.86) with mss_bar SL + max_retrace=0.5. WF WEAK on both H4/H1 and H1/M15 stacks — all 3 folds chose identical H1/M15 params (positive sign) but fold 3 OOS failed. Too few OOS trades (10–20/fold) to distinguish edge from noise. Needs 50+ demo trades. See `strategy_log/ebp.md`.
@@ -442,7 +450,7 @@ Walk-forward: MODERATE (folds 1&2 positive, fold 3 sparse/12 OOS trades). IS 201
 - IctJudasSwing — sweep all 108 combos negative (best -0.024R). M5 MSS pattern has no edge at 2:1 R:R. See `strategy_log/ict_judas_swing.md`.
 - SmcZone — SHELVED: swing pivot zones + fractal BOS + wick rejection. Best IS: +0.318R, 43.9% WR, PF 1.57, but only 11 trades/yr — too sparse for walk-forward. WR ceiling ~40–44% across all configs. See `strategy_log/smc_zone.md`.
 - BigBelugaSd — SHELVED: 3-candle momentum zone detection. WR 33.4% (breakeven), expectancy ~0R. Volume filter useless with tick volume (FX has no centralised exchange). See `strategy_log/bigbeluga_sd.md`.
-- SmcReversal — SHELVED: ICT-style D1 bias + M15/H4/H1 OB confluence + M5 NY killzone entry (NAS100). Best IS +0.220R (59 trades/10yr), WF FAIL (-0.022R OOS aggregate). Root cause: too few trades per fold (10–25 OOS) for reliable parameter selection. Fold 3 (2024–2026) was positive (+0.200R OOS). Revival path: expand to USA30+USA500 to triple trade count. See `strategy_log/smc_reversal.md`.
+- SmcReversal — SHELVED: ICT-style D1 bias + M15/H4/H1 OB confluence + M5 NY killzone entry (USTEC/US30/US500). WF FAIL on both USTEC-only and 3-symbol runs. Regime-dependent: OBs fail in COVID/rate-hike periods (WR collapses to 22-24%), only 2024–2026 fold positive. Discretionary use valid; systematic version cannot capture regime context. See `strategy_log/smc_reversal.md`.
 
 **Strategy logs**: `strategy_log/` folder contains one `.md` per strategy with full parameter, sweep, and walk-forward history.
 

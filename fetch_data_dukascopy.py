@@ -21,7 +21,7 @@ from dukascopy_python import instruments
 
 # ── Configuration — edit these before running ─────────────────────────────────
 # SYMBOLS = ['EURUSD', 'GBPUSD', 'AUDUSD', 'NZDUSD', 'USDJPY', 'USDCAD', 'USDCHF']
-# SYMBOLS = ['USA100', 'USA500', 'USA30', 'XAUUSD']
+# SYMBOLS = ['USTEC', 'US500', 'US30', 'XAUUSD']
 SYMBOLS = ['AUDCAD', 'AUDJPY', 'AUDNZD', 'CADJPY', 'EURAUD', 'EURCAD', 'EURCHF', 'EURGBP', 'EURJPY', 'GBPAUD', 'GBPCAD', 'GBPJPY', 'GBPNZD', 'NZDJPY']
 TIMEFRAMES = ['M5']        # Any of: M5, M15, H1, H4, D1
 START_YEAR = 2016
@@ -53,9 +53,10 @@ INSTRUMENT_MAP = {
     'GBPNZD': instruments.INSTRUMENT_FX_CROSSES_GBP_NZD,
     'NZDJPY': instruments.INSTRUMENT_FX_CROSSES_NZD_JPY,
     'XAUUSD': instruments.INSTRUMENT_FX_METALS_XAU_USD,       # Gold spot
-    'USA30':  instruments.INSTRUMENT_IDX_AMERICA_E_D_J_IND,   # Dow Jones
-    'USA500': instruments.INSTRUMENT_IDX_AMERICA_E_SANDP_500, # S&P 500
-    'USA100': instruments.INSTRUMENT_IDX_AMERICA_E_NQ_100,    # Nasdaq 100
+    'US30':   instruments.INSTRUMENT_IDX_AMERICA_E_D_J_IND,   # Dow Jones
+    'US500':  instruments.INSTRUMENT_IDX_AMERICA_E_SANDP_500, # S&P 500
+    'USTEC':  instruments.INSTRUMENT_IDX_AMERICA_E_NQ_100,    # Nasdaq 100
+    'DE40':   instruments.INSTRUMENT_IDX_EUROPE_E_DAAX,       # DAX 40
 }
 
 # Map our timeframe names to dukascopy interval constants
@@ -128,7 +129,7 @@ for symbol in SYMBOLS:
         full_df = full_df.reset_index()
 
         # Round prices: 2dp for indices/gold, 3dp for JPY pairs, 5dp for others
-        if symbol in ('USA30', 'USA500', 'USA100'):
+        if symbol in ('US30', 'US500', 'USTEC', 'DE40'):
             decimals = 2
         elif symbol == 'XAUUSD':
             decimals = 2
