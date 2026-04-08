@@ -38,7 +38,7 @@ sys.stdout.reconfigure(line_buffering=True)
 SYMBOLS = ['GBPUSD']
 INITIAL_BALANCE = 10_000.0
 RR_RATIO = 2.0
-N_WORKERS = 2  # parallel workers
+N_WORKERS = 1  # parallel workers
 
 # ── Session window options ───────────────────────────────────────────────────
 LONDON = tuple(range(7, 13))    # 07-12 UTC

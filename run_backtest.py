@@ -32,6 +32,7 @@ from strategies.smc_zone import SmcZoneStrategy
 from strategies.bigbeluga_sd import BigBelugaSdStrategy
 from strategies.smc_reversal import SmcReversalStrategy
 from strategies.three_line_strike import ThreeLineStrikeStrategy
+from strategies.hourly_mean_reversion import HourlyMeanReversionStrategy
 from data.historical_loader import find_csv
 from data.news_filter import NewsFilter
 
@@ -86,6 +87,9 @@ STRATEGIES = {
     'smc_reversal':                 SmcReversalStrategy(fractal_n=3, fvg_window=4, ob_max_per_tf=3, wiggle_room_pct=0.003, sl_buffer_pct=0.0006, multiple_trades_per_bias=True),
     'smc_reversal_single':          SmcReversalStrategy(fractal_n=3, fvg_window=4, ob_max_per_tf=3, wiggle_room_pct=0.003, sl_buffer_pct=0.0006, multiple_trades_per_bias=False),
     'three_line_strike':            ThreeLineStrikeStrategy(sl_mode='fractal', fractal_n=3, min_prev_body_pips=3.0, engulf_ratio=1.5, max_sl_pips=15, allowed_hours=tuple(range(13,18)), sma_sep_pips=5.0, pip_sizes={'USDJPY': 0.01}),
+    # WF-validated params (XAUUSD M5, London session, STRONG): all 3 folds +, +0.265R OOS expect
+    'hmr':    HourlyMeanReversionStrategy(tf_lower='M5',  min_move_pips=100, entry_window_start=20, entry_window_end=45, fractal_n=1, max_pullback_pips=0,  session_hours=tuple(range(8,17))),
+    'hmr_m1': HourlyMeanReversionStrategy(tf_lower='M1',  min_move_pips=100, entry_window_start=20, entry_window_end=45, fractal_n=2, max_pullback_pips=30, session_hours=tuple(range(8,17))),
 }
 
 # ── Live suite: both live strategies run together ────────────────────────────

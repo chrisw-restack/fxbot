@@ -22,7 +22,7 @@ SYMBOLS = ['EURUSD', 'GBPUSD', 'AUDUSD', 'NZDUSD', 'USDJPY', 'USDCAD']
 NY = tuple(range(13, 18))
 INITIAL_BALANCE = 10_000.0
 RR_RATIO = 2.0
-N_WORKERS = 2  # parallel workers
+N_WORKERS = 1  # parallel workers
 
 # Candidate shared configs
 # (label, sl_mode, sl_mult, fractal_n, min_body, engulf_ratio, max_sl)

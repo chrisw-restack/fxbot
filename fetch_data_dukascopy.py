@@ -20,11 +20,12 @@ import dukascopy_python
 from dukascopy_python import instruments
 
 # ── Configuration — edit these before running ─────────────────────────────────
-# SYMBOLS = ['EURUSD', 'GBPUSD', 'AUDUSD', 'NZDUSD', 'USDJPY', 'USDCAD', 'USDCHF']
+SYMBOLS = ['XAUUSD']
 # SYMBOLS = ['USTEC', 'US500', 'US30', 'XAUUSD']
-SYMBOLS = ['AUDCAD', 'AUDJPY', 'AUDNZD', 'CADJPY', 'EURAUD', 'EURCAD', 'EURCHF', 'EURGBP', 'EURJPY', 'GBPAUD', 'GBPCAD', 'GBPJPY', 'GBPNZD', 'NZDJPY']
-TIMEFRAMES = ['M5']        # Any of: M5, M15, H1, H4, D1
+# SYMBOLS = ['AUDCAD', 'AUDJPY', 'AUDNZD', 'CADJPY', 'EURAUD', 'EURCAD', 'EURCHF', 'EURGBP', 'EURJPY', 'GBPAUD', 'GBPCAD', 'GBPJPY', 'GBPNZD', 'NZDJPY']
+TIMEFRAMES = ['M1']        # Any of: M5, M15, H1, H4, D1
 START_YEAR = 2016
+# END_DATE = datetime(2025, 12, 31)
 END_DATE = datetime(2026, 3, 20)
 OUTPUT_DIR = 'data/historical'
 # ──────────────────────────────────────────────────────────────────────────────
@@ -61,6 +62,7 @@ INSTRUMENT_MAP = {
 
 # Map our timeframe names to dukascopy interval constants
 INTERVAL_MAP = {
+    'M1':  dukascopy_python.INTERVAL_MIN_1,
     'M5':  dukascopy_python.INTERVAL_MIN_5,
     'M15': dukascopy_python.INTERVAL_MIN_15,
     'H1':  dukascopy_python.INTERVAL_HOUR_1,

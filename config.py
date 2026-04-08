@@ -49,6 +49,10 @@ PIP_SIZE = {
     'US500':  0.1,    # S&P 500: 1 pip = 0.1 index point
     'USTEC':  1.0,    # Nasdaq 100: 1 pip = 1 index point
     'DE40':   1.0,    # DAX 40: 1 pip = 1 index point
+    # Dukascopy naming (same instruments, different broker labels)
+    'USA100': 1.0,    # Nasdaq 100 (Dukascopy): 1 pip = 1 index point
+    'USA30':  1.0,    # Dow Jones (Dukascopy): 1 pip = 1 index point
+    'USA500': 0.1,    # S&P 500 (Dukascopy): 1 pip = 0.1 index point
 }
 
 # ── Spread ───────────────────────────────────────────────────────────────────
@@ -87,6 +91,10 @@ BACKTEST_SPREAD_PIPS: dict[str, float] = {
     'US30':   0.7,    # measured 2026-04-02
     'US500':  3.0,    # measured 2026-04-02
     'DE40':   0.8,    # measured 2026-04-02
+    # Dukascopy labels — same spread assumptions as USTEC/US30/US500
+    'USA100': 0.9,
+    'USA30':  0.7,
+    'USA500': 3.0,
 }
 
 # ── Commission ──────────────────────────────────────────────────────────────
@@ -128,6 +136,9 @@ PIP_VALUE_USD = {
     'US500':   1.0,   # $1/lot per 0.1-point move — verify with check_pip_values.py
     'USTEC':   1.0,   # $1/lot per 1-point move — verify with check_pip_values.py
     'DE40':    1.0,   # ~1 EUR/lot per 1-point move; verify with check_pip_values.py
+    'USA100':  1.0,
+    'USA30':   1.0,
+    'USA500':  1.0,
 }
 
 

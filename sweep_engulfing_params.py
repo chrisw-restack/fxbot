@@ -37,7 +37,7 @@ sys.stdout.reconfigure(line_buffering=True)
 
 SYMBOLS = ['EURUSD', 'AUDUSD', 'NZDUSD', 'USDJPY', 'USDCAD']
 INITIAL_BALANCE = 10_000.0
-N_WORKERS = 2  # parallel workers
+N_WORKERS = 1  # parallel workers
 
 NY = tuple(range(13, 18))
 
