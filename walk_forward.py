@@ -56,7 +56,7 @@ OPTIMIZATION_METRIC = 'expectancy'   # 'expectancy', 'total_r', or 'pf'
 MIN_TRADES = 50                      # minimum trades for a param combo to qualify
 
 RISK_PCT_OVERRIDES = {}
-N_WORKERS = 1  # parallel workers
+N_WORKERS = 1  # parallel workers (keep 1 to avoid hammering the PC)
 
 # ── Strategy configs ─────────────────────────────────────────────────────────
 STRATEGY_CONFIGS = {
@@ -299,23 +299,28 @@ STRATEGY_CONFIGS = {
         },
     },
     'hmr_m1': {
-        # HMR on XAUUSD M1 — same concept as 'hmr' but with 1-minute MSS detection.
-        # fractal_n=1 on M1 = 1min confirmation vs 5min on M5 → more signals, better R:R.
-        # Expect ~5-10x more trades than M5 version.
+        # HMR on XAUUSD M1 with ATR volatility gate (Option 3, 2026-04-09).
+        # Asian WF FAIL, London WF WEAK, D1 bias WF WEAK — all regime-sensitive.
+        # ATR gate: skip signals when prior-day ATR > threshold (trending = bad).
+        # Low ATR = ranging/choppy day → mean-reversion conditions we want.
+        # Standalone test (no D1 bias), focused grid (dropping move=50, fn=1, start=15).
         'class': HourlyMeanReversionStrategy,
-        'timeframes': ['M1'],
+        'timeframes': ['D1', 'M1'],
         'symbols': ['XAUUSD'],
-        'min_trades': 25,   # M1 should yield ~5x trades vs M5 (which had ~5/yr)
+        'min_trades': 20,
         'fixed_params': {
             'tf_lower': 'M1',
             'session_hours': tuple(range(8, 17)),  # London
+            'use_d1_bias': False,
+            'atr_period': 14,
         },
         'param_grid': {
-            'min_move_pips':      [50, 75, 100, 150],
+            'min_move_pips':      [75, 100, 150],
             'entry_window_start': [20, 25],
-            'entry_window_end':   [40, 45, 50],
-            'fractal_n':          [1, 2, 3, 5],   # 1=1min, 2=2min, 3=3min, 5=5min
-            'max_pullback_pips':  [0, 25, 50],
+            'entry_window_end':   [35, 40, 45, 50],
+            'fractal_n':          [2, 3, 5],
+            'max_pullback_pips':  [0, 25],
+            'atr_max_pips':       [0, 200, 300, 400],
         },
     },
     # ICT-style SMC reversal across all 3 US equity indices.

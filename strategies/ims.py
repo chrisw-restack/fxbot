@@ -8,7 +8,9 @@ Higher timeframe (HTF) dealing range and bias:
     (b) contains at least one bullish FVG (bar[i+2].low > bar[i].high)
   - Dealing range: HTF swing low -> running max high (updates dynamically on each new HTF high)
   - 50% level recalculates with each new HTF high
-  - Bias expires when the HTF swing low is taken out
+  - Bias expires when the HTF swing low is taken out, or price pushes below 30% of the
+    HTF range (BUY) / above 70% (SELL) — too deep into the range signals the bias is wrong
+# chris note: to test: or price closes below lowest fvg, we expect price to tap into FVGs then continue but if price closes through a FVG its invalidated and the bias is likely wrong
   - Mirror logic for bearish (swing high -> running min low, broken below prev swing low)
   - Optional EMA filter on HTF (ema_fast/ema_slow, default 10/20): only take BUY signals
     when HTF EMA fast > slow, SELL when fast < slow. Trades against the HTF EMA trend
@@ -22,13 +24,17 @@ Lower timeframe (LTF) entry:
   - PENDING BUY LIMIT at 50% of the LTF leg
   - SL: LTF swing low
   - TP: HTF swing high (tp_mode='htf_high') or let risk manager calculate from R:R (tp_mode='rr')
+# chris note: to test: parameter sweeps: best trading sessions, best fractals, best symbols, htf_lookback, cooldown_bars, tp levels, entry mode, ema values and ema points
 
 Pending order updates:
-  - After a signal is fired, continues monitoring for a new LTF setup (different LTF swing low)
-  - When a newer LTF MSS is found: emit CANCEL this bar, defer the new PENDING to next bar
-    via _pending_signal buffer. CANCEL only affects unfilled orders so open positions are safe.
+  - Once a pending is live it is NOT replaced by newer LTF setups — original entry stays.
+    This keeps SL at the original level and avoids chasing.
+  - Pending is canceled when TP is reached:
+      tp_mode='htf_high': canceled when price reaches bias['swing_high'] (BUY) / ['swing_low'] (SELL)
+      tp_mode='rr': canceled when price reaches entry ± rr_ratio × SL_distance
+  - On HTF bias direction change: cancel pending and reset LTF state
   - On loss (notify_loss): reset LTF state, apply cooldown, HTF bias preserved
-  - HTF bias expires only when swing low is taken out (TP hit = swing high reached naturally)
+  - HTF bias expires when swing origin is taken out (cancel any live pending)
 
 Supported combos: D1/H4, H4/H1, H4/M15
 """
@@ -51,25 +57,32 @@ class ImsStrategy:
         fractal_n: int = 1,       # HTF fractal: 1 = 3-candle (1 bar each side)
         ltf_fractal_n: int = 2,   # LTF fractal: 2 = 5-candle (2 bars each side)
         htf_lookback: int = 50,
+        entry_mode: str = 'pending',  # 'pending' (limit at 50% of LTF leg) | 'market' (close of MSS bar)
         tp_mode: str = 'htf_high',  # 'htf_high' | 'rr'
+        rr_ratio: float = 2.0,     # used when tp_mode='rr' to set and cancel pending at target
         cooldown_bars: int = 0,
         blocked_hours: tuple = (),
         ema_fast: int = 10,       # HTF EMA filter — set both to 0 to disable
         ema_slow: int = 20,
+        ema_sep: float = 0.0,     # min separation as fraction of price (e.g. 0.001 = 0.1%); 0 = disabled
     ):
         self.tf_htf = tf_htf
         self.tf_ltf = tf_ltf
         self.fractal_n = fractal_n
         self.ltf_fractal_n = ltf_fractal_n
         self.htf_lookback = htf_lookback
+        self.entry_mode = entry_mode
         self.tp_mode = tp_mode
+        self.rr_ratio = rr_ratio
         self.cooldown_bars = cooldown_bars
         self.blocked_hours = set(blocked_hours)
         self.ema_fast = ema_fast
         self.ema_slow = ema_slow
+        self.ema_sep = ema_sep
 
         self.TIMEFRAMES = [tf_htf, tf_ltf]
         self.NAME = f'IMS_{tf_htf}_{tf_ltf}'
+        self.ORDER_TYPE = 'MARKET' if entry_mode == 'market' else 'PENDING'
 
         # Per-symbol state
         self._htf_bars: dict[str, deque] = {}
@@ -78,7 +91,8 @@ class ImsStrategy:
         self._ltf_in_zone: dict[str, bool] = {}
         self._ltf_signal_fired: dict[str, bool] = {}
         self._ltf_last_sl_ts: dict = {}       # timestamp of LTF swing low used in last signal
-        self._pending_signal: dict[str, Signal | None] = {}  # deferred signal buffer
+        self._last_signal_entry: dict[str, float] = {}  # entry price of live pending (for rr TP check)
+        self._last_signal_sl: dict[str, float] = {}     # SL price of live pending (for rr TP check)
         self._cooldown: dict[str, int] = {}
         # HTF EMA state
         self._htf_ema_fast: dict[str, float | None] = {}
@@ -94,7 +108,8 @@ class ImsStrategy:
         self._ltf_in_zone.clear()
         self._ltf_signal_fired.clear()
         self._ltf_last_sl_ts.clear()
-        self._pending_signal.clear()
+        self._last_signal_entry.clear()
+        self._last_signal_sl.clear()
         self._cooldown.clear()
         self._htf_ema_fast.clear()
         self._htf_ema_slow.clear()
@@ -107,7 +122,8 @@ class ImsStrategy:
         self._ltf_in_zone[symbol] = False
         self._ltf_signal_fired[symbol] = False
         self._ltf_last_sl_ts[symbol] = None
-        self._pending_signal[symbol] = None
+        self._last_signal_entry[symbol] = 0.0
+        self._last_signal_sl[symbol] = 0.0
         self._ltf_bars[symbol].clear()
         if self.cooldown_bars > 0:
             self._cooldown[symbol] = self.cooldown_bars
@@ -121,19 +137,14 @@ class ImsStrategy:
             self._ltf_in_zone[symbol] = False
             self._ltf_signal_fired[symbol] = False
             self._ltf_last_sl_ts[symbol] = None
-            self._pending_signal[symbol] = None
+            self._last_signal_entry[symbol] = 0.0
+            self._last_signal_sl[symbol] = 0.0
             self._cooldown[symbol] = 0
             self._htf_ema_fast[symbol] = None
             self._htf_ema_slow[symbol] = None
             self._htf_ema_fast_sum[symbol] = 0.0
             self._htf_ema_slow_sum[symbol] = 0.0
             self._htf_bar_count[symbol] = 0
-
-        # Deferred signal buffer: emit the new pending that was queued after a CANCEL
-        if self._pending_signal[symbol] is not None:
-            sig = self._pending_signal[symbol]
-            self._pending_signal[symbol] = None
-            return sig
 
         if event.timeframe == self.tf_htf:
             return self._on_htf_bar(symbol, event)
@@ -161,6 +172,8 @@ class ImsStrategy:
         slow = self._htf_ema_slow[symbol]
         if fast is None or slow is None:
             return None
+        if self.ema_sep > 0 and abs(fast - slow) / slow < self.ema_sep:
+            return None  # EMAs too close — trend unclear, skip
         if fast > slow:
             return 'BUY'
         if fast < slow:
@@ -187,11 +200,16 @@ class ImsStrategy:
             self._htf_ema_slow_sum[symbol], self.ema_slow,
         )
 
-        # Expiry: swing origin taken out
+        # Expiry: swing origin taken out, or price pushes too deeply into the range
         if bias is not None:
             if bias['direction'] == 'BUY' and bar.low < bias['swing_low']:
                 return self._expire_bias(symbol, bar)
             if bias['direction'] == 'SELL' and bar.high > bias['swing_high']:
+                return self._expire_bias(symbol, bar)
+            rng = bias['swing_high'] - bias['swing_low']
+            if bias['direction'] == 'BUY' and bar.low < bias['swing_low'] + 0.3 * rng:
+                return self._expire_bias(symbol, bar)
+            if bias['direction'] == 'SELL' and bar.high > bias['swing_low'] + 0.7 * rng:
                 return self._expire_bias(symbol, bar)
 
             # Dynamic range update: extend as price makes new extremes
@@ -219,7 +237,7 @@ class ImsStrategy:
                 return None
             # Different bias: cancel pending if live, then switch
             cancel = None
-            if self._ltf_signal_fired[symbol]:
+            if self._ltf_signal_fired[symbol] and self.entry_mode == 'pending':
                 cancel = Signal(
                     symbol=symbol, direction='CANCEL', order_type='PENDING',
                     entry_price=0.0, stop_loss=0.0,
@@ -320,8 +338,7 @@ class ImsStrategy:
         return None
 
     def _expire_bias(self, symbol: str, bar: BarEvent) -> Signal | None:
-        had_pending = self._ltf_signal_fired[symbol]
-        self._pending_signal[symbol] = None
+        had_pending = self._ltf_signal_fired[symbol] and self.entry_mode == 'pending'
         self._htf_bias[symbol] = None
         self._reset_ltf(symbol)
         if had_pending:
@@ -350,6 +367,11 @@ class ImsStrategy:
             return self._expire_bias(symbol, bar)
         if bias['direction'] == 'SELL' and bar.high > bias['swing_high']:
             return self._expire_bias(symbol, bar)
+        rng = bias['swing_high'] - bias['swing_low']
+        if bias['direction'] == 'BUY' and bar.close < bias['swing_low'] + 0.3 * rng:
+            return self._expire_bias(symbol, bar)
+        if bias['direction'] == 'SELL' and bar.close > bias['swing_low'] + 0.7 * rng:
+            return self._expire_bias(symbol, bar)
 
         self._ltf_bars[symbol].append(bar)
 
@@ -362,18 +384,32 @@ class ImsStrategy:
         if bar.timestamp.hour in self.blocked_hours:
             return None
 
-        # If price reached the HTF target while a pending is live, expire
+        # If TP is reached while a pending is live, cancel and expire
         if self._ltf_signal_fired[symbol]:
-            if bias['direction'] == 'BUY' and bar.high >= bias['swing_high']:
-                return self._expire_bias(symbol, bar)
-            if bias['direction'] == 'SELL' and bar.low <= bias['swing_low']:
-                return self._expire_bias(symbol, bar)
+            if self.tp_mode == 'htf_high':
+                if bias['direction'] == 'BUY' and bar.high >= bias['swing_high']:
+                    return self._expire_bias(symbol, bar)
+                if bias['direction'] == 'SELL' and bar.low <= bias['swing_low']:
+                    return self._expire_bias(symbol, bar)
+            else:  # rr mode: cancel when price reaches entry ± rr_ratio × SL_distance
+                entry = self._last_signal_entry[symbol]
+                sl = self._last_signal_sl[symbol]
+                if entry != 0.0:
+                    if bias['direction'] == 'BUY':
+                        if bar.high >= entry + self.rr_ratio * (entry - sl):
+                            return self._expire_bias(symbol, bar)
+                    else:
+                        if bar.low <= entry - self.rr_ratio * (sl - entry):
+                            return self._expire_bias(symbol, bar)
 
-        # Zone detection: price must retrace into 50% of the HTF range
+        # Zone detection: price must retrace into the middle zone of the HTF range
+        # BUY: price reaches 60% level (less retracement required vs strict 50%)
+        # SELL: price reaches 40% level (60% from top — symmetric)
         if not self._ltf_in_zone[symbol]:
-            if bias['direction'] == 'BUY' and bar.low <= bias['dealing_50']:
+            rng = bias['swing_high'] - bias['swing_low']
+            if bias['direction'] == 'BUY' and bar.low <= bias['swing_low'] + 0.6 * rng:
                 self._ltf_in_zone[symbol] = True
-            elif bias['direction'] == 'SELL' and bar.high >= bias['dealing_50']:
+            elif bias['direction'] == 'SELL' and bar.high >= bias['swing_low'] + 0.4 * rng:
                 self._ltf_in_zone[symbol] = True
 
         if not self._ltf_in_zone[symbol]:
@@ -438,7 +474,7 @@ class ImsStrategy:
         sl_price = bars[sl_idx].low
 
         # The LTF swing low must be at or below the HTF 50% level — ensures the entry
-        # leg genuinely started from within the retracement zone, not above it
+        # leg genuinely started in the discount half, not above the midpoint
         if sl_price > bias['dealing_50']:
             return None
 
@@ -448,11 +484,17 @@ class ImsStrategy:
             return None
 
         ltf_sh_price = bars[sh_idx].high
-        entry_price = sl_price + (ltf_sh_price - sl_price) * 0.5
         tp_price = bias['swing_high'] if self.tp_mode == 'htf_high' else None
 
+        if self.entry_mode == 'market':
+            entry_price = bar.close
+            order_type = 'MARKET'
+        else:
+            entry_price = sl_price + (ltf_sh_price - sl_price) * 0.5
+            order_type = 'PENDING'
+
         new_signal = Signal(
-            symbol=symbol, direction='BUY', order_type='PENDING',
+            symbol=symbol, direction='BUY', order_type=order_type,
             entry_price=entry_price, stop_loss=sl_price,
             take_profit=tp_price, strategy_name=self.NAME, timestamp=bar.timestamp,
         )
@@ -466,18 +508,12 @@ class ImsStrategy:
         )
 
         if self._ltf_signal_fired[symbol]:
-            # New LTF setup supersedes the existing pending:
-            # return CANCEL now, buffer the new signal for next bar
-            self._pending_signal[symbol] = new_signal
-            self._ltf_last_sl_ts[symbol] = sl_ts
-            return Signal(
-                symbol=symbol, direction='CANCEL', order_type='PENDING',
-                entry_price=0.0, stop_loss=0.0,
-                strategy_name=self.NAME, timestamp=bar.timestamp,
-            )
+            return None  # already in this setup
 
         self._ltf_signal_fired[symbol] = True
         self._ltf_last_sl_ts[symbol] = sl_ts
+        self._last_signal_entry[symbol] = entry_price
+        self._last_signal_sl[symbol] = sl_price
         return new_signal
 
     def _detect_ltf_sell(
@@ -523,7 +559,8 @@ class ImsStrategy:
 
         sl_price = bars[sh_idx].high  # SL above the LTF swing high
 
-        # The LTF swing high must be at or above the HTF 50% level
+        # The LTF swing high must be at or above the HTF 50% level — ensures the entry
+        # leg genuinely started in the premium half, not below the midpoint
         if sl_price < bias['dealing_50']:
             return None
 
@@ -533,11 +570,17 @@ class ImsStrategy:
             return None
 
         ltf_sl_price = bars[sl_struct_idx].low
-        entry_price = sl_price - (sl_price - ltf_sl_price) * 0.5
         tp_price = bias['swing_low'] if self.tp_mode == 'htf_high' else None
 
+        if self.entry_mode == 'market':
+            entry_price = bar.close
+            order_type = 'MARKET'
+        else:
+            entry_price = sl_price - (sl_price - ltf_sl_price) * 0.5
+            order_type = 'PENDING'
+
         new_signal = Signal(
-            symbol=symbol, direction='SELL', order_type='PENDING',
+            symbol=symbol, direction='SELL', order_type=order_type,
             entry_price=entry_price, stop_loss=sl_price,
             take_profit=tp_price, strategy_name=self.NAME, timestamp=bar.timestamp,
         )
@@ -551,14 +594,10 @@ class ImsStrategy:
         )
 
         if self._ltf_signal_fired[symbol]:
-            self._pending_signal[symbol] = new_signal
-            self._ltf_last_sl_ts[symbol] = sh_ts
-            return Signal(
-                symbol=symbol, direction='CANCEL', order_type='PENDING',
-                entry_price=0.0, stop_loss=0.0,
-                strategy_name=self.NAME, timestamp=bar.timestamp,
-            )
+            return None  # already in this setup
 
         self._ltf_signal_fired[symbol] = True
         self._ltf_last_sl_ts[symbol] = sh_ts
+        self._last_signal_entry[symbol] = entry_price
+        self._last_signal_sl[symbol] = sl_price
         return new_signal

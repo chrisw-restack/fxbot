@@ -402,7 +402,7 @@ python walk_forward.py breakout
 - `--step-years N` — advance between folds (default 2)
 - `--metric {expectancy,total_r,pf}` — optimization target (default expectancy)
 - `--min-trades N` — minimum IS trades required to include a parameter combo (default 50). Raise to 100+ for sparse strategies to avoid selecting combos that "won" due to 1-2 lucky trades.
-- `--workers N` — parallel worker processes for IS optimisation (default 2). Use 1 for true sequential execution (no fork overhead, no memory pressure).
+- `--workers N` — parallel worker processes for IS optimisation (default 1). Use 1 for true sequential execution (no fork overhead, no memory pressure). Set higher only if system has spare headroom.
 
 **`rr_ratio` in param grids**: add `'rr_ratio': [2.0, 2.5]` to a strategy's `param_grid` in `STRATEGY_CONFIGS` to sweep R:R targets. It is automatically extracted from the params dict before passing to the strategy constructor and forwarded to the BacktestEngine instead.
 
@@ -435,6 +435,7 @@ Engulfing symbols: EURUSD, AUDUSD, NZDUSD, USDJPY, USDCAD (GBPUSD negative on NY
 
 **Needs more data (not live):**
 - **EBP** (H1/M15) — INCONCLUSIVE. Real IS edge found (+0.460R, PF 1.86) with mss_bar SL + max_retrace=0.5. WF WEAK on both H4/H1 and H1/M15 stacks — all 3 folds chose identical H1/M15 params (positive sign) but fold 3 OOS failed. Too few OOS trades (10–20/fold) to distinguish edge from noise. Needs 50+ demo trades. See `strategy_log/ebp.md`.
+- **HourlyMeanReversion** (M5, XAUUSD) — M5 post-bugfix WF MODERATE: folds 2&3 positive (+0.245R avg OOS), fold 1 fails (2016–2020 regime). Too sparse (~2–5 trades/yr) for standalone live use. M1 fully shelved — tested Asian (FAIL), London bare (WEAK), London + D1 bias (WEAK), London + ATR gate (WEAK). Gold bull regime (2022+) is structural, not fixable with filters. See `strategy_log/hourly_mean_reversion.md`.
 
 **Suspended / shelved:**
 - TheStrat — fails walk-forward after fill-bug fix. See `strategy_log/the_strat.md`.

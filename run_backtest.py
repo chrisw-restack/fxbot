@@ -47,7 +47,7 @@ logging.basicConfig(
 # SYMBOLS         = ['EURUSD', 'GBPUSD', 'AUDUSD', 'NZDUSD', 'USDJPY', 'USDCAD', 'USDCHF', 'XAUUSD']
 # SYMBOLS         = ['EURUSD', 'GBPUSD', 'AUDUSD', 'NZDUSD', 'USDJPY', 'USDCAD', 'USDCHF']
 # SYMBOLS         = [  'XAUUSD']
-SYMBOLS         = ['EURUSD', 'AUDUSD', 'NZDUSD', 'USDJPY', 'USDCAD']
+SYMBOLS         = ['EURUSD', 'GBPUSD', 'AUDUSD', 'NZDUSD', 'USDJPY', 'USDCAD', 'USDCHF', 'XAUUSD', 'USA100']
 INITIAL_BALANCE = 10_000.0   # starting account balance in USD
 RR_RATIO        = 2.5        # risk/reward ratio (overrides config default)
 RISK_PCT_OVERRIDES = {}
@@ -74,6 +74,7 @@ STRATEGIES = {
     'ebp_limit_d1':                 EbpLimitStrategy(tf='D1'),
     'ebp_limit_h4_ema':             EbpLimitStrategy(tf='H4', min_range_pips=60, entry_pct=0.382, tf_trend='D1', ema_fast=10, ema_slow=20),
     'ims_d1_h4':                    ImsStrategy(tf_htf='D1', tf_ltf='H4', fractal_n=1, ltf_fractal_n=2, htf_lookback=50, tp_mode='htf_high', cooldown_bars=0, ema_fast=20, ema_slow=50),
+    'ims_d1_h4_market':             ImsStrategy(tf_htf='D1', tf_ltf='H4', fractal_n=1, ltf_fractal_n=2, htf_lookback=50, entry_mode='market', tp_mode='htf_high', cooldown_bars=0, ema_fast=20, ema_slow=50),
     'ims_h4_h1':                    ImsStrategy(tf_htf='H4', tf_ltf='H1', fractal_n=1, ltf_fractal_n=2, htf_lookback=50, tp_mode='htf_high', cooldown_bars=0, ema_fast=20, ema_slow=50),
     'ims_h4_m15':                   ImsStrategy(tf_htf='H4', tf_ltf='M15', fractal_n=1, ltf_fractal_n=2, htf_lookback=50, tp_mode='htf_high', cooldown_bars=0, ema_fast=20, ema_slow=50),
     'smc_zone':                     SmcZoneStrategy(swing_length=3,  tf_entry='H1', zone_atr_mult=0.4, sl_buffer_atr=0.5, d1_ema_period=50, blocked_hours=(*range(20,24),*range(0,9))),

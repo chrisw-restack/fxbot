@@ -1,0 +1,13 @@
+Loading bar data...
+  EURUSD: 271,129 bars (H4+M15)
+  GBPUSD: 271,103 bars (H4+M15)
+  AUDUSD: 271,109 bars (H4+M15)
+  NZDUSD: 271,036 bars (H4+M15)
+  USDJPY: 271,123 bars (H4+M15)
+  USDCAD: 271,096 bars (H4+M15)
+  USDCHF: 271,053 bars (H4+M15)
+  XAUUSD: 257,710 bars (H4+M15)
+  USA100: 229,669 bars (H4+M15)
+
+2304 combos × 9 symbols = 20,736 tasks across 2 workers
+
