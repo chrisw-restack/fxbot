@@ -38,6 +38,7 @@ fxbot/
 │   ├── ema_fib_retracement.py    # LIVE: D1/H1 EMA trend + fib entry
 │   ├── ema_fib_running.py        # LIVE: D1/H1 EMA trend + fib entry (running variant)
 │   ├── three_line_strike.py      # LIVE: M5 engulfing, NY session, 5 FX pairs
+│   ├── ims.py                    # LIVE: H4/M15 ICT market structure (IMS), 9 pairs
 │   ├── hourly_mean_reversion.py  # MODERATE (M5/XAUUSD): ICT power-of-3 mean-reversion
 │   ├── ebp.py                    # INCONCLUSIVE: H1/M15 EBP structure
 │   └── ...                       # Shelved strategies — see strategy_log/
@@ -124,8 +125,8 @@ class Signal:
 ## Portfolio & Conflict Management
 
 - **One position per (symbol, strategy) pair**: multiple strategies may hold concurrent positions on the same symbol independently.
-- **Max open trades**: 6 total across all strategies.
-- **Max daily loss**: 2% of account balance. No new trades for the rest of the day if hit.
+- **Max open trades**: 6 total across all strategies (live). Disabled in backtesting (`max_open_trades=99`) to avoid ordering artifacts skewing multi-symbol evaluation.
+- **Max daily loss**: 2% of account balance (live). Disabled in backtesting (`max_daily_loss_pct=None`) for the same reason.
 
 
 ## Historical Data
@@ -239,6 +240,7 @@ Subscribe to multiple timeframes via `TIMEFRAMES = ['D1', 'H1']`. The strategy r
 | EmaFibRetracement | D1, H1 | PENDING | 7 FX pairs | MODERATE (+0.427R OOS, 67% retention) |
 | EmaFibRunning | D1, H1 | PENDING | 7 FX pairs | MODERATE (+0.375R OOS agg, folds 1&2) |
 | Engulfing (ThreeLineStrike) | M5 | MARKET | 5 FX pairs | STRONG (+0.237R OOS, 178% retention) |
+| IMS (ImsStrategy) | H4, M15 | PENDING | 9 pairs | MODERATE (+0.165R OOS, 64% retention, all 3 folds positive) |
 
 Run on Windows VPS: `python main_live.py`
 

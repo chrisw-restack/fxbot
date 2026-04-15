@@ -40,6 +40,8 @@ MT5 / CSV → Event Generator → Strategies
 | Logger | `utils/trade_logger.py` | Trade log + backtest metrics + charts |
 | Notifications | `utils/telegram_notifier.py` | Telegram alerts (live trading) |
 | Param sweep | `param_sweep.py` | Parameter optimization runner |
+| IMS param sweep | `sweep_ims_params.py` | IMS-specific parameter sweep (9-symbol set) |
+| IMS SL sweep | `sweep_ims_sl_params.py` | IMS stop-loss placement sweep (swing/body/fvg × pip/ATR buffers) |
 | Walk-forward | `walk_forward.py` | Walk-forward validation (rolling train/test) |
 | Dukascopy fetch | `fetch_data_dukascopy.py` | Download historical data from Dukascopy (any TF) |
 | News data fetch | `fetch_news_data.py` | Download Forex Factory calendar from Hugging Face |
@@ -257,6 +259,10 @@ On each incoming signal:
 
 `record_close(symbol, pnl, strategy_name)` requires `strategy_name` to identify the correct slot.
 
+**Backtest behaviour**: `BacktestEngine` instantiates `PortfolioManager(max_open_trades=99, max_daily_loss_pct=None)` to disable both limits. This prevents trade ordering artifacts (one symbol firing before another) from skewing multi-symbol evaluation. Limits are only enforced in live trading via `main_live.py`.
+
+`PortfolioManager.__init__` accepts both parameters: `max_open_trades: int` and `max_daily_loss_pct: float | None` (pass `None` to disable daily loss checking).
+
 ## Execution Interface
 
 ```python
@@ -412,16 +418,17 @@ python walk_forward.py breakout
 
 ## Live Suite
 
-The bot runs **3 strategies** in production (`main_live.py`). EmaFib strategies run on 7 FX pairs; Engulfing runs on 5 pairs. Each strategy gets its own position slot per symbol — they can hold concurrent positions on the same symbol independently.
+The bot runs **4 strategies** in production (`main_live.py`). EmaFib strategies run on 7 FX pairs; Engulfing runs on 5 pairs; IMS runs on 9 pairs. Each strategy gets its own position slot per symbol — they can hold concurrent positions on the same symbol independently.
 
 | Strategy | Timeframes | Order Type | Symbols | Key Params |
 |----------|-----------|------------|---------|------------|
 | EmaFibRetracement | D1, H1 | PENDING | 7 pairs | fib_entry=0.786, fib_tp=3.0, fractal_n=3, min_swing=10, ema_sep=0.001, cooldown=10, invalidate=True, blocked_hours=(20-23, 0-8) |
 | EmaFibRunning | D1, H1 | PENDING | 7 pairs | fib_entry=0.786, fib_tp=2.5, fractal_n=2, min_swing=30, ema_sep=0.0, cooldown=0, invalidate=True, blocked_hours=(20-23, 0-8) |
 | Engulfing | M5 | MARKET | 5 pairs | fractal_n=3, min_body=3.0, engulf_ratio=1.5, max_sl=15, NY session (13-17 UTC), sma_sep=5.0, rr=2.5 |
+| IMS | H4, M15 | PENDING | 9 pairs | fractal_n=1, ltf_fractal_n=1, htf_lookback=30, rr=2.5, ema_fast=20, ema_slow=50, ema_sep=0.001, sl_anchor=swing, session=12-17 UTC |
 
 EmaFib combined (2016–2026): 519 trades, +284.1R, +0.547R expectancy, MaxDD 28.5R (~14.3%).
-MAX_OPEN_TRADES cap is 6 — observed peak across all 3 strategies is ~7–8 (adequate headroom for demo).
+MAX_OPEN_TRADES cap is 6 — observed peak across all 4 strategies may require monitoring.
 
 EmaFibRetracement: `python3 run_backtest.py ema_fib_retracement`
 Walk-forward: MODERATE (+110.9R OOS, +0.427R expect, 67% retention). IS 2016–2026: +247.8R, +0.774R expect, PF=1.89.
@@ -433,13 +440,17 @@ Engulfing: `python3 run_backtest.py three_line_strike`
 Walk-forward: STRONG (all 3 folds OOS positive, +0.237R agg OOS, 178% retention). IS 2016–2026 (5 pairs): +22R, +0.22R expect, PF=1.37. ~10 trades/yr. RR=2.5 validated by WF fold 3 (2024–2026).
 Engulfing symbols: EURUSD, AUDUSD, NZDUSD, USDJPY, USDCAD (GBPUSD negative on NY session; USDCHF poor IS).
 
+IMS: `python3 run_backtest.py ims_h4_m15`
+Walk-forward: MODERATE (all 3 folds OOS positive, +34.4R agg OOS, +0.165R expect, 64% retention). IS 2016–2026 (9 pairs): 363 trades across folds.
+IMS symbols: USDJPY, XAUUSD, EURAUD, CADJPY, USDCAD, AUDUSD, EURUSD, GBPCAD, GBPUSD.
+Key features: HTF H4 dealing range with FVG invalidation (bias expires if H4 closes below lowest bullish FVG), LTF M15 fractal MSS, pending limit at 50% of LTF leg, London/NY overlap session (12-17 UTC).
+
 **Needs more data (not live):**
 - **EBP** (H1/M15) — INCONCLUSIVE. Real IS edge found (+0.460R, PF 1.86) with mss_bar SL + max_retrace=0.5. WF WEAK on both H4/H1 and H1/M15 stacks — all 3 folds chose identical H1/M15 params (positive sign) but fold 3 OOS failed. Too few OOS trades (10–20/fold) to distinguish edge from noise. Needs 50+ demo trades. See `strategy_log/ebp.md`.
 - **HourlyMeanReversion** (M5, XAUUSD) — M5 post-bugfix WF MODERATE: folds 2&3 positive (+0.245R avg OOS), fold 1 fails (2016–2020 regime). Too sparse (~2–5 trades/yr) for standalone live use. M1 fully shelved — tested Asian (FAIL), London bare (WEAK), London + D1 bias (WEAK), London + ATR gate (WEAK). Gold bull regime (2022+) is structural, not fixable with filters. See `strategy_log/hourly_mean_reversion.md`.
 
 **Suspended / shelved:**
 - TheStrat — fails walk-forward after fill-bug fix. See `strategy_log/the_strat.md`.
-- IMS — walk-forward FAIL, too few trades for reliable OOS optimisation. See `strategy_log/ims.md`.
 - EBP Limit — walk-forward FAIL, regime-dependent. See `strategy_log/ebp_limit.md`.
 - Breakout — walk-forward FAIL. Simple N-bar channel breakout has no robust edge on forex H1. See `strategy_log/breakout.md`.
 - GaussianChannel — walk-forward WEAK (+0.046R OOS, 40% retention, fold 2 negative). Also had a warm-up bug (corrupt filter state for first 2×period bars, now fixed). See `strategy_log/gaussian_channel.md`.
@@ -492,6 +503,7 @@ nf.is_blocked(symbol='EURUSD', timestamp=some_datetime)  # True if blocked
 ## Important Notes
 
 - **USDJPY pip size is 0.01** (not 0.0001). Any strategy doing pip calculations internally must handle this. Use a `pip_sizes` dict parameter.
+- **ImsStrategy SL anchor**: controlled by `sl_anchor` parameter (`'swing'` = wick, `'body'` = open/close min, `'fvg'` = bottom of lowest LTF FVG in leg). Optional `sl_buffer_pips` (flat pip buffer) and `sl_atr_mult` (ATR(14) multiple) add distance. Walk-forward validated `sl_anchor='swing'` with no buffer — body and FVG anchors produce fewer trades and fail OOS generalisation.
 - **Backtest spread is 2.0 pips** — conservative average. ICMarkets Raw typical spreads during London/NY session are 0.1–0.5 pips on majors; p95 is likely 1.0–1.2 pips. Use `measure_spreads.py` on the VPS during active hours to get symbol-accurate values. Current 2.0 pips setting understates real performance by ~1 pip per trade.
 - **Commission is $7.00 per lot round-trip** (ICMarkets Raw Spread) — deducted from PnL at trade close in backtesting.
 - **Break-even stop loss** is supported via `--breakeven-at-r N` in `run_backtest.py` (e.g. `--breakeven-at-r 2.0`). Tested at 2R, 3R, 5R, 7R, 10R for EmaFibRetracement — all levels hurt performance. At 2R: −52R net vs baseline (14 wins saved, 178R of large wins lost). Large wins (12R+) require price to briefly retrace through the BE trigger before continuing. Do not use for fib retracement strategies.

@@ -8,9 +8,19 @@ Higher timeframe (HTF) dealing range and bias:
     (b) contains at least one bullish FVG (bar[i+2].low > bar[i].high)
   - Dealing range: HTF swing low -> running max high (updates dynamically on each new HTF high)
   - 50% level recalculates with each new HTF high
-  - Bias expires when the HTF swing low is taken out, or price pushes below 30% of the
-    HTF range (BUY) / above 70% (SELL) — too deep into the range signals the bias is wrong
-# chris note: to test: or price closes below lowest fvg, we expect price to tap into FVGs then continue but if price closes through a FVG its invalidated and the bias is likely wrong
+  - Bias expires when: HTF swing origin is taken out; price pushes below 30% of the HTF
+    range (BUY) / above 70% (SELL); or a HTF bar closes below the lowest bullish FVG in
+    the leg (BUY) / above the highest bearish FVG (SELL) — disrespecting the imbalance
+    that confirmed the bias signals the move is failing
+
+Stop-loss placement (sl_anchor):
+  'swing' — SL at LTF swing low wick (default, original behaviour)
+  'body'  — SL at body of the swing low candle (min(open,close)), ignores spike wicks
+  'fvg'   — SL at bottom of lowest bullish FVG in the LTF leg; structurally tighter
+             since price should respect the imbalance that created the MSS
+Additional buffers (applied below/above the anchor):
+  sl_buffer_pips — fixed pip buffer (requires pip_sizes dict for non-4dp symbols)
+  sl_atr_mult    — dynamic buffer: sl_atr_mult × ATR(14) on LTF bars
   - Mirror logic for bearish (swing high -> running min low, broken below prev swing low)
   - Optional EMA filter on HTF (ema_fast/ema_slow, default 10/20): only take BUY signals
     when HTF EMA fast > slow, SELL when fast < slow. Trades against the HTF EMA trend
@@ -65,6 +75,10 @@ class ImsStrategy:
         ema_fast: int = 10,       # HTF EMA filter — set both to 0 to disable
         ema_slow: int = 20,
         ema_sep: float = 0.0,     # min separation as fraction of price (e.g. 0.001 = 0.1%); 0 = disabled
+        sl_anchor: str = 'swing', # 'swing' | 'body' | 'fvg' — SL anchor point on LTF
+        sl_buffer_pips: float = 0.0,  # extra pips below/above anchor; 0 = disabled
+        sl_atr_mult: float = 0.0,    # extra ATR(14) × mult below/above anchor; 0 = disabled
+        pip_sizes: dict | None = None,  # {symbol: pip_size} for sl_buffer_pips conversion
     ):
         self.tf_htf = tf_htf
         self.tf_ltf = tf_ltf
@@ -79,6 +93,10 @@ class ImsStrategy:
         self.ema_fast = ema_fast
         self.ema_slow = ema_slow
         self.ema_sep = ema_sep
+        self.sl_anchor = sl_anchor
+        self.sl_buffer_pips = sl_buffer_pips
+        self.sl_atr_mult = sl_atr_mult
+        self._pip_sizes = pip_sizes or {}
 
         self.TIMEFRAMES = [tf_htf, tf_ltf]
         self.NAME = f'IMS_{tf_htf}_{tf_ltf}'
@@ -100,6 +118,10 @@ class ImsStrategy:
         self._htf_ema_fast_sum: dict[str, float] = {}
         self._htf_ema_slow_sum: dict[str, float] = {}
         self._htf_bar_count: dict[str, int] = {}
+        # LTF ATR state (Wilder's 14-period, for sl_atr_mult)
+        self._ltf_prev_close: dict[str, float | None] = {}
+        self._ltf_atr: dict[str, float | None] = {}
+        self._ltf_atr_buf: dict[str, list] = {}  # accumulates TRs for initial SMA
 
     def reset(self):
         self._htf_bars.clear()
@@ -116,6 +138,9 @@ class ImsStrategy:
         self._htf_ema_fast_sum.clear()
         self._htf_ema_slow_sum.clear()
         self._htf_bar_count.clear()
+        self._ltf_prev_close.clear()
+        self._ltf_atr.clear()
+        self._ltf_atr_buf.clear()
 
     def notify_loss(self, symbol: str):
         """After a loss: reset LTF state and start cooldown. HTF bias is preserved."""
@@ -145,6 +170,9 @@ class ImsStrategy:
             self._htf_ema_fast_sum[symbol] = 0.0
             self._htf_ema_slow_sum[symbol] = 0.0
             self._htf_bar_count[symbol] = 0
+            self._ltf_prev_close[symbol] = None
+            self._ltf_atr[symbol] = None
+            self._ltf_atr_buf[symbol] = []
 
         if event.timeframe == self.tf_htf:
             return self._on_htf_bar(symbol, event)
@@ -180,6 +208,67 @@ class ImsStrategy:
             return 'SELL'
         return None
 
+    # ── SL helpers ───────────────────────────────────────────────────────────
+
+    _ATR_PERIOD = 14
+
+    def _pip_size(self, symbol: str) -> float:
+        return self._pip_sizes.get(symbol, 0.0001)
+
+    def _update_ltf_atr(self, symbol: str, bar: BarEvent):
+        """Update Wilder's ATR(14) on each LTF bar."""
+        prev = self._ltf_prev_close[symbol]
+        if prev is not None:
+            tr = max(bar.high - bar.low,
+                     abs(bar.high - prev),
+                     abs(bar.low  - prev))
+            atr = self._ltf_atr[symbol]
+            buf = self._ltf_atr_buf[symbol]
+            if atr is None:
+                buf.append(tr)
+                if len(buf) >= self._ATR_PERIOD:
+                    self._ltf_atr[symbol] = sum(buf) / self._ATR_PERIOD
+            else:
+                self._ltf_atr[symbol] = (atr * (self._ATR_PERIOD - 1) + tr) / self._ATR_PERIOD
+        self._ltf_prev_close[symbol] = bar.close
+
+    def _compute_sl_buy(self, symbol: str, bars: list, sl_idx: int, leg: list) -> float:
+        """Return the final SL price for a BUY signal."""
+        if self.sl_anchor == 'body':
+            anchor = min(bars[sl_idx].open, bars[sl_idx].close)
+        elif self.sl_anchor == 'fvg':
+            fvg_bottoms = [leg[i].high for i in range(len(leg) - 2)
+                           if leg[i + 2].low > leg[i].high]
+            anchor = min(fvg_bottoms)  # guaranteed non-empty — FVG check already passed
+        else:  # 'swing'
+            anchor = bars[sl_idx].low
+        buf = self._sl_buffer(symbol)
+        return anchor - buf
+
+    def _compute_sl_sell(self, symbol: str, bars: list, sh_idx: int, leg: list) -> float:
+        """Return the final SL price for a SELL signal."""
+        if self.sl_anchor == 'body':
+            anchor = max(bars[sh_idx].open, bars[sh_idx].close)
+        elif self.sl_anchor == 'fvg':
+            fvg_tops = [leg[i].low for i in range(len(leg) - 2)
+                        if leg[i + 2].high < leg[i].low]
+            anchor = max(fvg_tops)  # guaranteed non-empty
+        else:  # 'swing'
+            anchor = bars[sh_idx].high
+        buf = self._sl_buffer(symbol)
+        return anchor + buf
+
+    def _sl_buffer(self, symbol: str) -> float:
+        """Return total price buffer to add/subtract from the SL anchor."""
+        buf = 0.0
+        if self.sl_buffer_pips > 0:
+            buf += self.sl_buffer_pips * self._pip_size(symbol)
+        if self.sl_atr_mult > 0:
+            atr = self._ltf_atr.get(symbol)
+            if atr:
+                buf += self.sl_atr_mult * atr
+        return buf
+
     # ── HTF ───────────────────────────────────────────────────────────────────
 
     def _on_htf_bar(self, symbol: str, bar: BarEvent) -> Signal | None:
@@ -200,7 +289,8 @@ class ImsStrategy:
             self._htf_ema_slow_sum[symbol], self.ema_slow,
         )
 
-        # Expiry: swing origin taken out, or price pushes too deeply into the range
+        # Expiry: swing origin taken out, price pushes too deeply into the range,
+        # or HTF bar closes through the imbalance (FVG disrespected)
         if bias is not None:
             if bias['direction'] == 'BUY' and bar.low < bias['swing_low']:
                 return self._expire_bias(symbol, bar)
@@ -210,6 +300,10 @@ class ImsStrategy:
             if bias['direction'] == 'BUY' and bar.low < bias['swing_low'] + 0.3 * rng:
                 return self._expire_bias(symbol, bar)
             if bias['direction'] == 'SELL' and bar.high > bias['swing_low'] + 0.7 * rng:
+                return self._expire_bias(symbol, bar)
+            if bias['direction'] == 'BUY' and bar.close < bias['fvg_level']:
+                return self._expire_bias(symbol, bar)
+            if bias['direction'] == 'SELL' and bar.close > bias['fvg_level']:
                 return self._expire_bias(symbol, bar)
 
             # Dynamic range update: extend as price makes new extremes
@@ -287,7 +381,8 @@ class ImsStrategy:
                 continue
 
             # Bullish FVG in the leg
-            if not any(leg[i + 2].low > leg[i].high for i in range(len(leg) - 2)):
+            fvg_lows = [leg[i].high for i in range(len(leg) - 2) if leg[i + 2].low > leg[i].high]
+            if not fvg_lows:
                 continue
 
             dealing_50 = swing_low_price + (leg_high - swing_low_price) * 0.5
@@ -296,6 +391,7 @@ class ImsStrategy:
                 'swing_low':  swing_low_price,
                 'swing_high': leg_high,
                 'dealing_50': dealing_50,
+                'fvg_level':  min(fvg_lows),  # lowest FVG bottom — close below = bias invalid
                 '_swing_ts':  bars[sl_idx].timestamp,
             }
         return None
@@ -324,7 +420,8 @@ class ImsStrategy:
                 continue
 
             # Bearish FVG in the leg
-            if not any(leg[i + 2].high < leg[i].low for i in range(len(leg) - 2)):
+            fvg_highs = [leg[i].low for i in range(len(leg) - 2) if leg[i + 2].high < leg[i].low]
+            if not fvg_highs:
                 continue
 
             dealing_50 = swing_high_price - (swing_high_price - leg_low) * 0.5
@@ -333,6 +430,7 @@ class ImsStrategy:
                 'swing_high': swing_high_price,
                 'swing_low':  leg_low,
                 'dealing_50': dealing_50,
+                'fvg_level':  max(fvg_highs),  # highest FVG top — close above = bias invalid
                 '_swing_ts':  bars[sh_idx].timestamp,
             }
         return None
@@ -358,6 +456,8 @@ class ImsStrategy:
     # ── LTF ───────────────────────────────────────────────────────────────────
 
     def _on_ltf_bar(self, symbol: str, bar: BarEvent) -> Signal | None:
+        self._update_ltf_atr(symbol, bar)
+
         bias = self._htf_bias[symbol]
         if bias is None:
             return None
@@ -471,11 +571,11 @@ class ImsStrategy:
         if sl_ts == self._ltf_last_sl_ts[symbol]:
             return None
 
-        sl_price = bars[sl_idx].low
+        swing_sl = bars[sl_idx].low  # wick — used for zone/entry checks
 
         # The LTF swing low must be at or below the HTF 50% level — ensures the entry
         # leg genuinely started in the discount half, not above the midpoint
-        if sl_price > bias['dealing_50']:
+        if swing_sl > bias['dealing_50']:
             return None
 
         # Bullish FVG required in the LTF leg (swing low to broken swing high)
@@ -485,12 +585,13 @@ class ImsStrategy:
 
         ltf_sh_price = bars[sh_idx].high
         tp_price = bias['swing_high'] if self.tp_mode == 'htf_high' else None
+        sl_price = self._compute_sl_buy(symbol, bars, sl_idx, leg)
 
         if self.entry_mode == 'market':
             entry_price = bar.close
             order_type = 'MARKET'
         else:
-            entry_price = sl_price + (ltf_sh_price - sl_price) * 0.5
+            entry_price = swing_sl + (ltf_sh_price - swing_sl) * 0.5
             order_type = 'PENDING'
 
         new_signal = Signal(
@@ -557,11 +658,11 @@ class ImsStrategy:
         if sh_ts == self._ltf_last_sl_ts[symbol]:
             return None
 
-        sl_price = bars[sh_idx].high  # SL above the LTF swing high
+        swing_sh = bars[sh_idx].high  # wick — used for zone/entry checks
 
         # The LTF swing high must be at or above the HTF 50% level — ensures the entry
         # leg genuinely started in the premium half, not below the midpoint
-        if sl_price < bias['dealing_50']:
+        if swing_sh < bias['dealing_50']:
             return None
 
         # Bearish FVG required in the LTF leg (swing high to broken swing low)
@@ -571,12 +672,13 @@ class ImsStrategy:
 
         ltf_sl_price = bars[sl_struct_idx].low
         tp_price = bias['swing_low'] if self.tp_mode == 'htf_high' else None
+        sl_price = self._compute_sl_sell(symbol, bars, sh_idx, leg)
 
         if self.entry_mode == 'market':
             entry_price = bar.close
             order_type = 'MARKET'
         else:
-            entry_price = sl_price - (sl_price - ltf_sl_price) * 0.5
+            entry_price = swing_sh - (swing_sh - ltf_sl_price) * 0.5
             order_type = 'PENDING'
 
         new_signal = Signal(

@@ -24,6 +24,7 @@ from data.mt5_data import connect, disconnect, reconnect, get_latest_completed_b
 from strategies.ema_fib_retracement import EmaFibRetracementStrategy
 from strategies.ema_fib_running import EmaFibRunningStrategy
 from strategies.three_line_strike import ThreeLineStrikeStrategy
+from strategies.ims import ImsStrategy
 
 from utils.telegram_notifier import TelegramNotifier
 import config
@@ -118,14 +119,34 @@ def main():
             sma_sep_pips=5.0,
             pip_sizes={'USDJPY': 0.01},
         )
+        IMS_SYMBOLS = ['USDJPY', 'XAUUSD', 'EURAUD', 'CADJPY', 'USDCAD', 'AUDUSD', 'EURUSD', 'GBPCAD', 'GBPUSD']
+        ims = ImsStrategy(
+            tf_htf='H4',
+            tf_ltf='M15',
+            fractal_n=1,
+            ltf_fractal_n=1,
+            htf_lookback=30,
+            entry_mode='pending',
+            tp_mode='rr',
+            rr_ratio=2.5,
+            cooldown_bars=0,
+            blocked_hours=(*range(0, 12), *range(17, 24)),  # London/NY overlap: 12:00-17:00 UTC
+            ema_fast=20,
+            ema_slow=50,
+            ema_sep=0.001,
+            sl_anchor='swing',
+            pip_sizes={s: config.PIP_SIZE[s] for s in IMS_SYMBOLS if s in config.PIP_SIZE},
+        )
 
-        strategies = [ema_fib, ema_fib_running, engulfing]
+        strategies = [ema_fib, ema_fib_running, engulfing, ims]
 
         # EmaFib strategies run on all configured symbols
         for strategy in [ema_fib, ema_fib_running]:
             event_engine.register(strategy, config.SYMBOLS)
         # Engulfing runs on 5 pairs only (GBPUSD negative on NY; USDCHF poor IS)
         event_engine.register(engulfing, ['EURUSD', 'AUDUSD', 'NZDUSD', 'USDJPY', 'USDCAD'])
+        # IMS H4/M15: 9 symbols validated by walk-forward (MODERATE, all 3 folds positive)
+        event_engine.register(ims, IMS_SYMBOLS)
 
         # ── Bar-detection state ───────────────────────────────────────────────
         # Tracks the timestamp of the last processed bar per (symbol, timeframe).

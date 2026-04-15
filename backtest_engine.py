@@ -48,7 +48,7 @@ class BacktestEngine:
             initial_balance, spread_pips=spread_pips, breakeven_at_r=breakeven_at_r,
             rr_ratio=rr_ratio or config.DEFAULT_RR_RATIO,
         )
-        self.portfolio = PortfolioManager()
+        self.portfolio = PortfolioManager(max_open_trades=99, max_daily_loss_pct=None)
         self.trade_logger = TradeLogger(initial_balance=initial_balance)
         self.risk = RiskManager(
             account_balance_fn=self.execution.get_account_balance,

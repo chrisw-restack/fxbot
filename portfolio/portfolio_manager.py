@@ -9,11 +9,17 @@ logger = logging.getLogger(__name__)
 
 class PortfolioManager:
 
-    def __init__(self):
+    def __init__(
+        self,
+        max_open_trades: int = config.MAX_OPEN_TRADES,
+        max_daily_loss_pct: float | None = config.MAX_DAILY_LOSS_PCT,
+    ):
         # symbol -> {'ticket': int, 'signal': EnrichedSignal}
         self._open_positions: dict[str, dict] = {}
         self._daily_loss: float = 0.0
         self._current_date: date = date.today()
+        self._max_open_trades = max_open_trades
+        self._max_daily_loss_pct = max_daily_loss_pct  # None = disabled
 
     def set_current_date(self, d: date):
         """
@@ -41,9 +47,9 @@ class PortfolioManager:
             )
             return False
 
-        if len(self._open_positions) >= config.MAX_OPEN_TRADES:
+        if len(self._open_positions) >= self._max_open_trades:
             logger.warning(
-                f"Blocked: max open trades ({config.MAX_OPEN_TRADES}) reached — "
+                f"Blocked: max open trades ({self._max_open_trades}) reached — "
                 f"signal for {signal.symbol} dropped"
             )
             return False
@@ -64,7 +70,9 @@ class PortfolioManager:
         logger.debug(f"Position closed: {symbol} ({strategy_name}) pnl={pnl:.2f} daily_loss={self._daily_loss:.2f}")
 
     def is_daily_loss_exceeded(self, account_balance: float) -> bool:
-        limit = account_balance * config.MAX_DAILY_LOSS_PCT
+        if self._max_daily_loss_pct is None:
+            return False
+        limit = account_balance * self._max_daily_loss_pct
         if self._daily_loss >= limit:
             logger.warning(
                 f"Daily loss limit reached: ${self._daily_loss:.2f} >= ${limit:.2f} — "

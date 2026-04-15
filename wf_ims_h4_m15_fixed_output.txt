@@ -1,0 +1,78 @@
+Discovering CSV files...
+  Found: data/historical/USDJPY_H4_20151231-20260310.csv
+  Found: data/historical/USDJPY_H4_20251231-20260319.csv
+  Found: data/historical/USDJPY_M15_20160103-20260310.csv
+  Found: data/historical/USDJPY_M15_20260101-20260319.csv
+  Found: data/historical/XAUUSD_H4_20151231-20260319.csv
+  Found: data/historical/XAUUSD_M15_20160103-20260319.csv
+  Found: data/historical/EURAUD_H4_20151231-20260319.csv
+  Found: data/historical/EURAUD_M15_20160103-20260319.csv
+  Found: data/historical/CADJPY_H4_20151231-20260319.csv
+  Found: data/historical/CADJPY_M15_20160103-20260319.csv
+  Found: data/historical/USDCAD_H4_20151231-20260310.csv
+  Found: data/historical/USDCAD_H4_20251231-20260319.csv
+  Found: data/historical/USDCAD_M15_20160103-20260310.csv
+  Found: data/historical/USDCAD_M15_20260101-20260319.csv
+  Found: data/historical/AUDUSD_H4_20151231-20260310.csv
+  Found: data/historical/AUDUSD_H4_20251231-20260319.csv
+  Found: data/historical/AUDUSD_M15_20160103-20260310.csv
+  Found: data/historical/AUDUSD_M15_20260101-20260319.csv
+  Found: data/historical/EURUSD_H4_20151231-20260310.csv
+  Found: data/historical/EURUSD_H4_20251231-20260319.csv
+  Found: data/historical/EURUSD_M15_20160103-20260310.csv
+  Found: data/historical/EURUSD_M15_20260101-20260319.csv
+  Found: data/historical/GBPCAD_H4_20151231-20260319.csv
+  Found: data/historical/GBPCAD_M15_20160103-20260319.csv
+  Found: data/historical/GBPUSD_H4_20151231-20260310.csv
+  Found: data/historical/GBPUSD_H4_20251231-20260319.csv
+  Found: data/historical/GBPUSD_M15_20160103-20260310.csv
+  Found: data/historical/GBPUSD_M15_20260101-20260319.csv
+
+Loading bar data...
+Loaded 2,426,303 bars (2015-12-31 to 2026-03-19)
+
+3 folds × 1 param combos = 3 total runs
+
+==========================================================================================
+FOLD 1:  Train 2015-01-01 → 2019-01-01  |  Test 2019-01-01 → 2021-01-01
+==========================================================================================
+  Optimizing (1 combos, metric=expectancy, min_trades=1, workers=2)...
+  Best params: 
+  In-sample:  trades=95  WR=38.9%  R=+30.7  PF=1.53  Expect=+0.323  DD=6.8R  LStreak=6
+  Out-of-sample: trades=71  WR=36.6%  R=+17.5  PF=1.39  Expect=+0.246  DD=8.8R  LStreak=7
+  OOS retention: 76% of IS expectancy
+
+==========================================================================================
+FOLD 2:  Train 2017-01-01 → 2021-01-01  |  Test 2021-01-01 → 2023-01-01
+==========================================================================================
+  Optimizing (1 combos, metric=expectancy, min_trades=1, workers=2)...
+  Best params: 
+  In-sample:  trades=143  WR=35.0%  R=+26.8  PF=1.29  Expect=+0.187  DD=8.8R  LStreak=7
+  Out-of-sample: trades=51  WR=31.4%  R=+3.8  PF=1.11  Expect=+0.075  DD=8.2R  LStreak=8
+  OOS retention: 40% of IS expectancy
+
+==========================================================================================
+FOLD 3:  Train 2019-01-01 → 2023-01-01  |  Test 2023-01-01 → 2025-01-01
+==========================================================================================
+  Optimizing (1 combos, metric=expectancy, min_trades=1, workers=2)...
+  Best params: 
+  In-sample:  trades=125  WR=35.2%  R=+25.0  PF=1.31  Expect=+0.200  DD=9.2R  LStreak=8
+  Out-of-sample: trades=86  WR=33.7%  R=+13.1  PF=1.23  Expect=+0.152  DD=13.2R  LStreak=11
+  OOS retention: 76% of IS expectancy
+
+
+==================================================================================================================================
+                                                       WALK-FORWARD SUMMARY                                                       
+==================================================================================================================================
+Fold  Test Period                 Params                                      IS R   OOS R  IS Exp  OOS Exp  OOS WR  OOS PF  Retain
+----------------------------------------------------------------------------------------------------------------------------------
+1     2019-01-01 → 2021-01-01                                                +30.7   +17.5  +0.323   +0.246   36.6%    1.39     76%
+2     2021-01-01 → 2023-01-01                                                +26.8    +3.8  +0.187   +0.075   31.4%    1.11     40%
+3     2023-01-01 → 2025-01-01                                                +25.0   +13.1  +0.200   +0.152   33.7%    1.23     76%
+----------------------------------------------------------------------------------------------------------------------------------
+
+  Aggregate OOS:  208 trades  |  +34.4R total  |  +0.165R expectancy
+  Avg OOS retention: 64% of in-sample expectancy
+
+  Verdict: MODERATE — some overfitting, but strategy has edge out-of-sample
+==================================================================================================================================

@@ -1,0 +1,78 @@
+Discovering CSV files...
+  Found: data/historical/EURUSD_H4_20151231-20260310.csv
+  Found: data/historical/EURUSD_H4_20251231-20260319.csv
+  Found: data/historical/EURUSD_M15_20160103-20260310.csv
+  Found: data/historical/EURUSD_M15_20260101-20260319.csv
+  Found: data/historical/GBPUSD_H4_20151231-20260310.csv
+  Found: data/historical/GBPUSD_H4_20251231-20260319.csv
+  Found: data/historical/GBPUSD_M15_20160103-20260310.csv
+  Found: data/historical/GBPUSD_M15_20260101-20260319.csv
+  Found: data/historical/AUDUSD_H4_20151231-20260310.csv
+  Found: data/historical/AUDUSD_H4_20251231-20260319.csv
+  Found: data/historical/AUDUSD_M15_20160103-20260310.csv
+  Found: data/historical/AUDUSD_M15_20260101-20260319.csv
+  Found: data/historical/NZDUSD_H4_20151231-20260310.csv
+  Found: data/historical/NZDUSD_H4_20251231-20260319.csv
+  Found: data/historical/NZDUSD_M15_20160103-20260310.csv
+  Found: data/historical/NZDUSD_M15_20260101-20260319.csv
+  Found: data/historical/USDJPY_H4_20151231-20260310.csv
+  Found: data/historical/USDJPY_H4_20251231-20260319.csv
+  Found: data/historical/USDJPY_M15_20160103-20260310.csv
+  Found: data/historical/USDJPY_M15_20260101-20260319.csv
+  Found: data/historical/USDCAD_H4_20151231-20260310.csv
+  Found: data/historical/USDCAD_H4_20251231-20260319.csv
+  Found: data/historical/USDCAD_M15_20160103-20260310.csv
+  Found: data/historical/USDCAD_M15_20260101-20260319.csv
+  Found: data/historical/USDCHF_H4_20151231-20260310.csv
+  Found: data/historical/USDCHF_H4_20251231-20260319.csv
+  Found: data/historical/USDCHF_M15_20160103-20260310.csv
+  Found: data/historical/USDCHF_M15_20260101-20260319.csv
+
+Loading bar data...
+Loaded 1,897,649 bars (2015-12-31 to 2026-03-19)
+
+3 folds × 16 param combos = 48 total runs
+
+==========================================================================================
+FOLD 1:  Train 2015-01-01 → 2019-01-01  |  Test 2019-01-01 → 2021-01-01
+==========================================================================================
+  Optimizing (16 combos, metric=expectancy, min_trades=50, workers=2)...
+  Best params: fractal_n=2, ltf_fractal_n=2, htf_lookback=30, rr_ratio=2.5
+  In-sample:  trades=96  WR=35.4%  R=+19.9  PF=1.32  Expect=+0.207  DD=8.2R  LStreak=6
+  Out-of-sample: trades=60  WR=23.3%  R=-12.8  PF=0.72  Expect=-0.213  DD=22.9R  LStreak=18
+  OOS retention: -103% of IS expectancy
+
+==========================================================================================
+FOLD 2:  Train 2017-01-01 → 2021-01-01  |  Test 2021-01-01 → 2023-01-01
+==========================================================================================
+  Optimizing (16 combos, metric=expectancy, min_trades=50, workers=2)...
+  Best params: fractal_n=1, ltf_fractal_n=1, htf_lookback=30, rr_ratio=2.5
+  In-sample:  trades=117  WR=35.9%  R=+25.5  PF=1.34  Expect=+0.218  DD=10.0R  LStreak=6
+  Out-of-sample: trades=54  WR=25.9%  R=-5.8  PF=0.85  Expect=-0.108  DD=18.6R  LStreak=12
+  OOS retention: -50% of IS expectancy
+
+==========================================================================================
+FOLD 3:  Train 2019-01-01 → 2023-01-01  |  Test 2023-01-01 → 2025-01-01
+==========================================================================================
+  Optimizing (16 combos, metric=expectancy, min_trades=50, workers=2)...
+  Best params: fractal_n=1, ltf_fractal_n=1, htf_lookback=30, rr_ratio=2.5
+  In-sample:  trades=119  WR=35.3%  R=+23.9  PF=1.31  Expect=+0.201  DD=18.6R  LStreak=12
+  Out-of-sample: trades=55  WR=29.1%  R=-0.4  PF=0.99  Expect=-0.008  DD=9.2R  LStreak=8
+  OOS retention: -4% of IS expectancy
+
+
+==================================================================================================================================
+                                                       WALK-FORWARD SUMMARY                                                       
+==================================================================================================================================
+Fold  Test Period                 Params                                      IS R   OOS R  IS Exp  OOS Exp  OOS WR  OOS PF  Retain
+----------------------------------------------------------------------------------------------------------------------------------
+1     2019-01-01 → 2021-01-01     fractal_n=2, ltf_fractal_n=2, htf_l...     +19.9   -12.8  +0.207   -0.213   23.3%    0.72   -103%
+2     2021-01-01 → 2023-01-01     fractal_n=1, ltf_fractal_n=1, htf_l...     +25.5    -5.8  +0.218   -0.108   25.9%    0.85    -50%
+3     2023-01-01 → 2025-01-01     fractal_n=1, ltf_fractal_n=1, htf_l...     +23.9    -0.4  +0.201   -0.008   29.1%    0.99     -4%
+----------------------------------------------------------------------------------------------------------------------------------
+
+  Aggregate OOS:  169 trades  |  -19.0R total  |  -0.112R expectancy
+  Avg OOS retention: -52% of in-sample expectancy
+
+  Verdict: FAIL — strategy loses money out-of-sample, likely curve-fit
+==================================================================================================================================

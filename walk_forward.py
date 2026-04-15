@@ -138,6 +138,25 @@ STRATEGY_CONFIGS = {
             'cooldown_bars': [0, 3],
         },
     },
+    'ims_h4_m15': {
+        'class': ImsStrategy,
+        'timeframes': ['H4', 'M15'],
+        'symbols': ['USDJPY', 'XAUUSD', 'EURAUD', 'CADJPY', 'USDCAD', 'AUDUSD', 'EURUSD', 'GBPCAD', 'GBPUSD'],
+        'fixed_params': {
+            'tf_htf': 'H4', 'tf_ltf': 'M15',
+            'entry_mode': 'pending',
+            'tp_mode': 'rr',
+            'blocked_hours': (*range(0, 12), *range(17, 24)),  # London/NY overlap 12-17 UTC
+            'ema_fast': 20, 'ema_slow': 50,
+            'ema_sep': 0.001,
+            'cooldown_bars': 0,
+            'fractal_n':     1,
+            'ltf_fractal_n': 1,
+            'htf_lookback':  30,
+            'rr_ratio':      2.5,
+        },
+        'param_grid': {},
+    },
     'ema_fib_running': {
         'class': EmaFibRunningStrategy,
         'timeframes': ['D1', 'H1'],

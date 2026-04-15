@@ -43,11 +43,16 @@ logging.basicConfig(
 )
 
 # ── Settings — edit these ─────────────────────────────────────────────────────
-# SYMBOLS         = ['XAUUSD']
-# SYMBOLS         = ['EURUSD', 'GBPUSD', 'AUDUSD', 'NZDUSD', 'USDJPY', 'USDCAD', 'USDCHF', 'XAUUSD']
-# SYMBOLS         = ['EURUSD', 'GBPUSD', 'AUDUSD', 'NZDUSD', 'USDJPY', 'USDCAD', 'USDCHF']
-# SYMBOLS         = [  'XAUUSD']
-SYMBOLS         = ['EURUSD', 'GBPUSD', 'AUDUSD', 'NZDUSD', 'USDJPY', 'USDCAD', 'USDCHF', 'XAUUSD', 'USA100']
+# SYMBOLS         = ['EURUSD', 'GBPUSD', 'AUDUSD', 'NZDUSD', 'USDJPY', 'USDCAD', 'USDCHF', 'XAUUSD', 'USA100']
+# SYMBOLS         = ['EURUSD', 'GBPUSD', 'AUDUSD' , 'USDJPY', 'USDCAD', 'GBPCAD' ]
+# ALL SYMBOLS         = ['AUDCAD','AUDJPY','AUDNZD','AUDUSD','CADJPY','EURAUD','EURCAD','EURCHF','EURGBP','EURJPY','EURUSD','GBPAUD','GBPCAD','GBPJPY','GBPNZD','GBPUSD','NZDJPY','NZDUSD','USA100','USA30','USA500','USDCAD','USDCHF','USDJPY','XAUUSD']
+# SYMBOLS         = ['AUDCAD','AUDJPY','AUDNZD','AUDUSD','CADJPY','EURAUD','EURCAD','EURCHF','EURGBP','EURJPY','EURUSD','GBPAUD','GBPCAD','GBPJPY','GBPNZD','GBPUSD','NZDJPY','NZDUSD','USA100','USA30','USA500','USDCAD','USDCHF','USDJPY','XAUUSD']
+SYMBOLS         = [ 'USDJPY','XAUUSD','EURAUD','CADJPY','USDCAD','AUDUSD','EURUSD','GBPCAD','GBPUSD']
+
+# SYMBOLS         = ['AUDUSD','CADJPY']
+# SYMBOLS         = ['EURAUD','EURCAD','EURCHF','EURGBP','EURJPY']
+
+
 INITIAL_BALANCE = 10_000.0   # starting account balance in USD
 RR_RATIO        = 2.5        # risk/reward ratio (overrides config default)
 RISK_PCT_OVERRIDES = {}
@@ -76,7 +81,7 @@ STRATEGIES = {
     'ims_d1_h4':                    ImsStrategy(tf_htf='D1', tf_ltf='H4', fractal_n=1, ltf_fractal_n=2, htf_lookback=50, tp_mode='htf_high', cooldown_bars=0, ema_fast=20, ema_slow=50),
     'ims_d1_h4_market':             ImsStrategy(tf_htf='D1', tf_ltf='H4', fractal_n=1, ltf_fractal_n=2, htf_lookback=50, entry_mode='market', tp_mode='htf_high', cooldown_bars=0, ema_fast=20, ema_slow=50),
     'ims_h4_h1':                    ImsStrategy(tf_htf='H4', tf_ltf='H1', fractal_n=1, ltf_fractal_n=2, htf_lookback=50, tp_mode='htf_high', cooldown_bars=0, ema_fast=20, ema_slow=50),
-    'ims_h4_m15':                   ImsStrategy(tf_htf='H4', tf_ltf='M15', fractal_n=1, ltf_fractal_n=2, htf_lookback=50, tp_mode='htf_high', cooldown_bars=0, ema_fast=20, ema_slow=50),
+    'ims_h4_m15':                   ImsStrategy(tf_htf='H4', tf_ltf='M15', fractal_n=1, ltf_fractal_n=1, htf_lookback=30, entry_mode='pending', tp_mode='rr', rr_ratio=2.5, cooldown_bars=0, blocked_hours=(*range(0, 12), *range(17, 24)), ema_fast=20, ema_slow=50, ema_sep=0.001),
     'smc_zone':                     SmcZoneStrategy(swing_length=3,  tf_entry='H1', zone_atr_mult=0.4, sl_buffer_atr=0.5, d1_ema_period=50, blocked_hours=(*range(20,24),*range(0,9))),
     'smc_zone_h1_sl10':             SmcZoneStrategy(swing_length=10, tf_entry='H1', zone_atr_mult=0.4, sl_buffer_atr=0.5, d1_ema_period=50, blocked_hours=(*range(20,24),*range(0,9))),
     'smc_zone_h4':                  SmcZoneStrategy(swing_length=3, tf_entry='H4', zone_atr_mult=2.0, sl_buffer_atr=0.5, zone_leg_atr=0.0, d1_ema_period=50, blocked_hours=(*range(20,24),*range(0,9))),

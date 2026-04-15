@@ -1,20 +1,21 @@
 """
-Parameter sweep for IMS (ICT Market Structure) — H4/M15 stack.
+Parameter sweep for IMS (ICT Market Structure) — D1/H4 stack.
 Runs each param combo per symbol separately so you can see which symbols
 contribute to performance and which drag it down.
 
 Swept parameters:
   entry_mode    — 'pending' (limit at 50% of LTF leg) | 'market' (MSS bar close)
   tp_mode/rr    — HTF target, 2:1, or 2.5:1
-  ema_pair      — H4 EMA fast/slow (off, 20/50, 60/120 ≈ daily 10/20)
-  session       — which hours to allow LTF signals
-  fractal_n     — H4 fractal bars each side (1=3-candle, 2=5-candle)
-  ltf_fractal_n — M15 fractal bars each side (1=3-candle, 2=5-candle)
-  htf_lookback  — H4 bars scanned for bias
-  cooldown_bars — M15 bars to skip after a loss
+  ema_pair      — D1 EMA fast/slow (off, 10/20 = daily, 50/100 ≈ weekly 10/20)
+  session       — which H4 hours to allow LTF signals
+  fractal_n     — D1 fractal bars each side (1=3-candle, 2=5-candle)
+  ltf_fractal_n — H4 fractal bars each side (1=3-candle, 2=5-candle)
+  htf_lookback  — D1 bars scanned for bias
+  cooldown_bars — H4 bars to skip after a loss
   ema_sep       — minimum EMA separation as fraction of price
+  # SL modes?
 
-Total: 2×3×3×4×2×2×2×2×2 = 2,304 combos × 9 symbols = 20,736 tasks
+Total: 2×3×3×3×2×2×2×2×2 = 1,728 combos × 9 symbols = 15,552 tasks
 """
 
 import itertools
@@ -23,7 +24,7 @@ import contextlib
 import logging
 import multiprocessing
 import sys
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor
 
 from backtest_engine import BacktestEngine
 from strategies.ims import ImsStrategy
@@ -32,24 +33,23 @@ from data.historical_loader import find_csv, load_and_merge
 logging.basicConfig(level=logging.ERROR)
 sys.stdout.reconfigure(line_buffering=True)
 
-SYMBOLS         = ['USDJPY', 'XAUUSD', 'EURAUD', 'CADJPY', 'USDCAD', 'AUDUSD', 'EURUSD', 'GBPCAD', 'GBPUSD']
+SYMBOLS         = ['EURUSD', 'GBPUSD', 'AUDUSD', 'NZDUSD', 'USDJPY', 'USDCAD', 'USDCHF', 'XAUUSD', 'USA100']
 INITIAL_BALANCE = 10_000.0
-N_WORKERS       = 2   # increase if you have spare CPU cores
+N_WORKERS       = 2
 
-# ── Session options (hours to BLOCK) ─────────────────────────────────────────
-# Signals fired during blocked hours are suppressed in _on_ltf_bar.
+# ── Session options (hours to BLOCK on H4 LTF) ───────────────────────────────
 SESSIONS = {
-    'all':    (),                                              # no filter
-    'eu_us':  (*range(0, 7), *range(18, 24)),                 # allow 07–18 UTC
-    'ln_us':  (*range(0, 12), *range(17, 24)),                # allow 12–17 UTC (London/NY overlap)
-    'us':     (*range(0, 13), *range(18, 24)),                # allow 13–18 UTC
+    'all':   (),
+    'eu_us': (*range(0, 7), *range(18, 24)),   # allow 07–18 UTC
+    'eu':    (*range(0, 7), *range(16, 24)),   # allow 07–16 UTC
+    'us':    (*range(0, 13), *range(18, 24)),  # allow 13–18 UTC
 }
 
-# ── EMA pair options (fast, slow on H4) ──────────────────────────────────────
+# ── EMA pair options (fast, slow on D1 HTF) ──────────────────────────────────
 EMA_PAIRS = [
     (0,   0),    # disabled
-    (20,  50),   # medium-term H4 trend
-    (60, 120),   # ≈ daily 10/20 (6 H4 bars per day × 10/20)
+    (10,  20),   # standard daily trend (10/20 on D1)
+    (50, 100),   # ≈ weekly 10/20 (5 D1 bars/week × 10/20)
 ]
 
 # ── TP combos: (tp_mode, rr_ratio) ───────────────────────────────────────────
@@ -82,7 +82,7 @@ total = len(combos)
 
 
 # ── Worker ────────────────────────────────────────────────────────────────────
-_ALL_BARS = None  # dict: symbol -> merged [H4 + M15] bar list
+_ALL_BARS = None  # dict: symbol -> merged [D1 + H4] bar list
 
 
 def _init_worker(bars_by_symbol):
@@ -102,8 +102,8 @@ def _run_task(args):
 
     try:
         strategy = ImsStrategy(
-            tf_htf='H4',
-            tf_ltf='M15',
+            tf_htf='D1',
+            tf_ltf='H4',
             entry_mode=entry_mode,
             fractal_n=fractal_n,
             ltf_fractal_n=ltf_fractal_n,
@@ -148,18 +148,18 @@ def _run_task(args):
         return (combo, symbol, None)
 
 
-# ── Pre-load bar data (H4 + M15 merged per symbol) ───────────────────────────
+# ── Pre-load bar data (D1 + H4 merged per symbol) ────────────────────────────
 print("Loading bar data...")
 bars_by_symbol = {}
 for symbol in SYMBOLS:
+    d1_paths  = find_csv(symbol, 'D1')
     h4_paths  = find_csv(symbol, 'H4')
-    m15_paths = find_csv(symbol, 'M15')
-    if not h4_paths or not m15_paths:
-        print(f"  {symbol}: SKIPPED (no H4 or M15 data)")
+    if not d1_paths or not h4_paths:
+        print(f"  {symbol}: SKIPPED (no D1 or H4 data)")
         continue
-    merged = load_and_merge(h4_paths + m15_paths)
+    merged = load_and_merge(d1_paths + h4_paths)
     bars_by_symbol[symbol] = merged
-    print(f"  {symbol}: {len(merged):,} bars (H4+M15)")
+    print(f"  {symbol}: {len(merged):,} bars (D1+H4)")
 
 active_symbols = list(bars_by_symbol.keys())
 n_tasks = total * len(active_symbols)
@@ -170,28 +170,21 @@ print(f"\n{total} combos × {len(active_symbols)} symbols = {n_tasks:,} tasks "
 tasks = [(combo, symbol) for combo in combos for symbol in active_symbols]
 
 # ── Run ───────────────────────────────────────────────────────────────────────
-PROGRESS_EVERY = 500
-
 if N_WORKERS > 1:
-    raw = []
     with ProcessPoolExecutor(
         max_workers=N_WORKERS,
         mp_context=multiprocessing.get_context('fork'),
         initializer=_init_worker,
         initargs=(bars_by_symbol,),
     ) as executor:
-        futures = {executor.submit(_run_task, task): task for task in tasks}
-        for i, future in enumerate(as_completed(futures), 1):
-            raw.append(future.result())
-            if i % PROGRESS_EVERY == 0 or i == n_tasks:
-                print(f"  {i}/{n_tasks} tasks done ({i/n_tasks*100:.1f}%)...")
+        raw = list(executor.map(_run_task, tasks, chunksize=8))
 else:
     _init_worker(bars_by_symbol)
     raw = []
-    for i, task in enumerate(tasks, 1):
+    for i, task in enumerate(tasks):
         raw.append(_run_task(task))
-        if i % PROGRESS_EVERY == 0 or i == n_tasks:
-            print(f"  {i}/{n_tasks} tasks done ({i/n_tasks*100:.1f}%)...")
+        if (i + 1) % 500 == 0:
+            print(f"  {i+1}/{n_tasks} tasks done...")
 
 # ── Reconstruct per-combo results ─────────────────────────────────────────────
 lookup = {(combo, sym): data for combo, sym, data in raw}
@@ -237,7 +230,7 @@ print(f"Done. {len(results)} combos had at least one trade.\n")
 
 
 # ── Display helpers ───────────────────────────────────────────────────────────
-SYM_W   = 11   # chars per symbol column:  "+0.123/12t"
+SYM_W   = 11
 LABEL_W = 48
 
 W = LABEL_W + SYM_W * len(active_symbols) + 36
@@ -286,14 +279,14 @@ def print_table(title, rows, n=25):
     print(f"  Symbol columns: expectancy/trades  |  pos = symbols with positive expectancy")
 
 
-# ── 1. Top by avg expectancy — all symbols with trades ───────────────────────
+# ── 1. Top by avg expectancy ──────────────────────────────────────────────────
 results.sort(key=lambda r: r['avg_exp'], reverse=True)
 print_table(
     f"TOP 25 BY AVG EXPECTANCY  ({len(results)} combos with trades)",
     results,
 )
 
-# ── 2. Top — requiring all symbols to have trades ─────────────────────────────
+# ── 2. Top — all symbols with trades ─────────────────────────────────────────
 full = [r for r in results if all(r['per_sym'].get(s) for s in active_symbols)]
 full.sort(key=lambda r: r['avg_exp'], reverse=True)
 print_table(
@@ -355,7 +348,7 @@ for ses in SESSIONS:
     if rows:
         print(f"── session={ses:<6}  {result_row(rows[0])}")
 
-# ── 8. Per-symbol summary — best config for each symbol ──────────────────────
+# ── 8. Per-symbol summary ─────────────────────────────────────────────────────
 print(f"\n{'='*W}")
 print("PER-SYMBOL SUMMARY  (best avg_exp combo where that symbol has trades)")
 print(f"{'='*W}")
