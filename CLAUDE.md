@@ -418,13 +418,13 @@ python walk_forward.py breakout
 
 ## Live Suite
 
-The bot runs **4 strategies** in production (`main_live.py`). EmaFib strategies run on 7 FX pairs; Engulfing runs on 5 pairs; IMS runs on 9 pairs. Each strategy gets its own position slot per symbol — they can hold concurrent positions on the same symbol independently.
+The bot runs **4 strategies** in production (`main_live.py`). EmaFib strategies run on 7 FX pairs; Engulfing runs on 3 pairs; IMS runs on 9 pairs. Each strategy gets its own position slot per symbol — they can hold concurrent positions on the same symbol independently.
 
 | Strategy | Timeframes | Order Type | Symbols | Key Params |
 |----------|-----------|------------|---------|------------|
 | EmaFibRetracement | D1, H1 | PENDING | 7 pairs | fib_entry=0.786, fib_tp=3.0, fractal_n=3, min_swing=10, ema_sep=0.001, cooldown=10, invalidate=True, blocked_hours=(20-23, 0-8) |
 | EmaFibRunning | D1, H1 | PENDING | 7 pairs | fib_entry=0.786, fib_tp=2.5, fractal_n=2, min_swing=30, ema_sep=0.0, cooldown=0, invalidate=True, blocked_hours=(20-23, 0-8) |
-| Engulfing | M5 | MARKET | 5 pairs | fractal_n=3, min_body=3.0, engulf_ratio=1.5, max_sl=15, NY session (13-17 UTC), sma_sep=5.0, rr=2.5 |
+| Engulfing | M5 | MARKET | 3 pairs | fractal_n=3, min_body=3.0, engulf_ratio=1.5, max_sl=15, NY session (13-17 UTC), sma_sep=5.0, rr=2.5 |
 | IMS | H4, M15 | PENDING | 9 pairs | fractal_n=1, ltf_fractal_n=1, htf_lookback=30, rr=2.5, ema_fast=20, ema_slow=50, ema_sep=0.001, sl_anchor=swing, session=12-17 UTC |
 
 EmaFib combined (2016–2026): 519 trades, +284.1R, +0.547R expectancy, MaxDD 28.5R (~14.3%).
@@ -438,7 +438,7 @@ Walk-forward: MODERATE (folds 1&2 positive, fold 3 sparse/12 OOS trades). IS 201
 
 Engulfing: `python3 run_backtest.py three_line_strike`
 Walk-forward: STRONG (all 3 folds OOS positive, +0.237R agg OOS, 178% retention). IS 2016–2026 (5 pairs): +22R, +0.22R expect, PF=1.37. ~10 trades/yr. RR=2.5 validated by WF fold 3 (2024–2026).
-Engulfing symbols: EURUSD, AUDUSD, NZDUSD, USDJPY, USDCAD (GBPUSD negative on NY session; USDCHF poor IS).
+Engulfing symbols: EURUSD, AUDUSD, USDCAD (USDJPY/NZDUSD removed 2026-04-15 — session sweep showed USDJPY negative across all sessions, NZDUSD near-zero; GBPUSD London edge exists but WF fold 3 collapse disqualifies it; USDCHF poor IS).
 
 IMS: `python3 run_backtest.py ims_h4_m15`
 Walk-forward: MODERATE (all 3 folds OOS positive, +34.4R agg OOS, +0.165R expect, 64% retention). IS 2016–2026 (9 pairs): 363 trades across folds.

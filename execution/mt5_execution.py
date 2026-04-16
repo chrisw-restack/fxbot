@@ -18,6 +18,15 @@ MT5_TIMEFRAME_MAP = {
 
 class MT5Execution(BaseExecution):
 
+    def __init__(self, magic_numbers: dict[str, int] | None = None):
+        """
+        magic_numbers: maps strategy NAME → MT5 magic integer.
+        When provided, every order is tagged and get_open_positions filters
+        to only return positions belonging to this bot.
+        """
+        self._magic_numbers = magic_numbers or {}
+        self._known_magic: set[int] = set(self._magic_numbers.values())
+
     def place_order(
         self,
         symbol: str,
@@ -51,6 +60,10 @@ class MT5Execution(BaseExecution):
             else:
                 mt5_type = mt5.ORDER_TYPE_SELL_STOP if entry_price < current else mt5.ORDER_TYPE_SELL_LIMIT
 
+        magic = self._magic_numbers.get(strategy_name, 0)
+        if magic == 0 and self._magic_numbers:
+            logger.warning(f"No magic number configured for strategy '{strategy_name}' — using 0")
+
         request = {
             'action':       action,
             'symbol':       symbol,
@@ -59,6 +72,7 @@ class MT5Execution(BaseExecution):
             'price':        price,
             'sl':           sl,
             'tp':           tp,
+            'magic':        magic,
             'comment':      strategy_name,
             'type_time':    mt5.ORDER_TIME_GTC,
             'type_filling': mt5.ORDER_FILLING_IOC,
@@ -120,7 +134,7 @@ class MT5Execution(BaseExecution):
     def get_open_positions(self) -> list[dict]:
         result = []
 
-        # Filled/open positions
+        # Filled/open positions — filter to bot-owned trades when magic numbers are configured
         positions = mt5.positions_get()
         if positions:
             result.extend([
@@ -138,6 +152,7 @@ class MT5Execution(BaseExecution):
                     'open_time':     datetime.fromtimestamp(p.time, tz=timezone.utc),
                 }
                 for p in positions
+                if not self._known_magic or p.magic in self._known_magic
             ])
 
         # Pending (unfilled) orders — included so _handle_cancel can find and delete them
@@ -161,6 +176,7 @@ class MT5Execution(BaseExecution):
                     # identify pending orders
                 }
                 for o in orders
+                if not self._known_magic or o.magic in self._known_magic
             ])
 
         return result

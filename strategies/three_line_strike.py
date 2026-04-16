@@ -43,7 +43,7 @@ class ThreeLineStrikeStrategy:
         max_sl_pips: float = 15.0,
         min_prev_body_pips: float = 3.0,
         engulf_ratio: float = 1.5,
-        allowed_hours: tuple = (8, 9, 10, 11, 12, 13, 14, 15, 16, 17),
+        allowed_hours: tuple = tuple(range(13, 18)),
         pip_sizes: dict | None = None,
     ):
         self.sma_fast = sma_fast

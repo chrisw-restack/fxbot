@@ -55,6 +55,17 @@ PIP_SIZE = {
     'USA500': 0.1,    # S&P 500 (Dukascopy): 1 pip = 0.1 index point
 }
 
+# ── Magic Numbers ────────────────────────────────────────────────────────────
+# Unique integer tag attached to every MT5 order so the bot can identify its
+# own trades and ignore manual trades or other EAs on the same account.
+# Keys must match each strategy's NAME attribute exactly.
+MAGIC_NUMBERS: dict[str, int] = {
+    'EmaFibRetracement': 1001,
+    'EmaFibRunning':     1002,
+    'Engulfing':         1003,
+    'IMS_H4_M15':        1004,
+}
+
 # ── Spread ───────────────────────────────────────────────────────────────────
 # Per-symbol spread in pips applied at entry during backtesting.
 # Historical bars are bid-based, so spread is added to BUY entries and

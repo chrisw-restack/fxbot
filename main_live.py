@@ -67,7 +67,7 @@ def main():
         return
 
     try:
-        execution    = MT5Execution()
+        execution    = MT5Execution(magic_numbers=config.MAGIC_NUMBERS)
         portfolio    = PortfolioManager()
         trade_logger = TradeLogger()
         risk         = RiskManager(
@@ -117,7 +117,6 @@ def main():
             max_sl_pips=15,
             allowed_hours=tuple(range(13, 18)),  # NY session: 13:00-17:00 UTC
             sma_sep_pips=5.0,
-            pip_sizes={'USDJPY': 0.01},
         )
         IMS_SYMBOLS = ['USDJPY', 'XAUUSD', 'EURAUD', 'CADJPY', 'USDCAD', 'AUDUSD', 'EURUSD', 'GBPCAD', 'GBPUSD']
         ims = ImsStrategy(
@@ -143,8 +142,9 @@ def main():
         # EmaFib strategies run on all configured symbols
         for strategy in [ema_fib, ema_fib_running]:
             event_engine.register(strategy, config.SYMBOLS)
-        # Engulfing runs on 5 pairs only (GBPUSD negative on NY; USDCHF poor IS)
-        event_engine.register(engulfing, ['EURUSD', 'AUDUSD', 'NZDUSD', 'USDJPY', 'USDCAD'])
+        # Engulfing: 3 pairs on NY session (USDJPY/NZDUSD removed — negative IS after session sweep 2026-04-15)
+        # GBPUSD and USDCAD London sessions under walk-forward review
+        event_engine.register(engulfing, ['EURUSD', 'AUDUSD', 'USDCAD'])
         # IMS H4/M15: 9 symbols validated by walk-forward (MODERATE, all 3 folds positive)
         event_engine.register(ims, IMS_SYMBOLS)
 

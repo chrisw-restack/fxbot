@@ -238,14 +238,108 @@ STRATEGY_CONFIGS = {
     'engulfing': {
         'class': ThreeLineStrikeStrategy,
         'timeframes': ['M5'],
-        'symbols': ['EURUSD', 'AUDUSD', 'NZDUSD', 'USDJPY', 'USDCAD'],
-        'min_trades': 30,   # ~5 pairs × ~3–5 trades/yr each in a 4yr IS window
+        'symbols': ['EURUSD', 'AUDUSD', 'USDCAD'],  # USDJPY/NZDUSD removed 2026-04-15 (session sweep: negative IS across all sessions)
+        'min_trades': 15,   # ~3 pairs × ~3–5 trades/yr each in a 4yr IS window
         'fixed_params': {
             'allowed_hours': tuple(range(13, 18)),  # NY session only
             'sma_sep_pips': 5.0,
             'sl_mode': 'fractal',
             'fractal_n': 3,
-            'pip_sizes': {'USDJPY': 0.01},
+        },
+        'param_grid': {
+            'min_prev_body_pips': [0.0, 3.0, 5.0],
+            'engulf_ratio':       [1.0, 1.5, 2.0],
+            'max_sl_pips':        [15, 20],
+            'rr_ratio':           [2.0, 2.5],
+        },
+    },
+    # ── Engulfing single-symbol / alternative-session configs ────────────────
+    # Session sweep (2026-04-15) showed GBPUSD positive in London, negative in NY.
+    # USDCAD has better expectancy in London than in NY core.
+    # AUDUSD NY extended (13–20) outperformed NY core (13–17).
+    # min_trades=5 — single-symbol configs fire ~1–5 trades/yr, 4yr IS window.
+    'engulfing_gbpusd_london_open': {
+        'class': ThreeLineStrikeStrategy,
+        'timeframes': ['M5'],
+        'symbols': ['GBPUSD'],
+        'min_trades': 5,
+        'fixed_params': {
+            'allowed_hours': tuple(range(7, 11)),   # London open 07–10 UTC
+            'sma_sep_pips': 5.0,
+            'sl_mode': 'fractal',
+            'fractal_n': 3,
+        },
+        'param_grid': {
+            'min_prev_body_pips': [0.0, 3.0, 5.0],
+            'engulf_ratio':       [1.0, 1.5, 2.0],
+            'max_sl_pips':        [15, 20],
+            'rr_ratio':           [2.0, 2.5],
+        },
+    },
+    'engulfing_gbpusd_london_core': {
+        'class': ThreeLineStrikeStrategy,
+        'timeframes': ['M5'],
+        'symbols': ['GBPUSD'],
+        'min_trades': 5,
+        'fixed_params': {
+            'allowed_hours': tuple(range(8, 13)),   # London core 08–12 UTC
+            'sma_sep_pips': 5.0,
+            'sl_mode': 'fractal',
+            'fractal_n': 3,
+        },
+        'param_grid': {
+            'min_prev_body_pips': [0.0, 3.0, 5.0],
+            'engulf_ratio':       [1.0, 1.5, 2.0],
+            'max_sl_pips':        [15, 20],
+            'rr_ratio':           [2.0, 2.5],
+        },
+    },
+    'engulfing_audusd_ny_extended': {
+        'class': ThreeLineStrikeStrategy,
+        'timeframes': ['M5'],
+        'symbols': ['AUDUSD'],
+        'min_trades': 5,
+        'fixed_params': {
+            'allowed_hours': tuple(range(13, 21)),  # NY extended 13–20 UTC
+            'sma_sep_pips': 5.0,
+            'sl_mode': 'fractal',
+            'fractal_n': 3,
+        },
+        'param_grid': {
+            'min_prev_body_pips': [0.0, 3.0, 5.0],
+            'engulf_ratio':       [1.0, 1.5, 2.0],
+            'max_sl_pips':        [15, 20],
+            'rr_ratio':           [2.0, 2.5],
+        },
+    },
+    'engulfing_usdcad_london_core': {
+        'class': ThreeLineStrikeStrategy,
+        'timeframes': ['M5'],
+        'symbols': ['USDCAD'],
+        'min_trades': 5,
+        'fixed_params': {
+            'allowed_hours': tuple(range(8, 13)),   # London core 08–12 UTC
+            'sma_sep_pips': 5.0,
+            'sl_mode': 'fractal',
+            'fractal_n': 3,
+        },
+        'param_grid': {
+            'min_prev_body_pips': [0.0, 3.0, 5.0],
+            'engulf_ratio':       [1.0, 1.5, 2.0],
+            'max_sl_pips':        [15, 20],
+            'rr_ratio':           [2.0, 2.5],
+        },
+    },
+    'engulfing_usdcad_london_ny': {
+        'class': ThreeLineStrikeStrategy,
+        'timeframes': ['M5'],
+        'symbols': ['USDCAD'],
+        'min_trades': 5,
+        'fixed_params': {
+            'allowed_hours': tuple(range(8, 18)),   # London+NY 08–17 UTC
+            'sma_sep_pips': 5.0,
+            'sl_mode': 'fractal',
+            'fractal_n': 3,
         },
         'param_grid': {
             'min_prev_body_pips': [0.0, 3.0, 5.0],
