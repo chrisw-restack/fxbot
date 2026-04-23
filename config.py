@@ -64,6 +64,7 @@ MAGIC_NUMBERS: dict[str, int] = {
     'EmaFibRunning':     1002,
     'Engulfing':         1003,
     'IMS_H4_M15':        1004,
+    'IMSRev_H4_M15':     1005,
 }
 
 # ── Spread ───────────────────────────────────────────────────────────────────

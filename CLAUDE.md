@@ -42,6 +42,12 @@ MT5 / CSV → Event Generator → Strategies
 | Param sweep | `param_sweep.py` | Parameter optimization runner |
 | IMS param sweep | `sweep_ims_params.py` | IMS-specific parameter sweep (9-symbol set) |
 | IMS SL sweep | `sweep_ims_sl_params.py` | IMS stop-loss placement sweep (swing/body/fvg × pip/ATR buffers) |
+| IMS Reversal sweep | `sweep_ims_reversal_params.py` | IMS Reversal parameter sweep (1,920 combos × 9 symbols) |
+| IMS Rev ADX sweep | `sweep_ims_adx_threshold.py` | D1 ADX threshold sweep for IMS Reversal DD reduction |
+| IMS Rev regime sweep | `sweep_ims_regime_filters.py` | D1 ADX vs Efficiency Ratio comparison for IMS Reversal |
+| IMS Rev circuit breaker | `sweep_ims_circuit_breaker.py` | Cross-symbol streak pause sweep for IMS Reversal |
+| IMS Rev fractal sweep | `sweep_ims_fractal.py` | H4/M15 fractal_n combinations for IMS Reversal |
+| Tiered sizing model | `model_tiered_sizing.py` | Dollar-account model of tiered position sizing (Full/Half/Quarter) vs fixed baseline |
 | Walk-forward | `walk_forward.py` | Walk-forward validation (rolling train/test) |
 | Dukascopy fetch | `fetch_data_dukascopy.py` | Download historical data from Dukascopy (any TF) |
 | News data fetch | `fetch_news_data.py` | Download Forex Factory calendar from Hugging Face |
@@ -286,6 +292,8 @@ For `PENDING` orders, the execution layer infers order subtype from direction vs
 - SELL + entry < current → Sell Stop
 - SELL + entry > current → Sell Limit
 
+**MT5 magic numbers**: `MT5Execution` accepts a `magic_numbers: dict[str, int]` constructor argument (keyed by strategy NAME). Every order is tagged with the strategy's magic integer via the `magic` field in `order_send`. `get_open_positions` filters positions/pending orders to only return those whose `.magic` is in the known set — manual trades and other EAs are invisible to the bot. Configured via `config.MAGIC_NUMBERS` and passed in `main_live.py`.
+
 ## Config Parameters (`config.py`)
 
 ```python
@@ -302,6 +310,14 @@ MIN_RR_RATIO = 1.0          # minimum acceptable R:R — signals below this are 
 
 MAX_OPEN_TRADES = 6         # allows headroom for future multi-strategy expansion
 MAX_DAILY_LOSS_PCT = 0.02   # 2% of account balance
+
+MAGIC_NUMBERS = {           # MT5 magic number per strategy NAME — tags orders, filters get_open_positions
+    'EmaFibRetracement': 1001,
+    'EmaFibRunning':     1002,
+    'Engulfing':         1003,
+    'IMS_H4_M15':        1004,
+    'IMSRev_H4_M15':     1005,
+}
 ```
 
 Pip sizes and values for all instruments (including XAUUSD, US30, US500, USTEC, DE40) are in `config.PIP_SIZE` and `config.PIP_VALUE_USD`. Add new instruments there before backtesting them.
@@ -418,7 +434,7 @@ python walk_forward.py breakout
 
 ## Live Suite
 
-The bot runs **4 strategies** in production (`main_live.py`). EmaFib strategies run on 7 FX pairs; Engulfing runs on 3 pairs; IMS runs on 9 pairs. Each strategy gets its own position slot per symbol — they can hold concurrent positions on the same symbol independently.
+The bot runs **5 strategies** in production (`main_live.py`). EmaFib strategies run on 7 FX pairs; Engulfing runs on 3 pairs; IMS runs on 9 pairs; IMS Reversal runs on 8 pairs. Each strategy gets its own position slot per symbol — they can hold concurrent positions on the same symbol independently.
 
 | Strategy | Timeframes | Order Type | Symbols | Key Params |
 |----------|-----------|------------|---------|------------|
@@ -426,9 +442,10 @@ The bot runs **4 strategies** in production (`main_live.py`). EmaFib strategies 
 | EmaFibRunning | D1, H1 | PENDING | 7 pairs | fib_entry=0.786, fib_tp=2.5, fractal_n=2, min_swing=30, ema_sep=0.0, cooldown=0, invalidate=True, blocked_hours=(20-23, 0-8) |
 | Engulfing | M5 | MARKET | 3 pairs | fractal_n=3, min_body=3.0, engulf_ratio=1.5, max_sl=15, NY session (13-17 UTC), sma_sep=5.0, rr=2.5 |
 | IMS | H4, M15 | PENDING | 9 pairs | fractal_n=1, ltf_fractal_n=1, htf_lookback=30, rr=2.5, ema_fast=20, ema_slow=50, ema_sep=0.001, sl_anchor=swing, session=12-17 UTC |
+| IMS Reversal | H4, M15 | PENDING | 8 pairs | fractal_n=1, ltf_fractal_n=2, htf_lookback=30, tp=htf_pct 0.5, max_losses_per_bias=1, ema_fast=20, ema_slow=50, ema_sep=0.001, session=12-17 UTC |
 
 EmaFib combined (2016–2026): 519 trades, +284.1R, +0.547R expectancy, MaxDD 28.5R (~14.3%).
-MAX_OPEN_TRADES cap is 6 — observed peak across all 4 strategies may require monitoring.
+MAX_OPEN_TRADES cap is 6 — with 5 strategies this may need raising; monitor peak concurrent positions.
 
 EmaFibRetracement: `python3 run_backtest.py ema_fib_retracement`
 Walk-forward: MODERATE (+110.9R OOS, +0.427R expect, 67% retention). IS 2016–2026: +247.8R, +0.774R expect, PF=1.89.
@@ -444,6 +461,12 @@ IMS: `python3 run_backtest.py ims_h4_m15`
 Walk-forward: MODERATE (all 3 folds OOS positive, +34.4R agg OOS, +0.165R expect, 64% retention). IS 2016–2026 (9 pairs): 363 trades across folds.
 IMS symbols: USDJPY, XAUUSD, EURAUD, CADJPY, USDCAD, AUDUSD, EURUSD, GBPCAD, GBPUSD.
 Key features: HTF H4 dealing range with FVG invalidation (bias expires if H4 closes below lowest bullish FVG), LTF M15 fractal MSS, pending limit at 50% of LTF leg, London/NY overlap session (12-17 UTC).
+
+IMS Reversal: `python3 run_backtest.py ims_reversal_best`
+Walk-forward: STRONG (all 3 folds OOS positive, +273.1R agg OOS, +0.282R expect, 108% retention). IS 2016–2026 (8 pairs): 1,743 trades, +477.6R, +0.274R expect, PF=1.37.
+IMS Reversal symbols: GBPNZD, AUDUSD, USA30 (MT5: US30), USDCHF, XAUUSD, AUDJPY, AUDCAD, USDCAD.
+Key features: same HTF H4 dealing range as IMS but trades the reversal — SELL from premium/BUY from discount back to HTF 50% equilibrium. LTF bearish/bullish MSS + FVG required. max_losses_per_bias=1 (expire HTF range after first loss). Removed CADJPY (negative IS), USDJPY and EURUSD (weak IS edge). Loss streaks are regime-driven slow bleeds, not single-day spikes.
+DD reduction note: extensively tested ADX/ER regime filters, circuit breaker, fractal size variants, and tiered position sizing (2026-04-23). All approaches either fail to reduce DD meaningfully or cost disproportionate return. Max DD 50.1R (30.0%) is the structural cost of this edge — manage via account sizing, not strategy filters. See `strategy_log/ims_reversal.md` for full analysis.
 
 **Needs more data (not live):**
 - **EBP** (H1/M15) — INCONCLUSIVE. Real IS edge found (+0.460R, PF 1.86) with mss_bar SL + max_retrace=0.5. WF WEAK on both H4/H1 and H1/M15 stacks — all 3 folds chose identical H1/M15 params (positive sign) but fold 3 OOS failed. Too few OOS trades (10–20/fold) to distinguish edge from noise. Needs 50+ demo trades. See `strategy_log/ebp.md`.
@@ -463,6 +486,8 @@ Key features: HTF H4 dealing range with FVG invalidation (bias expires if H4 clo
 - SmcZone — SHELVED: swing pivot zones + fractal BOS + wick rejection. Best IS: +0.318R, 43.9% WR, PF 1.57, but only 11 trades/yr — too sparse for walk-forward. WR ceiling ~40–44% across all configs. See `strategy_log/smc_zone.md`.
 - BigBelugaSd — SHELVED: 3-candle momentum zone detection. WR 33.4% (breakeven), expectancy ~0R. Volume filter useless with tick volume (FX has no centralised exchange). See `strategy_log/bigbeluga_sd.md`.
 - SmcReversal — SHELVED: ICT-style D1 bias + M15/H4/H1 OB confluence + M5 NY killzone entry (USTEC/US30/US500). WF FAIL on both USTEC-only and 3-symbol runs. Regime-dependent: OBs fail in COVID/rate-hike periods (WR collapses to 22-24%), only 2024–2026 fold positive. Discretionary use valid; systematic version cannot capture regime context. See `strategy_log/smc_reversal.md`.
+
+- `strategy_log/ims_reversal.md` — VALIDATED STRONG, LIVE (demo): H4/M15, all 3 folds positive, +273.1R OOS, +0.282R expect, 108% retention. 8 symbols: GBPNZD/AUDUSD/USA30/USDCHF/XAUUSD/AUDJPY/AUDCAD/USDCAD. London/NY session (12-17 UTC), lf2, htf_pct 0.5, max_losses_per_bias=1. Removed CADJPY/USDJPY/EURUSD (weak IS edge).
 
 **Strategy logs**: `strategy_log/` folder contains one `.md` per strategy with full parameter, sweep, and walk-forward history.
 

@@ -25,6 +25,7 @@ from strategies.ema_fib_retracement import EmaFibRetracementStrategy
 from strategies.ema_fib_running import EmaFibRunningStrategy
 from strategies.three_line_strike import ThreeLineStrikeStrategy
 from strategies.ims import ImsStrategy
+from strategies.ims_reversal import ImsReversalStrategy
 
 from utils.telegram_notifier import TelegramNotifier
 import config
@@ -137,7 +138,31 @@ def main():
             pip_sizes={s: config.PIP_SIZE[s] for s in IMS_SYMBOLS if s in config.PIP_SIZE},
         )
 
-        strategies = [ema_fib, ema_fib_running, engulfing, ims]
+        # IMS Reversal H4/M15: 8 symbols, WF STRONG (108% OOS retention).
+        # USA30 in backtest data = US30 on ICMarkets MT5 — verify symbol name if needed.
+        IMS_REV_SYMBOLS = ['GBPNZD', 'AUDUSD', 'US30', 'USDCHF', 'XAUUSD', 'AUDJPY', 'AUDCAD', 'USDCAD']
+        ims_reversal = ImsReversalStrategy(
+            tf_htf='H4',
+            tf_ltf='M15',
+            fractal_n=1,
+            ltf_fractal_n=2,
+            htf_lookback=30,
+            entry_mode='pending',
+            tp_mode='htf_pct',
+            htf_tp_pct=0.5,
+            zone_pct=0.5,
+            cooldown_bars=0,
+            blocked_hours=(*range(0, 12), *range(17, 24)),  # London/NY overlap: 12:00-17:00 UTC
+            ema_fast=20,
+            ema_slow=50,
+            ema_sep=0.001,
+            sl_anchor='swing',
+            sl_buffer_pips=0.0,
+            max_losses_per_bias=1,
+            pip_sizes={s: config.PIP_SIZE[s] for s in IMS_REV_SYMBOLS if s in config.PIP_SIZE},
+        )
+
+        strategies = [ema_fib, ema_fib_running, engulfing, ims, ims_reversal]
 
         # EmaFib strategies run on all configured symbols
         for strategy in [ema_fib, ema_fib_running]:
@@ -147,6 +172,8 @@ def main():
         event_engine.register(engulfing, ['EURUSD', 'AUDUSD', 'USDCAD'])
         # IMS H4/M15: 9 symbols validated by walk-forward (MODERATE, all 3 folds positive)
         event_engine.register(ims, IMS_SYMBOLS)
+        # IMS Reversal H4/M15: 8 symbols validated by walk-forward (STRONG, 108% OOS retention)
+        event_engine.register(ims_reversal, IMS_REV_SYMBOLS)
 
         # ── Bar-detection state ───────────────────────────────────────────────
         # Tracks the timestamp of the last processed bar per (symbol, timeframe).

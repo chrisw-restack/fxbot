@@ -12,6 +12,7 @@ Usage:
 import argparse
 import logging
 from datetime import datetime
+import config
 
 from backtest_engine import BacktestEngine
 from strategies.breakout import BreakoutStrategy
@@ -28,6 +29,7 @@ from strategies.ema_fib_running import EmaFibRunningStrategy
 from strategies.ebp import EbpStrategy
 from strategies.ebp_limit import EbpLimitStrategy
 from strategies.ims import ImsStrategy
+from strategies.ims_reversal import ImsReversalStrategy
 from strategies.smc_zone import SmcZoneStrategy
 from strategies.bigbeluga_sd import BigBelugaSdStrategy
 from strategies.smc_reversal import SmcReversalStrategy
@@ -56,7 +58,7 @@ logging.basicConfig(
 # SYMBOLS         = ['AUDCAD','AUDJPY','AUDNZD','AUDUSD','CADJPY','EURAUD','EURCAD','EURCHF','EURGBP','EURJPY','EURUSD','GBPAUD','GBPCAD','GBPJPY','GBPNZD','GBPUSD','NZDJPY','NZDUSD','USA100','USA30','USA500','USDCAD','USDCHF','USDJPY','XAUUSD']
 # SYMBOLS         = ['AUDUSD','CADJPY']
 # SYMBOLS         = ['EURAUD','EURCAD','EURCHF','EURGBP','EURJPY']
-SYMBOLS         = ['EURUSD', 'GBPUSD', 'AUDUSD', 'NZDUSD', 'USDJPY', 'USDCAD', 'USDCHF']
+SYMBOLS         = ['GBPNZD', 'AUDUSD', 'USA30', 'USDCHF', 'XAUUSD', 'AUDJPY', 'AUDCAD', 'USDCAD']  # IMS Reversal 8-sym validated
 
 INITIAL_BALANCE = 10_000.0   # starting account balance in USD
 RR_RATIO        = 2.5        # risk/reward ratio (overrides config default)
@@ -87,6 +89,11 @@ STRATEGIES = {
     'ims_d1_h4_market':             ImsStrategy(tf_htf='D1', tf_ltf='H4', fractal_n=1, ltf_fractal_n=2, htf_lookback=50, entry_mode='market', tp_mode='htf_high', cooldown_bars=0, ema_fast=20, ema_slow=50),
     'ims_h4_h1':                    ImsStrategy(tf_htf='H4', tf_ltf='H1', fractal_n=1, ltf_fractal_n=2, htf_lookback=50, tp_mode='htf_high', cooldown_bars=0, ema_fast=20, ema_slow=50),
     'ims_h4_m15':                   ImsStrategy(tf_htf='H4', tf_ltf='M15', fractal_n=1, ltf_fractal_n=1, htf_lookback=30, entry_mode='pending', tp_mode='rr', rr_ratio=2.5, cooldown_bars=0, blocked_hours=(*range(0, 12), *range(17, 24)), ema_fast=20, ema_slow=50, ema_sep=0.001),
+    'ims_reversal_h4_m15':          ImsReversalStrategy(tf_htf='H4', tf_ltf='M15', fractal_n=1, ltf_fractal_n=1, htf_lookback=30, tp_mode='htf_pct', htf_tp_pct=0.5, rr_ratio=2.5, cooldown_bars=0, blocked_hours=(*range(0, 12), *range(17, 24)), ema_fast=20, ema_slow=50, ema_sep=0.001),
+    'ims_reversal_h4_m15_rr':       ImsReversalStrategy(tf_htf='H4', tf_ltf='M15', fractal_n=1, ltf_fractal_n=1, htf_lookback=30, tp_mode='rr',     htf_tp_pct=0.5, rr_ratio=2.5, cooldown_bars=0, blocked_hours=(*range(0, 12), *range(17, 24)), ema_fast=20, ema_slow=50, ema_sep=0.001),
+    'ims_reversal_d1_h4':           ImsReversalStrategy(tf_htf='D1', tf_ltf='H4',  fractal_n=1, ltf_fractal_n=1, htf_lookback=30, tp_mode='htf_pct', htf_tp_pct=0.5, rr_ratio=2.5, cooldown_bars=0, blocked_hours=(*range(0, 12), *range(17, 24)), ema_fast=20, ema_slow=50, ema_sep=0.001),
+    # Validated config: lf2, htf_pct 0.5, ln_us session, EMA 20/50, ml=1, 8 symbols (−CADJPY/USDJPY/EURUSD)
+    'ims_reversal_best':            ImsReversalStrategy(tf_htf='H4', tf_ltf='M15', fractal_n=1, ltf_fractal_n=2, htf_lookback=30, tp_mode='htf_pct', htf_tp_pct=0.5, rr_ratio=2.5, cooldown_bars=0, blocked_hours=(*range(0, 12), *range(17, 24)), ema_fast=20, ema_slow=50, ema_sep=0.001, max_losses_per_bias=1, pip_sizes=dict(config.PIP_SIZE)),
     'smc_zone':                     SmcZoneStrategy(swing_length=3,  tf_entry='H1', zone_atr_mult=0.4, sl_buffer_atr=0.5, d1_ema_period=50, blocked_hours=(*range(20,24),*range(0,9))),
     'smc_zone_h1_sl10':             SmcZoneStrategy(swing_length=10, tf_entry='H1', zone_atr_mult=0.4, sl_buffer_atr=0.5, d1_ema_period=50, blocked_hours=(*range(20,24),*range(0,9))),
     'smc_zone_h4':                  SmcZoneStrategy(swing_length=3, tf_entry='H4', zone_atr_mult=2.0, sl_buffer_atr=0.5, zone_leg_atr=0.0, d1_ema_period=50, blocked_hours=(*range(20,24),*range(0,9))),

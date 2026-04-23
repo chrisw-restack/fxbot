@@ -168,3 +168,5 @@ class EventEngine:
             return
         if trade.get('result') == 'LOSS' and hasattr(strategy, 'notify_loss'):
             strategy.notify_loss(trade['symbol'])
+        elif trade.get('result') == 'WIN' and hasattr(strategy, 'notify_win'):
+            strategy.notify_win(trade['symbol'])
