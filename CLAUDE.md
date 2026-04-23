@@ -12,14 +12,14 @@ Synchronous, event-driven, modular system. All layers communicate via synchronou
 
 ```
 MT5 / CSV → Event Generator → Strategies
-                                                 ↓ Signal
-                                           Risk Manager (lot size, TP)
-                                                 ↓
-                                         Portfolio Manager (conflict check, limits)
-                                                 ↓
-                                         Execution (MT5 live | simulated backtest)
-                                                 ↓
-                                           Trade Logger
+                                         ↓ Signal
+                                   Risk Manager (lot size, TP)
+                                         ↓
+                                 Portfolio Manager (conflict check, limits)
+                                         ↓
+                                 Execution (MT5 live | simulated backtest)
+                                         ↓
+                                   Trade Logger
 ```
 
 ## Layer Map
@@ -40,14 +40,6 @@ MT5 / CSV → Event Generator → Strategies
 | Logger | `utils/trade_logger.py` | Trade log + backtest metrics + charts |
 | Notifications | `utils/telegram_notifier.py` | Telegram alerts (live trading) |
 | Param sweep | `param_sweep.py` | Parameter optimization runner |
-| IMS param sweep | `sweep_ims_params.py` | IMS-specific parameter sweep (9-symbol set) |
-| IMS SL sweep | `sweep_ims_sl_params.py` | IMS stop-loss placement sweep (swing/body/fvg × pip/ATR buffers) |
-| IMS Reversal sweep | `sweep_ims_reversal_params.py` | IMS Reversal parameter sweep (1,920 combos × 9 symbols) |
-| IMS Rev ADX sweep | `sweep_ims_adx_threshold.py` | D1 ADX threshold sweep for IMS Reversal DD reduction |
-| IMS Rev regime sweep | `sweep_ims_regime_filters.py` | D1 ADX vs Efficiency Ratio comparison for IMS Reversal |
-| IMS Rev circuit breaker | `sweep_ims_circuit_breaker.py` | Cross-symbol streak pause sweep for IMS Reversal |
-| IMS Rev fractal sweep | `sweep_ims_fractal.py` | H4/M15 fractal_n combinations for IMS Reversal |
-| Tiered sizing model | `model_tiered_sizing.py` | Dollar-account model of tiered position sizing (Full/Half/Quarter) vs fixed baseline |
 | Walk-forward | `walk_forward.py` | Walk-forward validation (rolling train/test) |
 | Dukascopy fetch | `fetch_data_dukascopy.py` | Download historical data from Dukascopy (any TF) |
 | News data fetch | `fetch_news_data.py` | Download Forex Factory calendar from Hugging Face |
@@ -62,7 +54,7 @@ MT5 / CSV → Event Generator → Strategies
 - **Execution is interchangeable**: `mt5_execution.py` and `simulated_execution.py` both inherit `BaseExecution`. Strategy/risk code is identical for live and backtest.
 - **CANCEL signals**: strategies with PENDING orders can emit `direction='CANCEL'` to cancel unfilled pending orders (e.g. when bias flips). The engine handles cancellation via `_handle_cancel()`.
 - **No CLOSE signals**: trades always run to SL or TP. There is no mechanism to manually close a filled position from strategy code.
-- **One position per symbol at a time**: the portfolio manager blocks any new signal for a symbol that already has an open position.
+- **One position per symbol per strategy**: the portfolio manager keys by `(symbol, strategy_name)` — multiple strategies can hold concurrent positions on the same symbol independently.
 
 ## Core Data Structures
 
@@ -94,270 +86,109 @@ class Signal:
 
 ## Creating a New Strategy
 
-This is the main workflow for extending the bot. The core system is stable — new work is limited to writing strategies, gathering data, backtesting, and going live if profitable.
-
 ### Step 1: Create the strategy file
 
-Create `strategies/<strategy_name>.py`. Use this template:
+Create `strategies/<strategy_name>.py`. Read an existing strategy (e.g. `strategies/ims.py` or `strategies/three_line_strike.py`) for the full pattern. Required elements:
 
-```python
-from collections import deque
-
-from models import BarEvent, Signal
-
-
-class MyStrategy:
-    """
-    Brief description of the strategy logic.
-    """
-
-    # ── Required class attributes ────────────────────────────────────────────
-    TIMEFRAMES = ['H1']          # Timeframes this strategy subscribes to
-    ORDER_TYPE = 'MARKET'        # 'MARKET' or 'PENDING' — one per strategy, not both
-    NAME = 'MyStrategy'          # Unique name — appears in logs and backtest output
-
-    def __init__(self, lookback: int = 20):
-        self.lookback = lookback
-        # Per-symbol state — strategies handle multiple symbols via dicts
-        self._bars: dict[str, deque] = {}
-        self._last_direction: dict[str, str | None] = {}
-
-    def reset(self):
-        """Clear all internal state. Called before reusing the instance in a new backtest."""
-        self._bars.clear()
-        self._last_direction.clear()
-
-    def generate_signal(self, event: BarEvent) -> Signal | None:
-        symbol = event.symbol
-
-        # Initialise per-symbol state on first bar
-        if symbol not in self._bars:
-            self._bars[symbol] = deque(maxlen=self.lookback)
-            self._last_direction[symbol] = None
-
-        window = self._bars[symbol]
-
-        # Accumulate bars until the window is full
-        if len(window) < self.lookback:
-            window.append(event)
-            return None
-
-        # ── Your logic here ──────────────────────────────────────────────────
-        # Calculate indicators from `window` (the previous N bars).
-        # Decide whether to BUY, SELL, or do nothing.
-        # Set stop_loss to a price level (the risk manager handles TP and lot size).
-
-        signal = None
-
-        # Example: if some_buy_condition and self._last_direction[symbol] != 'BUY':
-        #     self._last_direction[symbol] = 'BUY'
-        #     signal = Signal(
-        #         symbol=symbol,
-        #         direction='BUY',
-        #         order_type=self.ORDER_TYPE,
-        #         entry_price=event.close,
-        #         stop_loss=some_price_level,
-        #         strategy_name=self.NAME,
-        #         timestamp=event.timestamp,
-        #     )
-
-        # Append current bar AFTER checking — window always holds previous bars
-        window.append(event)
-        return signal
-```
-
-### Required elements checklist
-
-| Element | Why |
-|---------|-----|
-| `TIMEFRAMES` (class attr) | The engine uses this to subscribe the strategy to the correct bar feed |
-| `ORDER_TYPE` (class attr) | `'MARKET'` or `'PENDING'` — determines how execution fills the order |
-| `NAME` (class attr) | Unique string — appears in trade log, rejection messages, and backtest output |
-| `__init__` with parameters | All tuneable parameters as constructor args so they can be adjusted from `run_backtest.py` |
-| `reset(self)` | Clears all internal state (deques, dicts, flags). Required so the same instance can be reused across backtests without stale state leaking between runs |
-| `generate_signal(self, event: BarEvent) -> Signal or None` | The only method the engine calls. Returns a `Signal` or `None` |
-| Per-symbol state via dicts | One strategy instance handles all symbols. Use `event.symbol` as the dict key |
-| `stop_loss` on every Signal | The risk manager rejects signals without a stop-loss. Signals with SL < `config.MIN_SL_PIPS` (default 5) are also rejected |
-| `notify_loss(self, symbol)` (optional) | Called by the engine when a trade closes at a loss. Use for cooldown timers, swing invalidation, etc. |
+- `TIMEFRAMES` class attr — engine uses this to subscribe the strategy to the correct bar feed
+- `ORDER_TYPE` class attr — `'MARKET'` or `'PENDING'`
+- `NAME` class attr — unique string, appears in logs and backtest output
+- `__init__` with all tuneable params as constructor args
+- `reset(self)` — clears all internal state; called before each backtest run
+- `generate_signal(self, event: BarEvent) -> Signal | None` — the only method the engine calls
+- Per-symbol state via dicts (one instance handles all symbols; key by `event.symbol`)
+- `notify_loss(self, symbol)` (optional) — called by engine on loss close; use for cooldowns
 
 ### Rules strategies must follow
 
-1. **Only import from `models`** — never import from `execution/`, `risk/`, `portfolio/`, `data/`, or `config`. Strategies are pure signal generators.
-2. **Take-profit is optional** — by default the risk manager calculates TP from `entry ± (SL distance x R:R ratio)`. Set `take_profit` on the Signal only if the strategy has its own TP logic (e.g. fibonacci extensions).
-3. **CANCEL signals for pending orders** — if a strategy uses PENDING orders and needs to cancel unfilled orders (e.g. when bias flips), return a Signal with `direction='CANCEL'`. Do not emit CLOSE signals — filled trades always run to SL or TP.
-4. **Suppress re-entry in the same direction** — track `_last_direction[symbol]` and only fire when direction changes. This prevents duplicate signals on consecutive bars.
-5. **Append the current bar to the window AFTER checking conditions** — the window should hold the previous N bars, not include the current bar. This avoids look-ahead bias.
-6. **Use `event.close` as `entry_price` for MARKET orders** — the simulated execution fills at the next bar's open (not at `entry_price`), so this is just a reference price for the risk manager.
-7. **For PENDING orders**, set `entry_price` to the desired fill level. The execution layer infers the order subtype (Buy Stop, Buy Limit, etc.) automatically.
+1. **Only import from `models`** — never from `execution/`, `risk/`, `portfolio/`, `data/`, or `config`.
+2. **Set `stop_loss` on every Signal** — risk manager rejects signals without one. Min SL is `config.MIN_SL_PIPS` (default 5).
+3. **CANCEL signals for pending orders** — return `direction='CANCEL'` to cancel unfilled orders when bias flips. Never emit CLOSE.
+4. **Suppress re-entry in the same direction** — track `_last_direction[symbol]` and only fire on direction change.
+5. **Append current bar AFTER checking conditions** — window holds previous N bars, not the current one (avoids look-ahead bias).
+6. **Use `event.close` as `entry_price` for MARKET orders** — sim fills at next bar's open; this is just a reference price.
+7. **For PENDING orders**, set `entry_price` to the desired fill level. Execution infers subtype (Buy Stop/Limit etc.) automatically.
 
 ### Step 2: Register in `run_backtest.py`
 
-Add the import and an entry in the `STRATEGIES` dict:
-
-```python
-from strategies.my_strategy import MyStrategy
-
-STRATEGIES = {
-    'breakout':       BreakoutStrategy(lookback=20),
-    'mean_reversion': MeanReversionStrategy(lookback=20, std_multiplier=2.0, sl_lookback=5),
-    'my_strategy':    MyStrategy(lookback=20),
-}
-```
-
-Then run: `python run_backtest.py my_strategy`
+Add an import and entry in the `STRATEGIES` dict, then run: `python run_backtest.py my_strategy`
 
 ### Step 3: Register in `main_live.py` (when ready for live)
 
-Add the import and append to the `strategies` list:
+Add import, instantiate with validated params, append to `strategies` list, call `event_engine.register(strategy, SYMBOLS)`.
 
-```python
-from strategies.my_strategy import MyStrategy
+### Multi-symbol / Multi-timeframe
 
-strategies = [
-    BreakoutStrategy(lookback=20),
-    MyStrategy(lookback=20),
-]
-```
-
-### Multi-symbol backtesting
-
-To test on multiple symbols, edit `SYMBOLS` in `run_backtest.py` and ensure you have CSV files for each. The engine handles routing — your strategy receives bars for all symbols and tracks state per symbol via dicts.
-
-### Multi-timeframe strategies
-
-Subscribe to multiple timeframes via `TIMEFRAMES = ['H1', 'H4']`. The strategy receives bars from both timeframes through `generate_signal()`. Use `event.timeframe` to distinguish them and manage internal state accordingly (e.g. store H4 trend direction, trigger entries on H1).
+- Multi-symbol: edit `SYMBOLS` in `run_backtest.py`. Strategy receives bars for all symbols and tracks state per symbol via dicts.
+- Multi-timeframe: set `TIMEFRAMES = ['H1', 'H4']`. Distinguish timeframes via `event.timeframe` inside `generate_signal`.
 
 ### Data for backtesting
 
-**Option A — MT5** (recent data, requires VPS):
-1. On your Windows VPS, run `python fetch_data.py` to download CSV data from MT5.
-2. Copy the CSV files to `data/historical/` on your dev machine.
-
-**Option B — Dukascopy** (10+ years, runs anywhere):
-1. `pip install dukascopy-python`
-2. Edit `SYMBOLS`, `TIMEFRAMES`, `START_YEAR` in `fetch_data_dukascopy.py`
-3. Run `python fetch_data_dukascopy.py`
-
-Both output to `data/historical/` with filename format: `<SYMBOL>_<TF>_<YYYYMMDD>-<YYYYMMDD>.csv`. The backtest runner auto-discovers CSVs matching the symbol and timeframe. The historical loader auto-detects the data source and handles timezone conversion.
-
-**Option C — News calendar** (for news filtering):
-1. Run `python fetch_news_data.py`
-2. Downloads Forex Factory calendar (2007-2025, 75K+ events) from Hugging Face
-3. Outputs to `data/news/forex_factory_calendar.csv` (normalized to UTC)
+**Dukascopy** (10+ years, runs anywhere): `pip install dukascopy-python`, edit `fetch_data_dukascopy.py`, run it.
+**MT5** (recent data, requires VPS): run `python fetch_data.py` on VPS, copy CSVs to `data/historical/`.
+Both output to `data/historical/<SYMBOL>_<TF>_<YYYYMMDD>-<YYYYMMDD>.csv`. The loader auto-detects source and handles timezone conversion.
 
 ## Risk Manager Logic
 
 1. Validate signal has a stop-loss price; reject if missing.
 2. Calculate SL distance in pips from `entry_price` to `stop_loss`.
-3. Calculate lot size:
-   - `DYNAMIC`: `(account_balance × risk_pct) ÷ (sl_pips × pip_value)`
-   - `FIXED`: use `config.FIXED_LOT_SIZE` directly
-4. Calculate take-profit: use `signal.take_profit` if provided, otherwise `entry ± (sl_distance × rr_ratio)`.
+3. Lot size: `DYNAMIC` = `(balance × risk_pct) ÷ (sl_pips × pip_value)`; `FIXED` = `config.FIXED_LOT_SIZE`.
+4. Take-profit: use `signal.take_profit` if set, otherwise `entry ± (sl_distance × rr_ratio)`.
 5. Return enriched signal to portfolio manager.
 
 ## Portfolio Manager Logic
 
 On each incoming signal:
-1. Check if **(symbol, strategy_name)** already has an open position → block if yes. Multiple strategies may hold positions on the same symbol simultaneously (one slot per strategy per symbol).
+1. Check if **(symbol, strategy_name)** already has an open position → block if yes.
 2. Check if `open_trade_count >= MAX_OPEN_TRADES` (default 6) → block if yes.
 3. Check if daily loss has exceeded `MAX_DAILY_LOSS_PCT` (default 2%) → block if yes.
-4. If all checks pass, forward to execution.
 
 `record_close(symbol, pnl, strategy_name)` requires `strategy_name` to identify the correct slot.
 
-**Backtest behaviour**: `BacktestEngine` instantiates `PortfolioManager(max_open_trades=99, max_daily_loss_pct=None)` to disable both limits. This prevents trade ordering artifacts (one symbol firing before another) from skewing multi-symbol evaluation. Limits are only enforced in live trading via `main_live.py`.
-
-`PortfolioManager.__init__` accepts both parameters: `max_open_trades: int` and `max_daily_loss_pct: float | None` (pass `None` to disable daily loss checking).
+**Backtest behaviour**: `BacktestEngine` uses `PortfolioManager(max_open_trades=99, max_daily_loss_pct=None)` — both limits disabled to prevent trade-ordering artifacts skewing multi-symbol results.
 
 ## Execution Interface
 
 ```python
 class BaseExecution(ABC):
-    @abstractmethod
     def place_order(self, symbol, direction, order_type, entry_price,
                     lot_size, sl, tp, strategy_name) -> int: ...  # returns ticket ID
-
-    @abstractmethod
     def close_order(self, ticket_id) -> bool: ...
-
-    @abstractmethod
     def get_open_positions(self) -> list[dict]: ...
 ```
 
-Simulated execution fills at the **open of the next bar** (no look-ahead bias).
+Simulated execution fills at the **open of the next bar**. For PENDING orders, subtype is inferred: BUY+entry>current = Buy Stop, BUY+entry<current = Buy Limit, etc.
 
-For `PENDING` orders, the execution layer infers order subtype from direction vs. entry price vs. current price:
-- BUY + entry > current → Buy Stop
-- BUY + entry < current → Buy Limit
-- SELL + entry < current → Sell Stop
-- SELL + entry > current → Sell Limit
-
-**MT5 magic numbers**: `MT5Execution` accepts a `magic_numbers: dict[str, int]` constructor argument (keyed by strategy NAME). Every order is tagged with the strategy's magic integer via the `magic` field in `order_send`. `get_open_positions` filters positions/pending orders to only return those whose `.magic` is in the known set — manual trades and other EAs are invisible to the bot. Configured via `config.MAGIC_NUMBERS` and passed in `main_live.py`.
+**MT5 magic numbers**: every order is tagged with a per-strategy integer from `config.MAGIC_NUMBERS`. `get_open_positions` filters to only positions/orders whose magic is in the known set — manual trades are invisible to the bot.
 
 ## Config Parameters (`config.py`)
 
-```python
-SYMBOLS = ['EURUSD', 'GBPUSD', 'AUDUSD', 'NZDUSD', 'USDJPY', 'USDCAD', 'USDCHF']
-# Metals/indices available for backtesting: XAUUSD, US30, US500, USTEC, DE40
-# (pip sizes and pip values for all of these are configured in config.py)
-TIMEFRAMES = ['M5', 'M15', 'H1', 'H4', 'D1']
-
-LOT_SIZE_MODE = 'DYNAMIC'   # 'DYNAMIC' or 'FIXED'
-FIXED_LOT_SIZE = 0.01       # used only when LOT_SIZE_MODE = 'FIXED'
-RISK_PCT = 0.005            # 0.5% per trade — used only when LOT_SIZE_MODE = 'DYNAMIC'
-DEFAULT_RR_RATIO = 2.0      # 1:2 risk/reward
-MIN_RR_RATIO = 1.0          # minimum acceptable R:R — signals below this are rejected
-
-MAX_OPEN_TRADES = 6         # allows headroom for future multi-strategy expansion
-MAX_DAILY_LOSS_PCT = 0.02   # 2% of account balance
-
-MAGIC_NUMBERS = {           # MT5 magic number per strategy NAME — tags orders, filters get_open_positions
-    'EmaFibRetracement': 1001,
-    'EmaFibRunning':     1002,
-    'Engulfing':         1003,
-    'IMS_H4_M15':        1004,
-    'IMSRev_H4_M15':     1005,
-}
-```
-
-Pip sizes and values for all instruments (including XAUUSD, US30, US500, USTEC, DE40) are in `config.PIP_SIZE` and `config.PIP_VALUE_USD`. Add new instruments there before backtesting them.
-
-Per-strategy risk overrides are supported via `risk_pct_overrides` dict in `RiskManager` (keyed by strategy NAME). Currently EmaFibRetracement uses 0.7%, all others use the 0.5% default.
+Key values: `RISK_PCT = 0.005` (0.5%/trade), `MAX_OPEN_TRADES = 6`, `MAX_DAILY_LOSS_PCT = 0.02`.
+Magic numbers: EmaFibRetracement=1001, EmaFibRunning=1002, Engulfing=1003, IMS_H4_M15=1004, IMSRev_H4_M15=1005.
+Pip sizes and pip values for all instruments (XAUUSD, US30, US500, USTEC, DE40 included) are in `config.PIP_SIZE` and `config.PIP_VALUE_USD`. Add new instruments there before backtesting.
+Per-strategy risk overrides: `risk_pct_overrides` dict in `RiskManager`. EmaFibRetracement uses 0.7%; others use 0.5%.
 
 ## Live Trading
 
-Run on Windows VPS with MT5 installed and running:
-```
-python main_live.py
-```
+Run on Windows VPS with MT5 installed: `python main_live.py`
 
-Features:
 - Polls MT5 every 5 seconds for new completed bars
-- Detects trade closures (SL/TP hit on broker side) by tracking open positions
+- Detects trade closures (SL/TP hit) by comparing tracked tickets to open positions
 - Telegram notifications: startup, order placed, order closed, daily heartbeat (8am UTC+2)
-- File logging to `logs/trading.log`
+- File logging to `logs/trading.log` (rolled over on each startup)
 - Auto-reconnect on MT5 connection failures (3 consecutive failures triggers reconnect)
 
 ## Credentials
 
-`.env` file at project root (must be gitignored):
-```
-MT5_LOGIN=12345678
-MT5_PASSWORD=your_password
-MT5_SERVER=YourBroker-Server
-TELEGRAM_BOT_TOKEN=your_bot_token
-TELEGRAM_CHAT_ID=your_chat_id
-```
-Load with `python-dotenv` in `main_live.py`. Never hardcode credentials.
+`.env` file at project root (gitignored): `MT5_LOGIN`, `MT5_PASSWORD`, `MT5_SERVER`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`. Loaded via `python-dotenv` in `main_live.py`. Never hardcode.
 
 ## Timezone Standardisation
 
 All timestamps throughout the system are **UTC**.
 
-- **MT5 data** (`fetch_data.py`): saved in ICMarkets server time (UTC+2 winter / UTC+3 summer). The historical loader auto-detects and converts to UTC at load time.
-- **Dukascopy data** (`fetch_data_dukascopy.py`): natively UTC. The loader auto-detects (by checking for Sunday bars) and skips conversion.
-- **Live feed** (`data/mt5_data.py`): uses `datetime.utcfromtimestamp()` to produce UTC.
-- **Simulated execution**: recalculates TP from actual fill price for MARKET orders, so R:R is measured from real entry (not distorted by fill slippage).
+- **MT5 data**: saved in ICMarkets server time (UTC+2/+3). Historical loader auto-detects and converts to UTC.
+- **Dukascopy data**: natively UTC. Loader auto-detects (checks for Sunday bars) and skips conversion.
+- **Live feed**: uses `datetime.utcfromtimestamp()`.
 
 ## Historical CSV Format
 
@@ -366,75 +197,36 @@ Columns: `time, open, high, low, close, tick_volume` (MT5) or `time, open, high,
 
 ## Backtest Output
 
-**Trade log** (printed as table and/or saved to CSV):
-`datetime | symbol | direction | result | r_multiple | strategy`
+**Performance summary**: total trades, win rate, total R, profit factor, max drawdown (R and %), expectancy, best/worst streaks, avg R on wins/losses.
 
-**Closed trade dict fields** (available in analysis scripts via `engine.execution.get_closed_trades()`):
-- `ticket`, `symbol`, `direction`, `strategy_name`
-- `entry_price`, `exit_price`, `sl`, `tp`, `sl_pips`
-- `result` — `'WIN'` | `'LOSS'` | `'BE'`
-- `r_multiple` — profit in units of initial risk
-- `pnl`, `commission`, `lot_size`
-- `open_time`, `close_time`
-- `duration_hours` — time from fill to close
-- `pending_hours` — time from signal emission to fill (PENDING orders only; `None` for MARKET orders)
+**Charts** (saved to `output/`): equity curve, monthly Total R heatmap, yearly performance heatmap.
 
-**Performance summary**:
-- Total trades, win rate %, total R
-- Profit factor (gross profit R ÷ gross loss R)
-- Max drawdown (R and %)
-- Expectancy (avg R per trade)
-- Best win streak / worst loss streak
-- Avg R on wins / avg R on losses
-
-**Charts** (saved to `output/`):
-- Equity curve (green/red fill, balance annotation)
-- Monthly Total R heatmap (year × month grid)
-- Yearly performance heatmap (Total R, Trades, Win Rate, Expectancy, Profit Factor)
+**Closed trade dict** (from `engine.execution.get_closed_trades()`): `ticket, symbol, direction, strategy_name, entry_price, exit_price, sl, tp, sl_pips, result, r_multiple, pnl, commission, lot_size, open_time, close_time, duration_hours, pending_hours`.
 
 ## Platform
 
 - `MetaTrader5` package is **Windows only**. Live trading requires a Windows VPS with MT5 installed.
-- Backtesting (CSV-based) is cross-platform.
-- Python 3.10+
+- Backtesting (CSV-based) is cross-platform. Python 3.10+.
 
 ## Parameter Optimization
 
-Use `param_sweep.py` for grid search over strategy parameters. It pre-loads bar data once and runs all combinations against it. Edit the `PARAM_GRID` dict and run:
-```
-python param_sweep.py
-```
-Outputs ranked tables by Total R, Expectancy, and Profit Factor.
+`param_sweep.py` — grid search, pre-loads bar data once, runs all combos. Edit `PARAM_GRID` and run: `python param_sweep.py`. Outputs ranked tables by Total R, Expectancy, and Profit Factor.
 
 ## Walk-Forward Validation
 
-Use `walk_forward.py` to validate that optimized parameters generalize to unseen data. This is the primary defence against overfitting. Any parameter changes should pass walk-forward before going live.
+Primary defence against overfitting. Run: `python walk_forward.py <strategy_name>`
 
-```
-python walk_forward.py ema_fib_retracement
-python walk_forward.py ebp
-python walk_forward.py breakout
-```
+**CLI options**: `--train-years` (default 4), `--test-years` (default 2), `--step-years` (default 2), `--metric {expectancy,total_r,pf}` (default expectancy), `--min-trades` (default 50 — raise to 100+ for sparse strategies), `--workers` (default 1).
 
-**How it works**: splits data into rolling train/test windows (default 4yr train, 2yr test, 2yr step). For each fold, optimizes parameters on training data, then tests the best params on out-of-sample data. Reports per-fold and aggregate OOS metrics.
+**`rr_ratio` in param grids**: add `'rr_ratio': [2.0, 2.5]` to sweep R:R; it's extracted and forwarded to BacktestEngine automatically.
 
-**CLI options**:
-- `--train-years N` — training window length (default 4)
-- `--test-years N` — test window length (default 2)
-- `--step-years N` — advance between folds (default 2)
-- `--metric {expectancy,total_r,pf}` — optimization target (default expectancy)
-- `--min-trades N` — minimum IS trades required to include a parameter combo (default 50). Raise to 100+ for sparse strategies to avoid selecting combos that "won" due to 1-2 lucky trades.
-- `--workers N` — parallel worker processes for IS optimisation (default 1). Use 1 for true sequential execution (no fork overhead, no memory pressure). Set higher only if system has spare headroom.
+**OOS retention** (OOS expectancy ÷ IS expectancy): >70% = STRONG, 40–70% = MODERATE, <40% = WEAK/FAIL.
 
-**`rr_ratio` in param grids**: add `'rr_ratio': [2.0, 2.5]` to a strategy's `param_grid` in `STRATEGY_CONFIGS` to sweep R:R targets. It is automatically extracted from the params dict before passing to the strategy constructor and forwarded to the BacktestEngine instead.
-
-**Interpreting results**: the key metric is **OOS retention** (OOS expectancy / IS expectancy). Above 70% = STRONG (parameters generalize), 40-70% = MODERATE (some overfitting), below 40% = WEAK/FAIL (curve-fit).
-
-**Date filtering**: `filter_bars(bars, start, end)` in `data/historical_loader.py` allows slicing pre-loaded bar data to any date range [start, end). Used by walk-forward internally but also available for manual date-range backtesting.
+**Date filtering**: `filter_bars(bars, start, end)` in `data/historical_loader.py` slices pre-loaded bars to any date range.
 
 ## Live Suite
 
-The bot runs **5 strategies** in production (`main_live.py`). EmaFib strategies run on 7 FX pairs; Engulfing runs on 3 pairs; IMS runs on 9 pairs; IMS Reversal runs on 8 pairs. Each strategy gets its own position slot per symbol — they can hold concurrent positions on the same symbol independently.
+5 strategies in demo (`main_live.py`). Each strategy gets its own position slot per symbol — concurrent positions across strategies are allowed.
 
 | Strategy | Timeframes | Order Type | Symbols | Key Params |
 |----------|-----------|------------|---------|------------|
@@ -444,97 +236,51 @@ The bot runs **5 strategies** in production (`main_live.py`). EmaFib strategies 
 | IMS | H4, M15 | PENDING | 9 pairs | fractal_n=1, ltf_fractal_n=1, htf_lookback=30, rr=2.5, ema_fast=20, ema_slow=50, ema_sep=0.001, sl_anchor=swing, session=12-17 UTC |
 | IMS Reversal | H4, M15 | PENDING | 8 pairs | fractal_n=1, ltf_fractal_n=2, htf_lookback=30, tp=htf_pct 0.5, max_losses_per_bias=1, ema_fast=20, ema_slow=50, ema_sep=0.001, session=12-17 UTC |
 
-EmaFib combined (2016–2026): 519 trades, +284.1R, +0.547R expectancy, MaxDD 28.5R (~14.3%).
-MAX_OPEN_TRADES cap is 6 — with 5 strategies this may need raising; monitor peak concurrent positions.
+Backtest commands: `python run_backtest.py ema_fib_retracement` / `ema_fib_running` / `three_line_strike` / `ims_h4_m15` / `ims_reversal_best`
 
-EmaFibRetracement: `python3 run_backtest.py ema_fib_retracement`
-Walk-forward: MODERATE (+110.9R OOS, +0.427R expect, 67% retention). IS 2016–2026: +247.8R, +0.774R expect, PF=1.89.
-
-EmaFibRunning: `python3 run_backtest.py ema_fib_running`
-Walk-forward: MODERATE (folds 1&2 positive, fold 3 sparse/12 OOS trades). IS 2016–2026: +82.7R, +0.371R expect, PF=1.53.
-
-Engulfing: `python3 run_backtest.py three_line_strike`
-Walk-forward: STRONG (all 3 folds OOS positive, +0.237R agg OOS, 178% retention). IS 2016–2026 (5 pairs): +22R, +0.22R expect, PF=1.37. ~10 trades/yr. RR=2.5 validated by WF fold 3 (2024–2026).
-Engulfing symbols: EURUSD, AUDUSD, USDCAD (USDJPY/NZDUSD removed 2026-04-15 — session sweep showed USDJPY negative across all sessions, NZDUSD near-zero; GBPUSD London edge exists but WF fold 3 collapse disqualifies it; USDCHF poor IS).
-
-IMS: `python3 run_backtest.py ims_h4_m15`
-Walk-forward: MODERATE (all 3 folds OOS positive, +34.4R agg OOS, +0.165R expect, 64% retention). IS 2016–2026 (9 pairs): 363 trades across folds.
-IMS symbols: USDJPY, XAUUSD, EURAUD, CADJPY, USDCAD, AUDUSD, EURUSD, GBPCAD, GBPUSD.
-Key features: HTF H4 dealing range with FVG invalidation (bias expires if H4 closes below lowest bullish FVG), LTF M15 fractal MSS, pending limit at 50% of LTF leg, London/NY overlap session (12-17 UTC).
-
-IMS Reversal: `python3 run_backtest.py ims_reversal_best`
-Walk-forward: STRONG (all 3 folds OOS positive, +273.1R agg OOS, +0.282R expect, 108% retention). IS 2016–2026 (8 pairs): 1,743 trades, +477.6R, +0.274R expect, PF=1.37.
-IMS Reversal symbols: GBPNZD, AUDUSD, USA30 (MT5: US30), USDCHF, XAUUSD, AUDJPY, AUDCAD, USDCAD.
-Key features: same HTF H4 dealing range as IMS but trades the reversal — SELL from premium/BUY from discount back to HTF 50% equilibrium. LTF bearish/bullish MSS + FVG required. max_losses_per_bias=1 (expire HTF range after first loss). Removed CADJPY (negative IS), USDJPY and EURUSD (weak IS edge). Loss streaks are regime-driven slow bleeds, not single-day spikes.
-DD reduction note: extensively tested ADX/ER regime filters, circuit breaker, fractal size variants, and tiered position sizing (2026-04-23). All approaches either fail to reduce DD meaningfully or cost disproportionate return. Max DD 50.1R (30.0%) is the structural cost of this edge — manage via account sizing, not strategy filters. See `strategy_log/ims_reversal.md` for full analysis.
+MAX_OPEN_TRADES=6 — with 5 strategies monitor peak concurrent positions. IMS Reversal MT5 symbol: US30 (backtest data used USA30 Dukascopy label — verify on broker if needed).
 
 **Needs more data (not live):**
-- **EBP** (H1/M15) — INCONCLUSIVE. Real IS edge found (+0.460R, PF 1.86) with mss_bar SL + max_retrace=0.5. WF WEAK on both H4/H1 and H1/M15 stacks — all 3 folds chose identical H1/M15 params (positive sign) but fold 3 OOS failed. Too few OOS trades (10–20/fold) to distinguish edge from noise. Needs 50+ demo trades. See `strategy_log/ebp.md`.
-- **HourlyMeanReversion** (M5, XAUUSD) — M5 post-bugfix WF MODERATE: folds 2&3 positive (+0.245R avg OOS), fold 1 fails (2016–2020 regime). Too sparse (~2–5 trades/yr) for standalone live use. M1 fully shelved — tested Asian (FAIL), London bare (WEAK), London + D1 bias (WEAK), London + ATR gate (WEAK). Gold bull regime (2022+) is structural, not fixable with filters. See `strategy_log/hourly_mean_reversion.md`.
+- **EBP** (H1/M15) — INCONCLUSIVE: +0.460R IS, PF 1.86. WF WEAK — fold 3 OOS fails. Needs 50+ demo trades. See `strategy_log/ebp.md`.
+- **HourlyMeanReversion** (M5, XAUUSD) — MODERATE: folds 2&3 positive, fold 1 fails (pre-2020 regime). Too sparse (~2–5 trades/yr). M1 fully shelved. See `strategy_log/hourly_mean_reversion.md`.
 
-**Suspended / shelved:**
-- TheStrat — fails walk-forward after fill-bug fix. See `strategy_log/the_strat.md`.
-- EBP Limit — walk-forward FAIL, regime-dependent. See `strategy_log/ebp_limit.md`.
-- Breakout — walk-forward FAIL. Simple N-bar channel breakout has no robust edge on forex H1. See `strategy_log/breakout.md`.
-- GaussianChannel — walk-forward WEAK (+0.046R OOS, 40% retention, fold 2 negative). Also had a warm-up bug (corrupt filter state for first 2×period bars, now fixed). See `strategy_log/gaussian_channel.md`.
-- EmaFibRetracementIntraday — walk-forward FAIL, severe curve-fit. See `strategy_log/ema_fib_retracement_intraday.md`.
-- MeanReversion — no positive sweep combos at all. See `strategy_log/mean_reversion.md`.
-- KeltnerReversion — walk-forward FAIL (aggregate -0.006R, fold 3 collapse). See `strategy_log/keltner_reversion.md`.
-- RangeFade — barely fires (56 trades/10yr best combo), no reliable edge. See `strategy_log/range_fade.md`.
-- SupplyDemand — walk-forward MODERATE (+0.020R OOS, 51% retention) but only 150 OOS trades and fold 1 negative. Insufficient evidence. See `strategy_log/supply_demand.md`.
-- IctJudasSwing — sweep all 108 combos negative (best -0.024R). M5 MSS pattern has no edge at 2:1 R:R. See `strategy_log/ict_judas_swing.md`.
-- SmcZone — SHELVED: swing pivot zones + fractal BOS + wick rejection. Best IS: +0.318R, 43.9% WR, PF 1.57, but only 11 trades/yr — too sparse for walk-forward. WR ceiling ~40–44% across all configs. See `strategy_log/smc_zone.md`.
-- BigBelugaSd — SHELVED: 3-candle momentum zone detection. WR 33.4% (breakeven), expectancy ~0R. Volume filter useless with tick volume (FX has no centralised exchange). See `strategy_log/bigbeluga_sd.md`.
-- SmcReversal — SHELVED: ICT-style D1 bias + M15/H4/H1 OB confluence + M5 NY killzone entry (USTEC/US30/US500). WF FAIL on both USTEC-only and 3-symbol runs. Regime-dependent: OBs fail in COVID/rate-hike periods (WR collapses to 22-24%), only 2024–2026 fold positive. Discretionary use valid; systematic version cannot capture regime context. See `strategy_log/smc_reversal.md`.
+**Suspended / shelved** (see individual strategy logs for full history):
+- TheStrat — WF FAIL after fill-bug fix
+- EBP Limit — WF FAIL, regime-dependent
+- Breakout — WF FAIL, no H1 edge
+- GaussianChannel — WF WEAK, warm-up bug fixed
+- EmaFibRetracementIntraday — WF FAIL, curve-fit
+- MeanReversion — all sweep combos negative
+- KeltnerReversion — WF FAIL, fold 3 collapse
+- RangeFade — 56 trades/10yr, not viable
+- SupplyDemand — WF MODERATE but fold 1 negative, only 150 OOS trades
+- IctJudasSwing — all 108 combos negative
+- SmcZone — 11 trades/yr, too sparse for WF
+- BigBelugaSd — WR 33.4%, ~0R expectancy
+- SmcReversal — WF FAIL, regime-dependent (COVID/rate-hike collapse)
 
-- `strategy_log/ims_reversal.md` — VALIDATED STRONG, LIVE (demo): H4/M15, all 3 folds positive, +273.1R OOS, +0.282R expect, 108% retention. 8 symbols: GBPNZD/AUDUSD/USA30/USDCHF/XAUUSD/AUDJPY/AUDCAD/USDCAD. London/NY session (12-17 UTC), lf2, htf_pct 0.5, max_losses_per_bias=1. Removed CADJPY/USDJPY/EURUSD (weak IS edge).
-
-**Strategy logs**: `strategy_log/` folder contains one `.md` per strategy with full parameter, sweep, and walk-forward history.
+**Strategy logs**: `strategy_log/` — one `.md` per strategy with full parameter, sweep, and walk-forward history.
 
 ## News Filter
 
-Optional filter that blocks signals near high-impact economic news events (NFP, CPI, FOMC, rate decisions, etc.). Integrated into `engine.py` — signals are checked after strategy generation, before risk processing.
+Optional, integrated into `engine.py`. Data: Forex Factory calendar via `python fetch_news_data.py`.
 
-**Data source**: Forex Factory calendar via Hugging Face (`Ehsanrs2/Forex_Factory_Calendar`). 75K+ events from 2007-2025, normalized to UTC. Download with `python fetch_news_data.py`.
+**Modes**: `off` (default), `high` (all high-impact), `high-medium`, `major` (NFP/CPI/FOMC/rates only).
 
-**Usage in backtesting**:
-```
-python run_backtest.py ema_fib_retracement --news-filter high
-python run_backtest.py ema_fib_retracement --news-filter major --news-hours-before 2 --news-hours-after 1
-```
+**CLI usage**: `python run_backtest.py ema_fib_retracement --news-filter high --news-hours-before 4 --news-hours-after 1`
 
-**Filter modes**:
-- `off` (default) — no filtering
-- `high` — block all high-impact news for either currency in the pair
-- `high-medium` — block high and medium impact
-- `major` — block only NFP, CPI, FOMC, and central bank rate decisions
-
-**Parameters**: `--news-hours-before` (default 4) and `--news-hours-after` (default 1) control the block window.
-
-**For live trading**: pass a `NewsFilter` instance to `EventEngine` via the `news_filter` parameter.
-
-**Programmatic usage**:
-```python
-from data.news_filter import NewsFilter
-
-nf = NewsFilter(
-    block_hours_before=4, block_hours_after=1,
-    impact_levels={'HIGH'},
-    event_keywords=['Non-Farm', 'CPI', 'FOMC'],  # None = all events matching impact
-)
-nf.is_blocked(symbol='EURUSD', timestamp=some_datetime)  # True if blocked
-```
+**Live trading**: pass a `NewsFilter` instance to `EventEngine` via the `news_filter` parameter.
 
 ## Important Notes
 
-- **USDJPY pip size is 0.01** (not 0.0001). Any strategy doing pip calculations internally must handle this. Use a `pip_sizes` dict parameter.
-- **ImsStrategy SL anchor**: controlled by `sl_anchor` parameter (`'swing'` = wick, `'body'` = open/close min, `'fvg'` = bottom of lowest LTF FVG in leg). Optional `sl_buffer_pips` (flat pip buffer) and `sl_atr_mult` (ATR(14) multiple) add distance. Walk-forward validated `sl_anchor='swing'` with no buffer — body and FVG anchors produce fewer trades and fail OOS generalisation.
-- **Backtest spread is 2.0 pips** — conservative average. ICMarkets Raw typical spreads during London/NY session are 0.1–0.5 pips on majors; p95 is likely 1.0–1.2 pips. Use `measure_spreads.py` on the VPS during active hours to get symbol-accurate values. Current 2.0 pips setting understates real performance by ~1 pip per trade.
-- **Commission is $7.00 per lot round-trip** (ICMarkets Raw Spread) — deducted from PnL at trade close in backtesting.
-- **Break-even stop loss** is supported via `--breakeven-at-r N` in `run_backtest.py` (e.g. `--breakeven-at-r 2.0`). Tested at 2R, 3R, 5R, 7R, 10R for EmaFibRetracement — all levels hurt performance. At 2R: −52R net vs baseline (14 wins saved, 178R of large wins lost). Large wins (12R+) require price to briefly retrace through the BE trigger before continuing. Do not use for fib retracement strategies.
+- **USDJPY pip size is 0.01** (not 0.0001). Strategies doing pip calculations internally must pass a `pip_sizes` dict.
+- **ImsStrategy SL anchor**: `'swing'` (wick), `'body'` (open/close min), `'fvg'` (bottom of lowest LTF FVG). WF validated `swing` with no buffer — body and FVG fail OOS.
+- **Backtest spread is 2.0 pips** — conservative. ICMarkets Raw actual is 0.1–0.5 pips on majors during London/NY. Real performance is understated by ~1 pip/trade.
+- **Commission is $7.00/lot round-trip** (ICMarkets Raw Spread) — deducted at close in backtesting.
+- **Break-even stop** (`--breakeven-at-r N`): tested 2–10R for EmaFibRetracement — all levels hurt performance. Large wins require price to briefly retrace through the trigger. Do not use for fib retracement strategies.
 
 ## Future Work
 - Currency exposure limits (max positions per currency to reduce correlation risk)
-- Drawdown throttle (reduce position size or pause after X% peak-to-trough decline)
+- Drawdown throttle (reduce position size after X% peak-to-trough decline) — modelled for IMS Reversal (tiered 20R/35R): −6.8pp DD at cost of −16% return; rejected for now
 - Variable spread model (wider spreads during news/low-liquidity sessions)
 - Additional strategy development (mean-reversion, different asset classes)
