@@ -78,6 +78,8 @@ class ImsStrategy:
         sl_anchor: str = 'swing', # 'swing' | 'body' | 'fvg' — SL anchor point on LTF
         sl_buffer_pips: float = 0.0,  # extra pips below/above anchor; 0 = disabled
         sl_atr_mult: float = 0.0,    # extra ATR(14) × mult below/above anchor; 0 = disabled
+        ltf_origin_expiry: bool = True,  # True=LTF wick breaching HTF swing origin expires bias; False=only HTF bars expire on origin
+        ltf_entry_fib: float = 0.5,  # fib retracement of LTF leg for pending entry. 0.5=midpoint, 0.786=deeper
         pip_sizes: dict | None = None,  # {symbol: pip_size} for sl_buffer_pips conversion
     ):
         self.tf_htf = tf_htf
@@ -96,6 +98,8 @@ class ImsStrategy:
         self.sl_anchor = sl_anchor
         self.sl_buffer_pips = sl_buffer_pips
         self.sl_atr_mult = sl_atr_mult
+        self.ltf_origin_expiry = ltf_origin_expiry
+        self.ltf_entry_fib = ltf_entry_fib
         self._pip_sizes = pip_sizes or {}
 
         self.TIMEFRAMES = [tf_htf, tf_ltf]
@@ -152,6 +156,20 @@ class ImsStrategy:
         self._ltf_bars[symbol].clear()
         if self.cooldown_bars > 0:
             self._cooldown[symbol] = self.cooldown_bars
+
+    def notify_win(self, symbol: str):
+        """After a win: clear LTF state and expire HTF bias. Mirrors the
+        TP-reached cleanup at the in-loop self-cancel block, but fires
+        immediately on close instead of waiting for the next bar to detect
+        price-at-target. Avoids spurious CANCEL signals on already-closed
+        positions and frees the slot for a fresh setup."""
+        self._htf_bias[symbol] = None
+        self._ltf_in_zone[symbol] = False
+        self._ltf_signal_fired[symbol] = False
+        self._ltf_last_sl_ts[symbol] = None
+        self._last_signal_entry[symbol] = 0.0
+        self._last_signal_sl[symbol] = 0.0
+        self._ltf_bars[symbol].clear()
 
     def generate_signal(self, event: BarEvent) -> Signal | None:
         symbol = event.symbol
@@ -462,11 +480,14 @@ class ImsStrategy:
         if bias is None:
             return None
 
-        # Expiry check on LTF bars too (HTF bars are infrequent)
-        if bias['direction'] == 'BUY' and bar.low < bias['swing_low']:
-            return self._expire_bias(symbol, bar)
-        if bias['direction'] == 'SELL' and bar.high > bias['swing_high']:
-            return self._expire_bias(symbol, bar)
+        # Expiry check on LTF bars too (HTF bars are infrequent).
+        # When ltf_origin_expiry=False, only the HTF bar close decides — protects
+        # against M15 wicks during news/illiquidity invalidating an otherwise-valid setup.
+        if self.ltf_origin_expiry:
+            if bias['direction'] == 'BUY' and bar.low < bias['swing_low']:
+                return self._expire_bias(symbol, bar)
+            if bias['direction'] == 'SELL' and bar.high > bias['swing_high']:
+                return self._expire_bias(symbol, bar)
         rng = bias['swing_high'] - bias['swing_low']
         if bias['direction'] == 'BUY' and bar.close < bias['swing_low'] + 0.3 * rng:
             return self._expire_bias(symbol, bar)
@@ -591,7 +612,8 @@ class ImsStrategy:
             entry_price = bar.close
             order_type = 'MARKET'
         else:
-            entry_price = swing_sl + (ltf_sh_price - swing_sl) * 0.5
+            # Fib retracement of LTF leg: ltf_entry_fib=0.5 = midpoint, 0.786 = deeper retracement.
+            entry_price = ltf_sh_price - self.ltf_entry_fib * (ltf_sh_price - swing_sl)
             order_type = 'PENDING'
 
         new_signal = Signal(
@@ -678,7 +700,8 @@ class ImsStrategy:
             entry_price = bar.close
             order_type = 'MARKET'
         else:
-            entry_price = swing_sh - (swing_sh - ltf_sl_price) * 0.5
+            # Fib retracement of LTF leg: ltf_entry_fib=0.5 = midpoint, 0.786 = deeper retracement.
+            entry_price = ltf_sl_price + self.ltf_entry_fib * (swing_sh - ltf_sl_price)
             order_type = 'PENDING'
 
         new_signal = Signal(

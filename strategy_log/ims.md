@@ -119,5 +119,22 @@ Major logic overhauls during development:
 | 2026-04-14 | H4/M15, 12-17 UTC session, 6 syms | +26.4R | +0.196R | STRONG |
 | 2026-04-15 | H4/M15, body SL, 9 syms | +0.6R | +0.007R | FAIL |
 | **2026-04-15** | **H4/M15, swing SL, 9 syms** | **+34.4R** | **+0.165R** | **MODERATE ✓** |
+| 2026-04-30 | H4/M15, sweep ltf_origin_expiry × ltf_entry_fib | +33.4R | +0.160R | MODERATE |
 
 *Fold 1 anomalous (near-zero IS, large OOS) — inflated retention figure.
+
+### 2026-04-30 — code review optimizations rejected
+
+Live-code analysis flagged 2 hypotheses to test:
+1. `ltf_origin_expiry=False` — let HTF close decide bias breach (filter M15 wicks during news)
+2. `ltf_entry_fib=0.618 / 0.786` — deeper LTF entry retracement for better R:R
+
+WF (6 combos × 3 folds) picked **the current live config** (`origin_expiry=True, entry_fib=0.5`) **in every single fold**. Aggregate OOS essentially matched prior baseline. Both hypotheses rejected:
+- LTF wick origin breach (sweep) is a genuine invalidation signal — ICT philosophy holds.
+- Deeper entry fib reduces fill rate; with only ~25-30 trades/yr/fold, sparsity hurts edge.
+
+**Same-params-every-fold is a strong robustness signal** — no curve-fit drift across regimes.
+
+### Code changes (kept, no behavior change at default params)
+- `notify_win` method added — eliminates state-leak after winning trades; no impact on WF results.
+- New params `ltf_origin_expiry: bool = True` and `ltf_entry_fib: float = 0.5` — defaults match prior behavior, live config unchanged.

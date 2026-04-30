@@ -27,6 +27,16 @@ Symbols: EURUSD, GBPUSD, AUDUSD, NZDUSD, USDJPY, USDCAD, USDCHF (7 pairs).
 
 **Changes from 2026-03-22 config:** `cooldown_bars` 0→10, `invalidate_swing_on_loss` False→True, `fib_tp` 2.5→3.0. All three changes driven by the 2026-03-30 walk-forward (WF chose these in 2/3 or all 3 folds) and confirmed by the full param sweep.
 
+**2026-04-28 strategy revisions (live params unchanged):**
+- **#1 Swing snapshot at placement** — `notify_loss` now invalidates the swing that *produced* the trade (snapshotted at pending placement) rather than whichever fractal happens to be current at close time. Fixes a silent bug where new fractals forming during a trade caused the wrong swing to be marked used.
+- **#2 D1 bias-flip cancellation** — pendings now cancel if either D1 or H1 EMA bias flips against the pending direction. Previously only H1 flips triggered cancellation.
+- **#3 Position-open guard** — *attempted and reverted*. Set a `_position_open` flag on heuristic fill detection to suppress duplicate signal generation. Caused a dead-lock when `risk_manager` rejected signals (SL distance below `MIN_SL_PIPS=5`) — strategy's local pending state diverged from the executor, the heuristic fired on phantom pendings, and the flag never cleared. Reverted; portfolio manager already prevents duplicates. See Bug History.
+- **#4 `notify_win` hook** — added to mirror `notify_loss`. The engine already routed WIN closes to it. Clears the snapshot state on wins.
+- **#5 Recent-swing alignment filter** (`require_recent_swing_alignment`, default False) — added but **rejected by all 3 WF folds**. Available as a toggleable param.
+- **#6 Pending max-age** (`pending_max_age_bars`, default 0 = disabled) — added but **rejected by all 3 WF folds**. Available as a toggleable param.
+
+Net effect on trade count: ~33% fewer trades than pre-fixes (320 → 318 in IS sweep, but ~33% fewer in OOS WF aggregate). Per-trade expectancy *improved* (+0.427R → +0.525R OOS). Verdict remains MODERATE.
+
 ---
 
 ## Strategy Logic
@@ -72,8 +82,26 @@ Note: XAUUSD is included in run_backtest.py SYMBOLS. For WF and param sweep, XAU
 | 2026-03-20 | fib_entry=0.618 (original post-fix) | 3 | — | ~+2.9R | ~breakeven | — | FAIL — original params barely profitable after fix |
 | 2026-03-21 | fib_entry=0.786, fib_tp=2.5, blocked=(20-23,0-8) | 3 | — | +45.1R | positive | ~70% | MODERATE — per-fold detail not recorded; had SPREAD_PIPS bug |
 | 2026-03-30 | fib_entry=0.786, fib_tp=3.0, cool=10, inv=True, blocked=(20-23,0-8) | 3 | 260 | +110.9R | +0.427R | 67% | MODERATE (SPREAD_PIPS bug fixed; XAUUSD excluded) |
+| 2026-04-28 | same + fixes #1 (swing snapshot), #2 (D1 cancel), #4 (notify_win), #5/#6 added (off by default) | 3 | 173 | +90.9R | +0.525R | 58% | MODERATE — fewer trades, higher per-trade edge |
 
-### Walk-forward 2026-03-30 (current/authoritative)
+### Walk-forward 2026-04-28 (post-fixes, current authoritative)
+
+7 forex pairs. Fixes #1 (swing snapshot at placement), #2 (D1 bias-flip cancellation), #4 (`notify_win` cleanup hook) active. Filters #5 (recent-swing alignment) and #6 (pending max age) added but **not selected by any fold**.
+
+| Fold | Train | Test | Best params | IS R | OOS R | IS Exp | OOS Exp | OOS WR | OOS PF | Retain |
+|------|-------|------|-------------|------|-------|--------|---------|--------|--------|--------|
+| 1 | 2016–2020 | 2020–2022 | fib_tp=3.0, sw=10, ema=0.001, cool=0, inv=Y, align=N, pend_age=0 | +135.2 | +53.7 | +0.979 | +0.977 | 14.5% | 2.14 | **100%** |
+| 2 | 2018–2022 | 2022–2024 | fib_tp=3.0, sw=10, ema=0.001, cool=10, inv=Y, align=N, pend_age=0 | +91.1 | +27.3 | +1.059 | +0.333 | 9.8% | 1.37 | 31% |
+| 3 | 2020–2024 | 2024–2026 | fib_tp=2.0, sw=10, ema=0.001, cool=10, inv=Y, align=N, pend_age=0 | +92.4 | +9.9 | +0.646 | +0.274 | 13.9% | 1.32 | 42% |
+| **Agg** | | | | | **+90.9R** | | **+0.525R** | | | **58%** |
+
+**Verdict: MODERATE** — all 3 folds OOS positive. Slight retention drop vs 2026-03-30 (67% → 58%) reflects the legitimate behaviour change in fixes #1 and #2 (more accurate swing invalidation, additional D1-cancel cancellations) — the strategy now generates ~33% fewer trades but each one carries higher edge (+0.525R vs +0.427R per trade).
+
+**New-filter conclusion (definitive):** All 3 folds chose `align=False, pend_age=0`. The recent-swing alignment filter (#5) and pending max-age (#6) **do not improve OOS performance** for this strategy. They remain available as toggleable params (defaults False / 0) but should not be enabled.
+
+---
+
+### Walk-forward 2026-03-30 (superseded — pre-fixes)
 
 7 forex pairs only. XAUUSD excluded (strategy pip_sizes dict does not include it; results would be misleading).
 SPREAD_PIPS bug fixed in walk_forward.py (`SPREAD_PIPS` → `config.BACKTEST_SPREAD_PIPS`).
@@ -99,6 +127,45 @@ Optimized fib_entry=0.618, fib_tp=2.0 as defaults. Walk-forward showed STRONG bu
 ### Sweep 2 (2026-03-20 — post entry_timeframe fix)
 Grid: fib_entry [0.5, 0.618, 0.786], fib_tp [1.5, 2.0, 2.5, 3.0], fractal_n [2, 3, 5], min_swing_pips [10, 20, 30], ema_sep_pct [0.0, 0.001], cooldown_bars [0, 10], invalidate_swing_on_loss [True, False], swing_max_age [50, 100, 200].
 **Bug:** `blocked_hours` not passed to strategy — used wrong default `(16–23)` instead of proven winner `(20-23, 0-8)`. Results were IS-only estimates, not aligned with walk-forward config. Superseded by Sweep 3.
+
+### Sweep 4 (2026-04-28 — post-fixes, with align + pend_age axes)
+
+Grid: 2592 combos. Same axes as Sweep 3 but with `swing_max_age` fixed at 100 (proven irrelevant) and `fractal_n` reduced to {2, 3}. Two new axes added: `require_recent_swing_alignment` ∈ {False, True} and `pending_max_age_bars` ∈ {0, 24, 48}. 7 forex pairs.
+
+**Top by expectancy (min 200 trades):**
+
+| fib_e | fib_tp | frac | sw_pip | ema_s | cool | inv | align | pend_age | trades | WR% | TotalR | PF | Expect | MaxDD | Streak |
+|-------|--------|------|--------|-------|------|-----|-------|----------|--------|-----|--------|----|--------|-------|--------|
+| 0.786 | 3.0 | 3 | 10 | 0.001 | 10 | Y | N | 0 | 318 | 12.6% | +228.3 | 1.82 | **+0.718** | 22.0 | 22 |
+| 0.786 | 3.0 | 3 | 10 | 0.001 | 0 | Y | N | 0 | 320 | 12.5% | +226.3 | 1.81 | +0.707 | 22.0 | 22 |
+| 0.786 | 3.0 | 2 | 10 | 0.001 | 10 | Y | N | 0 | 496 | 12.5% | +345.1 | 1.80 | +0.696 | 22.0 | 22 |
+| 0.786 | 2.0 | 3 | 10 | 0.001 | 0 | N | N | 0 | 328 | 18.0% | +208.4 | 1.77 | +0.635 | 18.0 | 18 |
+| 0.786 | 2.5 | 3 | 10 | 0.001 | 10 | Y | N | 0 | 321 | 14.3% | +201.4 | 1.73 | +0.628 | 22.0 | 22 |
+
+**Live config baseline = sweep optimum** at +0.718R expectancy / +228.3R / 318 trades / PF 1.82 / MaxDD 22R. No grid combination beats it.
+
+**New-filter ablation on the live config:**
+
+| align | pend_age | trades | WR% | Total R | PF | Expectancy |
+|-------|----------|--------|-----|---------|-----|-----------|
+| N | 0 (live) | 318 | 12.6% | +228.3 | 1.82 | **+0.718** |
+| N | 24 | 559 | 9.3% | +152.1 | 1.30 | +0.272 |
+| N | 48 | 391 | 11.3% | +210.5 | 1.61 | +0.538 |
+| Y | 0 | 461 | 8.5% | +73.5 | 1.17 | +0.159 |
+| Y | 24 | 579 | 7.6% | +25.0 | 1.05 | +0.043 |
+| Y | 48 | 500 | 8.2% | +61.9 | 1.13 | +0.124 |
+
+Both new filters degrade expectancy. Counterintuitively, enabling them *increases* trade count (alignment skips wrong-direction signals so the next correct-direction one fires sooner; pend_age cancels stale pendings, freeing the strategy to retry). The extra trades have lower edge.
+
+**Key findings:**
+- `fib_entry=0.786` dominates (every top row).
+- `fib_tp=3.0` beats 2.5 and 2.0 by expectancy; 2.0 wins on win-rate (18%) but worse R.
+- `fractal_n=3` slightly better on quality; `fractal_n=2` doubles trade count at modest expectancy cost.
+- `cooldown_bars=10` ≥ 0; `invalidate_swing_on_loss=True` ≥ False (small diff).
+- `require_recent_swing_alignment=False` and `pending_max_age_bars=0` dominate (defaults).
+- `ema_sep_pct=0.001` required — ema_sep=0 produces high-trade-count low-edge regime.
+
+---
 
 ### Sweep 3 (2026-03-30 — correct session filter)
 Grid: same as Sweep 2 (2592 combos). `blocked_hours=(20-23, 0-8)` now correctly passed to every strategy instance. 7 forex pairs only.
@@ -131,20 +198,21 @@ Grid: same as Sweep 2 (2592 combos). `blocked_hours=(20-23, 0-8)` now correctly 
 - **D1/H4 fill bug (fixed 2026-03-19):** Simulated execution didn't gate fills by timeframe. D1 bars could trigger SL/TP on positions in the same bar they were opened. After fix, results dropped from ~+407R to ~+2.9R (original 0.618 params). Confirmed original WF was overstated.
 - **`blocked_hours` missing from param_sweep.py (fixed 2026-03-30):** Strategy was instantiated in the sweep loop without passing `blocked_hours`, so every combo used the wrong default `(16–23)` instead of the proven winner `(20-23, 0-8)`. Sweep 3 fixes this.
 - **`SPREAD_PIPS` NameError in walk_forward.py (fixed 2026-03-30):** `test_oos()` referenced `SPREAD_PIPS` which was never defined. Should be `config.BACKTEST_SPREAD_PIPS`. Walk-forward run on 2026-03-21 crashed after fold 1 optimization but before OOS testing — explains why per-fold numbers were never recorded. Walk-forward 2026-03-30 is the first correctly-completed run.
+- **Phantom-pending dead-lock (introduced + reverted 2026-04-28):** A short-lived attempt to add a `_position_open` flag (set on heuristic fill, cleared on `notify_loss`/`notify_win`) silently dead-locked the strategy. With `fib_entry=0.786` and `min_swing_pips=10`, a 10-pip swing produces a 2.14-pip SL distance — below `config.MIN_SL_PIPS=5` — so `risk_manager.process` rejects the signal. The strategy didn't know about the rejection, so it had a phantom `_pending_entry` pointing nowhere. The fill heuristic later fired on the phantom, set `_position_open=True`, and no `notify_loss`/`notify_win` ever cleared it (no real trade existed). One symbol stuck → eventually all 7 stuck. Trade count collapsed from 320 to 37 (all in 2016). Reverted: portfolio manager already prevents duplicate orders, so the noise-reduction benefit wasn't worth the failure mode.
 
 ---
 
-## Per-Symbol Breakdown (IS, 2016–2026, current config)
+## Per-Symbol Breakdown (IS, 2016–2026, current config, 2026-04-28)
 
 | Symbol | Trades | WR% | Total R | PF | Expectancy | MaxDD |
 |--------|--------|-----|---------|-----|-----------|-------|
 | EURUSD | 30 | 23.3% | +67.2R | 3.92 | +2.240 | 17R |
-| USDJPY | 59 | 15.3% | +65.6R | 2.31 | +1.112 | 20R |
+| USDJPY | 57 | 15.8% | +66.1R | 2.38 | +1.160 | 20R |
 | USDCHF | 30 | 16.7% | +39.0R | 2.56 | +1.299 | 11R |
-| AUDUSD | 60 | 11.7% | +36.9R | 1.70 | +0.614 | 11R |
-| USDCAD | 31 | 9.7% | +10.6R | 1.38 | +0.341 | 21R |
-| NZDUSD | 55 | 9.1% | +14.4R | 1.29 | +0.261 | 15R |
-| GBPUSD | 55 | 7.3% | +0.4R | 1.01 | +0.008 | 19R |
+| AUDUSD | 60 | 11.7% | +35.6R | 1.67 | +0.594 | 11R |
+| NZDUSD | 55 | 9.1% | +11.0R | 1.22 | +0.200 | 15R |
+| USDCAD | 31 | 9.7% | +9.7R | 1.34 | +0.311 | 21R |
+| GBPUSD | 55 | 7.3% | -0.2R | 1.00 | -0.003 | 19R |
 
 GBPUSD looks like a drag (breakeven over 10yr IS). GBPUSD removal was tested via walk-forward (2026-03-30) — **do not remove**. See below.
 
@@ -181,5 +249,7 @@ Combined unblocked IS result: 519 trades, +284.1R, MaxDD 28.5R (~14.3%). Peak si
 
 ## Next Steps
 
-- [ ] Monitor demo performance against backtest expectancy (+0.774R/trade solo, +0.547R combined)
+- [ ] Monitor demo performance against backtest expectancy (post-fixes: +0.718R/trade solo IS, +0.525R/trade OOS WF)
+- [ ] After 50+ live trades on the post-fix code, compare live expectancy vs backtest to validate the fixes don't show unexpected behaviour
+- [ ] `require_recent_swing_alignment` and `pending_max_age_bars` ship as toggleable params but are **off by default** based on WF + sweep evidence
 - [ ] Add `'XAUUSD': 0.10` to strategy pip_sizes if running gold seriously

@@ -23,6 +23,7 @@ class EmaFibRetracementStrategy:
         fractal_n: int = 3,
         fib_entry: float = 0.618,
         fib_tp: float = 2.0,
+        use_fib_tp: bool = True,
         swing_max_age: int = 100,
         cooldown_bars: int = 10,
         min_swing_pips: float = 15.0,
@@ -31,6 +32,8 @@ class EmaFibRetracementStrategy:
         blocked_hours: tuple[int, ...] = (16, 17, 18, 19, 20, 21, 22, 23),
         min_d1_atr_pips: float = 50.0,
         d1_atr_period: int = 14,
+        require_recent_swing_alignment: bool = False,
+        pending_max_age_bars: int = 0,
         pip_sizes: dict[str, float] | None = None,
     ):
         self.ema_fast = ema_fast
@@ -38,6 +41,7 @@ class EmaFibRetracementStrategy:
         self.fractal_n = fractal_n
         self.fib_entry = fib_entry
         self.fib_tp = fib_tp
+        self.use_fib_tp = use_fib_tp
         self.swing_max_age = swing_max_age
         self.cooldown_bars = cooldown_bars
         self.min_swing_pips = min_swing_pips
@@ -46,6 +50,8 @@ class EmaFibRetracementStrategy:
         self.blocked_hours = set(blocked_hours)
         self.min_d1_atr_pips = min_d1_atr_pips
         self.d1_atr_period = d1_atr_period
+        self.require_recent_swing_alignment = require_recent_swing_alignment
+        self.pending_max_age_bars = pending_max_age_bars
         self.pip_sizes = pip_sizes or {
             'EURUSD': 0.0001, 'GBPUSD': 0.0001, 'AUDUSD': 0.0001,
             'NZDUSD': 0.0001, 'USDJPY': 0.01,   'USDCAD': 0.0001,
@@ -84,6 +90,13 @@ class EmaFibRetracementStrategy:
 
         self._pending_entry: dict[str, float | None] = {}
         self._pending_direction: dict[str, str | None] = {}
+        # Swings active at the moment the pending was placed — used by
+        # notify_loss so the swing that *produced* the trade gets marked
+        # used, not whichever fractal happens to be current at close time.
+        self._pending_swing_high: dict[str, float | None] = {}
+        self._pending_swing_low: dict[str, float | None] = {}
+        # H1 bar index at which the pending was placed — used for max-age check.
+        self._pending_placed_bar: dict[str, int | None] = {}
 
         # Filter state
         self._cooldown_until: dict[str, int] = {}
@@ -118,6 +131,9 @@ class EmaFibRetracementStrategy:
 
         self._pending_entry.clear()
         self._pending_direction.clear()
+        self._pending_swing_high.clear()
+        self._pending_swing_low.clear()
+        self._pending_placed_bar.clear()
 
         self._cooldown_until.clear()
         self._used_swing_high.clear()
@@ -167,6 +183,9 @@ class EmaFibRetracementStrategy:
 
         self._pending_entry[symbol] = None
         self._pending_direction[symbol] = None
+        self._pending_swing_high[symbol] = None
+        self._pending_swing_low[symbol] = None
+        self._pending_placed_bar[symbol] = None
 
         self._cooldown_until[symbol] = 0
         self._used_swing_high[symbol] = None
@@ -246,20 +265,46 @@ class EmaFibRetracementStrategy:
         self._h1_window[symbol].append(event)
         self._detect_swings(symbol)
 
-        # Check if pending order was filled (bar range includes entry price)
+        # Detect pending fill heuristically: bar range straddles the entry.
+        # This matches the simulator's fill rule exactly
+        # (simulated_execution.check_fills) for *real* fills. We do NOT use
+        # this to flag a position as open, because risk_manager can reject
+        # signals (e.g. SL distance < MIN_SL_PIPS) without the strategy
+        # knowing — leaving a phantom _pending_entry that the heuristic would
+        # otherwise treat as a fill. Letting the heuristic only clear the
+        # local pending-entry slot keeps the strategy in sync without
+        # dead-locking on phantoms; the portfolio manager already prevents
+        # actual duplicate orders.
         pending = self._pending_entry[symbol]
         if pending is not None:
             if event.low <= pending <= event.high:
-                # Pending filled — clear tracking so new setups can form
                 self._pending_entry[symbol] = None
                 self._pending_direction[symbol] = None
-                return None  # Position now open, wait for SL/TP
+                self._pending_placed_bar[symbol] = None
+                return None  # Pending consumed (filled or phantom-cleared)
 
-            # Pending still unfilled — check if H1 bias flipped → cancel
+            # Pending still unfilled — cancel if either D1 or H1 bias has
+            # flipped against the pending direction (entry required both to
+            # agree), or if the pending has been sitting too long.
             h1_bias = self._get_bias(self._h1_ema_fast[symbol], self._h1_ema_slow[symbol])
-            if h1_bias is not None and h1_bias != self._pending_direction[symbol]:
+            d1_bias = self._get_bias(self._d1_ema_fast[symbol], self._d1_ema_slow[symbol])
+            pending_dir = self._pending_direction[symbol]
+            h1_flipped = h1_bias is not None and h1_bias != pending_dir
+            d1_flipped = d1_bias is not None and d1_bias != pending_dir
+
+            placed_bar = self._pending_placed_bar[symbol]
+            aged_out = (
+                self.pending_max_age_bars > 0
+                and placed_bar is not None
+                and (bar_idx - placed_bar) >= self.pending_max_age_bars
+            )
+
+            if h1_flipped or d1_flipped or aged_out:
                 self._pending_entry[symbol] = None
                 self._pending_direction[symbol] = None
+                self._pending_swing_high[symbol] = None
+                self._pending_swing_low[symbol] = None
+                self._pending_placed_bar[symbol] = None
                 return Signal(
                     symbol=symbol,
                     direction='CANCEL',
@@ -329,6 +374,20 @@ class EmaFibRetracementStrategy:
         if swing_high <= swing_low:
             return None
 
+        # ── Filter 7: Recent swing direction alignment ──────────────────────
+        # For a BUY (uptrend retracement) we want the most recent swing point
+        # to be a HIGH — i.e. price made a high and is pulling back into our
+        # entry. For a SELL we want the most recent swing to be a LOW.
+        # Without this, a stale opposing swing can produce a "retracement"
+        # entry against the actual recent move.
+        if self.require_recent_swing_alignment:
+            high_bar = self._swing_high_bar[symbol]
+            low_bar = self._swing_low_bar[symbol]
+            if d1_bias == 'BUY' and low_bar > high_bar:
+                return None
+            if d1_bias == 'SELL' and high_bar > low_bar:
+                return None
+
         swing_range = swing_high - swing_low
 
         # ── Filter 3: Minimum swing range ────────────────────────────────────
@@ -348,9 +407,14 @@ class EmaFibRetracementStrategy:
             stop_loss = swing_high
             take_profit = swing_high - self.fib_tp * swing_range
 
-        # Track the pending order
+        # Track the pending order. Snapshot the swings used to build it so
+        # notify_loss can mark the correct swing as used even if new fractals
+        # form between placement and close.
         self._pending_entry[symbol] = entry_price
         self._pending_direction[symbol] = direction
+        self._pending_swing_high[symbol] = swing_high
+        self._pending_swing_low[symbol] = swing_low
+        self._pending_placed_bar[symbol] = bar_idx
 
         return Signal(
             symbol=symbol,
@@ -360,23 +424,47 @@ class EmaFibRetracementStrategy:
             stop_loss=stop_loss,
             strategy_name=self.NAME,
             timestamp=event.timestamp,
-            take_profit=take_profit,
+            take_profit=take_profit if self.use_fib_tp else None,
         )
 
     # ── Post-trade feedback ──────────────────────────────────────────────────
 
     def notify_loss(self, symbol: str):
         """
-        Called externally (by the engine/backtest) when a trade from this
-        strategy closes at a loss. Activates cooldown and marks the swing
-        that produced the trade as used.
+        Called by the engine when a trade from this strategy closes at a loss.
+        Activates cooldown and marks the swing that produced the trade as
+        used (using the snapshot from placement so newer fractals don't
+        confuse which swing to invalidate).
         """
         bar_idx = self._h1_counter.get(symbol, 0)
         self._cooldown_until[symbol] = bar_idx + self.cooldown_bars
 
         if self.invalidate_swing_on_loss:
-            self._used_swing_high[symbol] = self._swing_high.get(symbol)
-            self._used_swing_low[symbol] = self._swing_low.get(symbol)
+            snap_high = self._pending_swing_high.get(symbol)
+            snap_low = self._pending_swing_low.get(symbol)
+            self._used_swing_high[symbol] = (
+                snap_high if snap_high is not None else self._swing_high.get(symbol)
+            )
+            self._used_swing_low[symbol] = (
+                snap_low if snap_low is not None else self._swing_low.get(symbol)
+            )
+
+        self._clear_position_state(symbol)
+
+    def notify_win(self, symbol: str):
+        """
+        Called by the engine when a trade from this strategy closes at a win
+        (or break-even). Clears the position-open flag and pending snapshot
+        so a fresh setup can form. Doesn't mark the swing as used — wins
+        leave the swing free to retrigger if conditions reappear.
+        """
+        self._clear_position_state(symbol)
+
+    def _clear_position_state(self, symbol: str):
+        """Reset per-symbol post-trade state. Called by notify_loss/notify_win."""
+        self._pending_swing_high[symbol] = None
+        self._pending_swing_low[symbol] = None
+        self._pending_placed_bar[symbol] = None
 
     # ── Diagnostics ─────────────────────────────────────────────────────────
 

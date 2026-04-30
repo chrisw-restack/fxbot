@@ -38,6 +38,7 @@ from strategies.gaussian_channel import GaussianChannelStrategy
 from strategies.smc_reversal import SmcReversalStrategy
 from strategies.three_line_strike import ThreeLineStrikeStrategy
 from strategies.hourly_mean_reversion import HourlyMeanReversionStrategy
+from strategies.london_breakout import LondonBreakoutStrategy
 
 logging.basicConfig(level=logging.ERROR)
 sys.stdout.reconfigure(line_buffering=True)
@@ -68,9 +69,18 @@ STRATEGY_CONFIGS = {
         'fixed_params': {
             'blocked_hours': (*range(20, 24), *range(0, 9)),  # allow 09:00-19:00 UTC
         },
+        # Updated 2026-04-29: added use_fib_tp/rr_ratio to compare fib-extension TP vs
+        # fixed R:R TP. fib_tp expanded to include 1.0. Dropped
+        # require_recent_swing_alignment and pending_max_age_bars (confirmed non-winners
+        # in all prior folds). rr_ratio is extracted by the WF runner and forwarded to
+        # BacktestEngine; use_fib_tp and fib_tp go to the strategy constructor.
+        # Note: when use_fib_tp=True the rr_ratio value has no effect on TP (strategy
+        # overrides it), so those cross-product combos are redundant but harmless.
         'param_grid': {
+            'use_fib_tp':               [True, False],    # True=fib ext; False=risk mgr R:R
+            'fib_tp':                   [1.0, 2.0, 3.0],  # fib extension multiplier
+            'rr_ratio':                 [2.0, 2.5, 3.0],  # R:R (ignored when use_fib_tp=True)
             'fib_entry':                [0.5, 0.618, 0.786],
-            'fib_tp':                   [2.0, 2.5, 3.0],
             'min_swing_pips':           [10, 20],
             'ema_sep_pct':              [0.0, 0.001],
             'cooldown_bars':            [0, 10],
@@ -251,6 +261,32 @@ STRATEGY_CONFIGS = {
         },
         'param_grid': {},
     },
+    'ims_h4_m15_optim': {
+        # 2026-04-30: targeted sweep on the two new params added after live-code review.
+        # ltf_origin_expiry: False = HTF bar close decides origin breach (filter M15 wicks)
+        # ltf_entry_fib:     0.5 = midpoint (current); 0.618/0.786 = deeper retracement
+        # All other params fixed at validated live values. 6 combos × 3 folds.
+        'class': ImsStrategy,
+        'timeframes': ['H4', 'M15'],
+        'symbols': ['USDJPY', 'XAUUSD', 'EURAUD', 'CADJPY', 'USDCAD', 'AUDUSD', 'EURUSD', 'GBPCAD', 'GBPUSD'],
+        'fixed_params': {
+            'tf_htf': 'H4', 'tf_ltf': 'M15',
+            'entry_mode': 'pending',
+            'tp_mode': 'rr',
+            'blocked_hours': (*range(0, 12), *range(17, 24)),
+            'ema_fast': 20, 'ema_slow': 50,
+            'ema_sep': 0.001,
+            'cooldown_bars': 0,
+            'fractal_n':     1,
+            'ltf_fractal_n': 1,
+            'htf_lookback':  30,
+            'rr_ratio':      2.5,
+        },
+        'param_grid': {
+            'ltf_origin_expiry': [True, False],
+            'ltf_entry_fib':     [0.5, 0.618, 0.786],
+        },
+    },
     'ema_fib_running': {
         'class': EmaFibRunningStrategy,
         'timeframes': ['D1', 'H1'],
@@ -261,11 +297,38 @@ STRATEGY_CONFIGS = {
             'invalidate_swing_on_loss': True,
             'blocked_hours': (*range(20, 24), *range(0, 9)),  # 09:00-19:00 UTC (session sweep winner)
         },
+        # Updated 2026-04-30: added use_fib_tp/rr_ratio to compare fib-extension TP vs
+        # fixed R:R TP. fib_tp expanded to include 1.0. rr_ratio is extracted by the WF
+        # runner and forwarded to BacktestEngine; use_fib_tp and fib_tp go to strategy.
         'param_grid': {
+            'use_fib_tp':  [True, False],    # True=fib ext; False=risk mgr R:R
+            'fib_tp':      [1.0, 2.0, 3.0],  # fib extension multiplier
+            'rr_ratio':    [2.0, 2.5, 3.0],  # R:R (ignored when use_fib_tp=True)
             'fib_entry':   [0.618, 0.786],
-            'fib_tp':      [2.0, 2.5, 3.0],
             'fractal_n':   [2, 3],
             'ema_sep_pct': [0.0, 0.001],
+        },
+    },
+    'ema_fib_running_tp': {
+        # Targeted TP comparison: fib 2.5 vs R:R 2.0.
+        # All other params fixed at WF-validated values (2026-04-30).
+        # 2 combos per fold — WF picks the IS winner and tests it OOS.
+        'class': EmaFibRunningStrategy,
+        'timeframes': ['D1', 'H1'],
+        'symbols': ['EURUSD', 'GBPUSD', 'AUDUSD', 'NZDUSD', 'USDJPY', 'USDCAD', 'USDCHF'],
+        'fixed_params': {
+            'fib_entry': 0.786,
+            'fractal_n': 2,
+            'ema_sep_pct': 0.0,
+            'min_swing_pips': 30,
+            'cooldown_bars': 0,
+            'invalidate_swing_on_loss': True,
+            'blocked_hours': (*range(20, 24), *range(0, 9)),
+        },
+        'param_grid': {
+            'use_fib_tp': [True, False],
+            'fib_tp':     [2.5],
+            'rr_ratio':   [2.0],
         },
     },
     'ema_fib_intraday': {
@@ -546,6 +609,15 @@ STRATEGY_CONFIGS = {
             'wiggle_room_pct':          [0.0, 0.002, 0.003, 0.006],
             'sl_buffer_pct':            [0.0003, 0.0006, 0.001],
             'multiple_trades_per_bias': [True, False],
+        },
+    },
+    'lbs': {
+        'class': LondonBreakoutStrategy,
+        'timeframes': ['M5'],
+        'symbols': ['EURUSD', 'GBPUSD'],
+        'fixed_params': {},
+        'param_grid': {
+            'rr_ratio': [1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 2.0],
         },
     },
 }

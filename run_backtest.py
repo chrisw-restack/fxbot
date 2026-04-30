@@ -35,6 +35,7 @@ from strategies.bigbeluga_sd import BigBelugaSdStrategy
 from strategies.smc_reversal import SmcReversalStrategy
 from strategies.three_line_strike import ThreeLineStrikeStrategy
 from strategies.hourly_mean_reversion import HourlyMeanReversionStrategy
+from strategies.london_breakout import LondonBreakoutStrategy
 from data.historical_loader import find_csv
 from data.news_filter import NewsFilter
 
@@ -58,7 +59,7 @@ logging.basicConfig(
 # SYMBOLS         = ['AUDCAD','AUDJPY','AUDNZD','AUDUSD','CADJPY','EURAUD','EURCAD','EURCHF','EURGBP','EURJPY','EURUSD','GBPAUD','GBPCAD','GBPJPY','GBPNZD','GBPUSD','NZDJPY','NZDUSD','USA100','USA30','USA500','USDCAD','USDCHF','USDJPY','XAUUSD']
 # SYMBOLS         = ['AUDUSD','CADJPY']
 # SYMBOLS         = ['EURAUD','EURCAD','EURCHF','EURGBP','EURJPY']
-SYMBOLS         = ['GBPNZD', 'AUDUSD', 'USA30', 'USDCHF', 'XAUUSD', 'AUDJPY', 'AUDCAD', 'USDCAD']  # IMS Reversal 8-sym validated
+SYMBOLS         = ['EURUSD', 'GBPUSD']  # LBS initial test
 
 INITIAL_BALANCE = 10_000.0   # starting account balance in USD
 RR_RATIO        = 2.5        # risk/reward ratio (overrides config default)
@@ -108,6 +109,7 @@ STRATEGIES = {
     # WF-validated params (XAUUSD M5, London session, STRONG): all 3 folds +, +0.265R OOS expect
     'hmr':    HourlyMeanReversionStrategy(tf_lower='M5',  min_move_pips=100, entry_window_start=20, entry_window_end=45, fractal_n=1, max_pullback_pips=0,  session_hours=tuple(range(8,17))),
     'hmr_m1': HourlyMeanReversionStrategy(tf_lower='M1',  min_move_pips=100, entry_window_start=20, entry_window_end=45, fractal_n=2, max_pullback_pips=30, session_hours=tuple(range(8,17))),
+    'lbs':         LondonBreakoutStrategy(rr_ratio=2.5),
 }
 
 # ── Live suite: both live strategies run together ────────────────────────────

@@ -3,16 +3,21 @@ Parameter sweep for EmaFibRetracement strategy.
 Tests combinations and outputs a ranked results table.
 
 Grid covers:
+  use_fib_tp       — True: TP = fib extension of swing; False: TP = risk manager R:R
+  fib_tp           — fib extension multiplier (1×, 2×, 3×)   [use_fib_tp=True only]
+  rr_ratio         — risk manager R:R (2.0, 2.5, 3.0)        [use_fib_tp=False only]
   fib_entry        — retracement entry level (50%, 61.8%, 78.6%)
-  fib_tp           — extension TP level (1.5×, 2×, 2.5×, 3×)
-  fractal_n        — bars each side for fractal confirmation (2, 3, 5)
-  min_swing_pips   — minimum swing range filter (10, 20, 30)
+  fractal_n        — bars each side for fractal confirmation (2, 3)
+  min_swing_pips   — minimum swing range filter (10, 20)
   ema_sep_pct      — minimum H1 EMA separation (off, 0.1%)
   cooldown_bars    — H1 bars to skip after a loss (0, 10)
   invalidate_swing — discard swing that produced a loss (Y/N)
-  swing_max_age    — max H1 bar age for a swing to remain valid (50, 100, 200)
+  swing_max_age    — max H1 bar age for a swing to remain valid (100, fixed)
 
-Total: 3×4×3×3×2×2×2×3 = 1,296 combinations
+  require_recent_swing_alignment: fixed False  (all prior WF folds: hurt/no benefit)
+  pending_max_age_bars: fixed 0               (all prior WF folds: hurt/no benefit)
+
+Total: 2×3×3×3×2×2×2×2×2×1 = 864 combinations
 """
 
 import itertools
@@ -30,18 +35,25 @@ sys.stdout.reconfigure(line_buffering=True)
 
 SYMBOLS = ['EURUSD', 'GBPUSD', 'AUDUSD', 'NZDUSD', 'USDJPY', 'USDCAD', 'USDCHF']
 INITIAL_BALANCE = 10_000.0
-RR_RATIO = 2.0
 
 # ── Parameter grid ──────────────────────────────────────────────────────────
+# Updated 2026-04-29: added use_fib_tp / rr_ratio to compare fib-extension TP
+# against fixed R:R TP. fib_tp expanded to include 1.0. Dropped
+# require_recent_swing_alignment and pending_max_age_bars (confirmed losers in
+# all prior WF folds — fixed at defaults). min_swing_pips reduced to [10, 20]
+# (30 was consistently weak). rr_ratio extracted and forwarded to BacktestEngine
+# (not passed to strategy constructor).
 PARAM_GRID = {
+    'use_fib_tp':               [True, False],    # True=fib ext; False=risk mgr R:R
+    'fib_tp':                   [1.0, 2.0, 3.0],  # fib extension multiplier
+    'rr_ratio':                 [2.0, 2.5, 3.0],  # R:R for risk manager
     'fib_entry':                [0.5, 0.618, 0.786],
-    'fib_tp':                   [1.5, 2.0, 2.5, 3.0],
-    'fractal_n':                [2, 3, 5],
-    'min_swing_pips':           [10, 20, 30],
+    'fractal_n':                [2, 3],
+    'min_swing_pips':           [10, 20],
     'ema_sep_pct':              [0.0, 0.001],
     'cooldown_bars':            [0, 10],
     'invalidate_swing_on_loss': [True, False],
-    'swing_max_age':            [50, 100, 200],
+    'swing_max_age':            [100],
 }
 
 # ── Discover and pre-load bar data once ────────────────────────────────────
@@ -68,8 +80,10 @@ results = []
 
 for i, combo in enumerate(combos):
     params = dict(zip(keys, combo))
+    rr = params.pop('rr_ratio')  # engine param, not strategy param
 
     strategy = EmaFibRetracementStrategy(
+        use_fib_tp=params['use_fib_tp'],
         fib_entry=params['fib_entry'],
         fib_tp=params['fib_tp'],
         fractal_n=params['fractal_n'],
@@ -78,12 +92,12 @@ for i, combo in enumerate(combos):
         cooldown_bars=params['cooldown_bars'],
         invalidate_swing_on_loss=params['invalidate_swing_on_loss'],
         swing_max_age=params['swing_max_age'],
-        blocked_hours=(*range(20, 24), *range(0, 9)),  # proven winner: allow 09:00-19:00 UTC
+        blocked_hours=(*range(20, 24), *range(0, 9)),  # allow 09:00-19:00 UTC
     )
 
     engine = BacktestEngine(
         initial_balance=INITIAL_BALANCE,
-        rr_ratio=RR_RATIO,
+        rr_ratio=rr,
     )
     engine.add_strategy(strategy, symbols=SYMBOLS)
 
@@ -127,6 +141,7 @@ for i, combo in enumerate(combos):
 
     results.append({
         **params,
+        'rr_ratio': rr,   # re-add after pop so it's available in output
         'trades': n,
         'win_rate': win_rate,
         'total_r': total_r,
@@ -142,16 +157,19 @@ for i, combo in enumerate(combos):
 
 
 # ── Display helpers ──────────────────────────────────────────────────────────
-W = 170
+W = 185
 HEADER = (
-    f"{'fib_e':>6} {'fib_tp':>6} {'frac':>4} {'sw_pip':>6} {'ema_s':>6} "
-    f"{'cool':>4} {'inv':>3} {'sw_age':>6} | "
+    f"{'tp_mode':>7} {'fib_tp':>6} {'rr':>5} {'fib_e':>6} {'frac':>4} "
+    f"{'sw_pip':>6} {'ema_s':>6} {'cool':>4} {'inv':>3} {'sw_age':>6} | "
     f"{'trades':>6} {'WR%':>6} {'TotalR':>8} {'PF':>6} {'Expect':>7} {'MaxDD':>6} {'Streak':>6}"
 )
 
 def row(r):
+    tp_mode = 'fib' if r['use_fib_tp'] else 'R:R'
+    fib_tp_str = f"{r['fib_tp']:>6.1f}" if r['use_fib_tp'] else '    --'
+    rr_str     = f"{r['rr_ratio']:>5.1f}" if not r['use_fib_tp'] else '   --'
     return (
-        f"{r['fib_entry']:>6.3f} {r['fib_tp']:>6.1f} {r['fractal_n']:>4} "
+        f"{tp_mode:>7} {fib_tp_str} {rr_str} {r['fib_entry']:>6.3f} {r['fractal_n']:>4} "
         f"{r['min_swing_pips']:>6.0f} {r['ema_sep_pct']:>6.4f} "
         f"{r['cooldown_bars']:>4} {'Y' if r['invalidate_swing_on_loss'] else 'N':>3} "
         f"{r['swing_max_age']:>6} | "
@@ -190,22 +208,31 @@ print_table("TOP 20 BY RISK-ADJUSTED  (expectancy / max_DD, min 200 trades)", fi
 
 # ── Current live config for comparison ──────────────────────────────────────
 print(f"\n{'='*W}")
-print("CURRENT LIVE CONFIG:  fib_e=0.618  fib_tp=2.0  frac=3  sw_pip=15  ema_s=0.001  cool=10  inv=Y  sw_age=100")
-current = [r for r in results
-           if r['fib_entry'] == 0.618 and r['fib_tp'] == 2.0 and r['fractal_n'] == 3
-           and r['min_swing_pips'] == 15 and r['ema_sep_pct'] == 0.001
-           and r['cooldown_bars'] == 10 and r['invalidate_swing_on_loss'] is True
-           and r['swing_max_age'] == 100]
-if current:
-    print(f"  → NOT IN GRID (min_sw=15 not tested)")
-# Closest in grid: min_sw=10 with same other params
-closest = [r for r in results
-           if r['fib_entry'] == 0.618 and r['fib_tp'] == 2.0 and r['fractal_n'] == 3
-           and r['ema_sep_pct'] == 0.001 and r['cooldown_bars'] == 10
-           and r['invalidate_swing_on_loss'] is True and r['swing_max_age'] == 100]
-if closest:
-    print("  Closest in grid (varying min_sw_pips):")
-    closest.sort(key=lambda r: r['min_swing_pips'])
-    for r in closest:
-        print(f"  min_sw={r['min_swing_pips']:>2.0f}  →  {row(r)}")
+print("CURRENT LIVE CONFIG:  tp_mode=fib  fib_tp=3.0  fib_e=0.786  frac=3  sw_pip=10  ema_s=0.001  cool=10  inv=Y  sw_age=100")
+live = [r for r in results
+        if r['use_fib_tp'] is True and r['fib_tp'] == 3.0
+        and r['fib_entry'] == 0.786 and r['fractal_n'] == 3
+        and r['min_swing_pips'] == 10 and r['ema_sep_pct'] == 0.001
+        and r['cooldown_bars'] == 10 and r['invalidate_swing_on_loss'] is True
+        and r['swing_max_age'] == 100]
+if live:
+    print("  Live config baseline (fib mode — rr_ratio column is irrelevant):")
+    print(f"  {row(live[0])}")
+
+# Show all 6 TP configs at otherwise-live params for direct comparison
+print("\n  All 6 TP configs at live params (fib_e=0.786, frac=3, sw_pip=10, ema_s=0.001, cool=10, inv=Y):")
+tp_variants = [r for r in results
+               if r['fib_entry'] == 0.786 and r['fractal_n'] == 3
+               and r['min_swing_pips'] == 10 and r['ema_sep_pct'] == 0.001
+               and r['cooldown_bars'] == 10 and r['invalidate_swing_on_loss'] is True
+               and r['swing_max_age'] == 100
+               and (
+                   # fib configs: one rr_ratio value (they're all identical; take 2.0)
+                   (r['use_fib_tp'] is True and r['rr_ratio'] == 2.0)
+                   # R:R configs: show all three
+                   or r['use_fib_tp'] is False
+               )]
+tp_variants.sort(key=lambda r: (not r['use_fib_tp'], r['fib_tp'] if r['use_fib_tp'] else r['rr_ratio']))
+for r in tp_variants:
+    print(f"  {row(r)}")
 print(f"{'='*W}")

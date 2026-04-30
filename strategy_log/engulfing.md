@@ -224,8 +224,71 @@ Full 324-combo sweep (3 sessions × 3 min_body × 3 eng_ratio × 4 SL configs ×
 
 ---
 
+## Direction-Lock Investigation (2026-04-29)
+
+Hypothesis: `_last_direction[symbol]` only flips when the opposite direction fires, so once a BUY trade closes (SL/TP) the strategy can't re-enter long until a SELL signal generates — which requires a full trend flip. Suspected this was over-filtering and explained the sparse trade count (~6–7/yr per pair).
+
+**Prototype**: added `clear_lock_on_close` flag + `cooldown_bars` param + `notify_loss`/`notify_win` hooks to clear the lock on trade close.
+
+### IS sweep (3 live pairs, 2016–2026, NY core, RR 2.5)
+
+| Mode | Trades | WR | TotalR | PF | Expect | MaxDD |
+|---|---|---|---|---|---|---|
+| baseline (lock until flip) | 63 | 41.3% | +28.0R | 1.76 | +0.444 | 8.5R |
+| unlock, cd=0  | 117 | 36.8% | +33.5R | 1.45 | +0.286 | 13.5R |
+| unlock, cd=12 (1h) | 116 | 37.1% | +34.5R | 1.47 | +0.297 | 13.5R |
+| unlock, cd=48 (4h) | 115 | 37.4% | +35.5R | 1.49 | +0.309 | 13.5R |
+
+Trade count nearly doubles, absolute Total R rises ~27%, but per-trade expectancy and PF drop materially. **Cooldown duration is irrelevant** — only the lock toggle matters.
+
+### Per-symbol IS (baseline → unlock cd=0)
+
+| Symbol | Trades | TotalR | Expect | Verdict |
+|---|---|---|---|---|
+| EURUSD | 24→45 | +25.0→+28.5R | +1.042→+0.633 | More trades, marginal trades still profitable |
+| AUDUSD | 12→21 | +2.0→+7.0R | +0.167→+0.333 | Strict improvement |
+| USDCAD | 27→51 | +1.0→−2.0R | +0.037→−0.039 | **Turns negative** — extra trades are losers |
+
+### WF — 3 live pairs, unlock in grid
+
+All 3 folds picked `clear_lock_on_close=False`. **Aggregate OOS: 57 trades / +33.5R / +0.588R / 224% retention / STRONG.** IS optimizer rejects unlock in every fold.
+
+### WF — 2 pairs (EUR+AUD only, USDCAD dropped), unlock in grid
+
+| Fold | Lock | OOS Trades | OOS Exp | Retain |
+|---|---|---|---|---|
+| 1 (2020–22) | False | 7 | +0.714 | 250% |
+| 2 (2022–24) | **True** | 33 | +0.485 | 78% |
+| 3 (2024–26) | False | 8 | +1.625 | 187% |
+
+**Aggregate OOS: 48 trades / +34.0R / +0.708R / 172% / STRONG.** Better per-trade expectancy than 3-pair, but the unlock variant only wins on fold 2.
+
+### WF — GBPUSD London core + unlock
+
+Tested whether unlock could rescue the previously-disqualified GBPUSD London config (session sweep showed IS goes +0.217R/46t → +0.353R/75t under unlock).
+
+| Fold | Params | OOS Trades | OOS Exp | Retain |
+|---|---|---|---|---|
+| 1 | body=5, ratio=1.0, lock=False | 6 | +0.167 | 27% |
+| 2 | body=5, ratio=1.5, lock=True | 3 | +0.167 | 22% |
+| 3 | body=3, ratio=2.0, lock=False | 6 | −0.417 | −34% |
+
+**Aggregate OOS: 15 trades / −1.0R / 5% retention / WEAK.** Each fold picks different params (curve-fit), fold 3 OOS negative. Same fold-3-collapse problem that disqualified GBPUSD London the first time.
+
+### Cross-pair session × symbol IS sweep
+
+7 majors × 5 sessions, baseline vs unlock. **No symbol/session combo is rescued** (no case where baseline is clearly negative AND unlock turns it clearly positive). EURUSD, NZDUSD, USDJPY, USDCHF all stay non-viable or get worse under unlock. The only meaningful improvement was GBPUSD London core (which then failed WF above).
+
+### Verdict
+
+**REJECTED.** The lock-until-flip behaviour is correctly filtering quality on a pattern strategy with no other re-entry control. Reverted prototype on 2026-04-29 — strategy code restored to the validated state.
+
+Why the hypothesis was wrong: the suppressed re-entries are statistically lower-quality. The lock effectively says "wait for the macro trend to actually rotate" before taking another setup, which is the right discipline for an engulfing strategy. IS optimisation correctly identifies this in every WF fold across three configs (3-pair, 2-pair, single-pair London).
+
+---
+
 ## Next Steps
 
 - [ ] Monitor 3-pair demo performance — target 30+ trades before drawing conclusions
-- [ ] Track per-pair performance — USDCAD low expectancy (+0.037R/27t), watch if it becomes a drag
-- [ ] GBPUSD London revisit — positive IS edge exists but fold 3 WF collapse (2024–2026) disqualifies it now. Revisit when 2026+ data accumulates
+- [ ] Track per-pair performance — USDCAD low expectancy (+0.037R/27t), watch if it becomes a drag. 2-pair (EUR+AUD only) WF showed +0.708R OOS expectancy vs 3-pair's +0.588R — if live USDCAD trades confirm drag, drop it
+- [ ] GBPUSD London revisit — positive IS edge exists but fold 3 WF collapse (2024–2026) disqualifies it now, both with and without the unlock change. Revisit when 2026+ data accumulates

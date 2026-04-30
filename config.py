@@ -65,6 +65,7 @@ MAGIC_NUMBERS: dict[str, int] = {
     'Engulfing':         1003,
     'IMS_H4_M15':        1004,
     'IMSRev_H4_M15':     1005,
+    'LondonBreakout':    1006,
 }
 
 # ── Spread ───────────────────────────────────────────────────────────────────

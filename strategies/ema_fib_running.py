@@ -50,6 +50,7 @@ class EmaFibRunningStrategy:
         fractal_n: int = 3,
         fib_entry: float = 0.618,
         fib_tp: float = 2.0,
+        use_fib_tp: bool = True,
         swing_max_age: int = 100,
         cooldown_bars: int = 10,
         min_swing_pips: float = 15.0,
@@ -65,6 +66,7 @@ class EmaFibRunningStrategy:
         self.fractal_n = fractal_n
         self.fib_entry = fib_entry
         self.fib_tp = fib_tp
+        self.use_fib_tp = use_fib_tp
         self.swing_max_age = swing_max_age
         self.cooldown_bars = cooldown_bars
         self.min_swing_pips = min_swing_pips
@@ -123,6 +125,12 @@ class EmaFibRunningStrategy:
 
         self._pending_entry: dict[str, float | None] = {}
         self._pending_direction: dict[str, str | None] = {}
+        # Anchor fractal snapshot at placement — used by notify_loss so the
+        # fractal that *produced* the trade gets marked used, not whichever
+        # fractal happens to be current at close time. Only the direction-
+        # relevant slot is set (low for BUY, high for SELL).
+        self._pending_anchor_low: dict[str, float | None] = {}
+        self._pending_anchor_high: dict[str, float | None] = {}
 
         # Filter state
         self._cooldown_until: dict[str, int] = {}
@@ -189,6 +197,8 @@ class EmaFibRunningStrategy:
 
         self._pending_entry[symbol] = None
         self._pending_direction[symbol] = None
+        self._pending_anchor_low[symbol] = None
+        self._pending_anchor_high[symbol] = None
 
         self._cooldown_until[symbol] = 0
         self._used_fractal_high[symbol] = None
@@ -275,22 +285,34 @@ class EmaFibRunningStrategy:
         pending = self._pending_entry[symbol]
         if pending is not None:
             if event.low <= pending <= event.high:
+                # Filled — clear entry/dir but keep _pending_anchor_* so
+                # notify_loss can mark the actual triggering fractal as used.
+                # (cleared on close via notify_loss/notify_win.)
                 self._pending_entry[symbol] = None
                 self._pending_direction[symbol] = None
-                return None  # Filled, wait for SL/TP
+                return None
 
-            # Cancel if bias flipped
-            if h1_bias is not None and h1_bias != self._pending_direction[symbol]:
+            # Cancel if EITHER D1 or H1 bias flipped against the pending
+            # direction. Entry required both to agree, so either disagreeing
+            # invalidates the setup.
+            pending_dir = self._pending_direction[symbol]
+            h1_flipped = h1_bias is not None and h1_bias != pending_dir
+            d1_flipped = d1_bias is not None and d1_bias != pending_dir
+            if h1_flipped or d1_flipped:
                 self._pending_entry[symbol] = None
                 self._pending_direction[symbol] = None
+                self._pending_anchor_low[symbol] = None
+                self._pending_anchor_high[symbol] = None
                 return self._cancel_signal(symbol, event)
 
             # Check if running extreme changed → update pending order
-            new_entry, new_sl, new_tp = self._calc_entry(symbol, self._pending_direction[symbol])
+            new_entry, new_sl, new_tp = self._calc_entry(symbol, pending_dir)
             if new_entry is not None and abs(new_entry - pending) > self._pip_size(symbol):
                 # Cancel old, will re-place with updated levels on next bar
                 self._pending_entry[symbol] = None
                 self._pending_direction[symbol] = None
+                self._pending_anchor_low[symbol] = None
+                self._pending_anchor_high[symbol] = None
                 return self._cancel_signal(symbol, event)
 
             return None  # Pending still valid
@@ -360,9 +382,17 @@ class EmaFibRunningStrategy:
         if sl_pips < self.min_swing_pips:
             return None
 
-        # Track and place pending
+        # Track and place pending. Snapshot the anchor fractal that built
+        # this trade so notify_loss can mark the correct one as used even
+        # if a new fractal forms before the trade closes.
         self._pending_entry[symbol] = entry_price
         self._pending_direction[symbol] = direction
+        if direction == 'BUY':
+            self._pending_anchor_low[symbol] = self._fractal_low[symbol]
+            self._pending_anchor_high[symbol] = None
+        else:
+            self._pending_anchor_high[symbol] = self._fractal_high[symbol]
+            self._pending_anchor_low[symbol] = None
 
         return Signal(
             symbol=symbol,
@@ -372,7 +402,7 @@ class EmaFibRunningStrategy:
             stop_loss=stop_loss,
             strategy_name=self.NAME,
             timestamp=event.timestamp,
-            take_profit=take_profit,
+            take_profit=take_profit if self.use_fib_tp else None,
         )
 
     # ── Entry calculation ────────────────────────────────────────────────────
@@ -481,12 +511,43 @@ class EmaFibRunningStrategy:
     # ── Post-trade feedback ──────────────────────────────────────────────────
 
     def notify_loss(self, symbol: str):
+        """Engine calls this when a trade from this strategy closes at a loss.
+        Marks the *anchor fractal that produced the trade* as used, using the
+        snapshot taken at placement (live fractals may have moved during the
+        trade). Falls back to live fractals if the snapshot is missing.
+        """
         bar_idx = self._h1_counter.get(symbol, 0)
         self._cooldown_until[symbol] = bar_idx + self.cooldown_bars
 
         if self.invalidate_swing_on_loss:
-            self._used_fractal_high[symbol] = self._fractal_high.get(symbol)
-            self._used_fractal_low[symbol] = self._fractal_low.get(symbol)
+            snap_low = self._pending_anchor_low.get(symbol)
+            snap_high = self._pending_anchor_high.get(symbol)
+            # Only the direction-relevant slot was set at placement; mark
+            # only that one as used. Fall back to live fractal if snapshot
+            # is missing (defensive).
+            if snap_low is not None:
+                self._used_fractal_low[symbol] = snap_low
+            elif snap_high is None:
+                self._used_fractal_low[symbol] = self._fractal_low.get(symbol)
+            if snap_high is not None:
+                self._used_fractal_high[symbol] = snap_high
+            elif snap_low is None:
+                self._used_fractal_high[symbol] = self._fractal_high.get(symbol)
+
+        self._clear_pending_state(symbol)
+
+    def notify_win(self, symbol: str):
+        """Engine calls this on win/break-even close. Clears the pending-
+        snapshot state so the next setup starts clean. Doesn't mark the
+        fractal as used — wins leave it free to retrigger if conditions
+        reappear."""
+        self._clear_pending_state(symbol)
+
+    def _clear_pending_state(self, symbol: str):
+        """Reset per-symbol post-trade pending-snapshot state. Called by
+        notify_loss / notify_win."""
+        self._pending_anchor_low[symbol] = None
+        self._pending_anchor_high[symbol] = None
 
     # ── Helpers ──────────────────────────────────────────────────────────────
 
