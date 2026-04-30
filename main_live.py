@@ -38,7 +38,7 @@ os.makedirs('logs', exist_ok=True)
 # Roll over existing log on startup — keeps one archive per run
 _log_path = 'logs/trading.log'
 if os.path.exists(_log_path):
-    _ts = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+    _ts = datetime.now(datetime.UTC).strftime('%Y%m%d_%H%M%S')
     os.rename(_log_path, f'logs/trading_{_ts}.log')
 
 logging.basicConfig(
