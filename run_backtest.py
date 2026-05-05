@@ -5,7 +5,7 @@ Usage:
     python run_backtest.py breakout
     python run_backtest.py ema_fib_retracement
     python run_backtest.py the_strat
-    python run_backtest.py live_suite          # all 3 live strategies together
+    python run_backtest.py live_suite          # current live/demo suite together
     python run_backtest.py ema_fib_retracement --start-date 2023-01-01 --end-date 2024-06-30
 """
 
@@ -15,6 +15,7 @@ from datetime import datetime
 import config
 
 from backtest_engine import BacktestEngine
+from live_config import create_live_strategy_specs
 from strategies.breakout import BreakoutStrategy
 from strategies.mean_reversion import MeanReversionStrategy
 from strategies.ema_fib_retracement import EmaFibRetracementStrategy
@@ -112,12 +113,6 @@ STRATEGIES = {
     'lbs':         LondonBreakoutStrategy(rr_ratio=2.5),
 }
 
-# ── Live suite: both live strategies run together ────────────────────────────
-LIVE_SUITE = [
-    EmaFibRetracementStrategy(fib_entry=0.786, fib_tp=3.0, fractal_n=3, min_swing_pips=10, ema_sep_pct=0.001, cooldown_bars=10, invalidate_swing_on_loss=True, blocked_hours=(*range(20,24),*range(0,9))),
-    EmaFibRunningStrategy(fib_entry=0.786, fib_tp=2.5, fractal_n=2, min_swing_pips=30, ema_sep_pct=0.0, cooldown_bars=0, invalidate_swing_on_loss=True, blocked_hours=(*range(20,24),*range(0,9))),
-]
-
 ALL_CHOICES = list(STRATEGIES.keys()) + ['live_suite']
 
 parser = argparse.ArgumentParser(description='Run a backtest for a given strategy.')
@@ -160,25 +155,25 @@ parser.add_argument(
 args = parser.parse_args()
 
 if args.strategy == 'live_suite':
-    strategies_to_run = LIVE_SUITE
+    strategy_specs = create_live_strategy_specs()
 else:
-    strategies_to_run = [STRATEGIES[args.strategy]]
+    strategy_specs = [(STRATEGIES[args.strategy], SYMBOLS)]
 
 # Collect all timeframes needed across all strategies
-timeframes_needed = set()
-for s in strategies_to_run:
-    timeframes_needed.update(s.TIMEFRAMES)
-
 csv_paths = []
-for symbol in SYMBOLS:
-    for tf in timeframes_needed:
-        paths = find_csv(symbol, tf)
-        if paths:
-            csv_paths.extend(paths)
-            for p in paths:
-                print(f"Found: {p}")
-        else:
-            print(f"WARNING: No CSV found for {symbol} {tf} in data/historical/ — skipping")
+seen_paths = set()
+for strategy, symbols in strategy_specs:
+    for symbol in symbols:
+        for tf in strategy.TIMEFRAMES:
+            paths = find_csv(symbol, tf)
+            if paths:
+                for p in paths:
+                    if p not in seen_paths:
+                        csv_paths.append(p)
+                        seen_paths.add(p)
+                        print(f"Found: {p}")
+            else:
+                print(f"WARNING: No CSV found for {symbol} {tf} in data/historical/ — skipping")
 
 if not csv_paths:
     print("\nNo CSV files found. Run fetch_data.py on your Windows VPS first.")
@@ -217,9 +212,11 @@ engine = BacktestEngine(
     initial_balance=INITIAL_BALANCE, rr_ratio=RR_RATIO,
     news_filter=news_filter, risk_pct_overrides=RISK_PCT_OVERRIDES,
     breakeven_at_r=args.breakeven_at_r,
+    max_open_trades=config.MAX_OPEN_TRADES if args.strategy == 'live_suite' else 99,
+    max_daily_loss_pct=config.MAX_DAILY_LOSS_PCT if args.strategy == 'live_suite' else None,
 )
-for s in strategies_to_run:
-    engine.add_strategy(s, symbols=SYMBOLS)
+for strategy, symbols in strategy_specs:
+    engine.add_strategy(strategy, symbols=symbols)
 start_date = datetime.strptime(args.start_date, '%Y-%m-%d') if args.start_date else None
 end_date = datetime.strptime(args.end_date, '%Y-%m-%d') if args.end_date else None
 

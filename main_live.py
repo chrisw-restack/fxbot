@@ -21,11 +21,8 @@ from portfolio.portfolio_manager import PortfolioManager
 from execution.mt5_execution import MT5Execution
 from utils.trade_logger import TradeLogger
 from data.mt5_data import connect, disconnect, reconnect, get_latest_completed_bar, get_recent_bars
-from strategies.ema_fib_retracement import EmaFibRetracementStrategy
-from strategies.ema_fib_running import EmaFibRunningStrategy
-from strategies.three_line_strike import ThreeLineStrikeStrategy
-from strategies.ims import ImsStrategy
-from strategies.ims_reversal import ImsReversalStrategy
+from data.historical_loader import bar_close_time
+from live_config import create_live_strategy_specs, live_symbols
 
 from utils.telegram_notifier import TelegramNotifier
 import config
@@ -53,6 +50,26 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 POLL_INTERVAL_SECONDS = 5
+TF_RANK = {'M1': 0, 'M5': 1, 'M15': 2, 'M30': 3, 'H1': 4, 'H4': 5, 'D1': 6}
+
+
+def _sort_pairs(pairs: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    return sorted(pairs, key=lambda p: (TF_RANK.get(p[1], 99), p[0]))
+
+
+def _is_same_live_slot(a: dict, b: dict) -> bool:
+    return (
+        a.get('symbol') == b.get('symbol')
+        and (a.get('strategy_name') or a.get('comment')) == (b.get('strategy_name') or b.get('comment'))
+        and a.get('direction') == b.get('direction')
+        and a.get('state') != b.get('state')
+    )
+
+
+def _reconcile_portfolio(portfolio: PortfolioManager, execution: MT5Execution) -> dict[int, dict]:
+    current_positions = execution.get_open_positions()
+    portfolio.sync_existing(current_positions)
+    return {p['ticket']: p for p in current_positions}
 
 
 def main():
@@ -86,99 +103,15 @@ def main():
             notifier=notifier,
         )
 
-        # ── Register strategies ───────────────────────────────────────────────
-        # Add or remove strategies here. Each strategy is registered against
-        # its target symbol list and will only fire when its declared timeframes
-        # produce a new completed bar.
-        ema_fib = EmaFibRetracementStrategy(
-            fib_entry=0.786,
-            fib_tp=3.0,
-            fractal_n=3,
-            min_swing_pips=10,
-            ema_sep_pct=0.001,
-            cooldown_bars=10,
-            invalidate_swing_on_loss=True,
-            blocked_hours=(*range(20, 24), *range(0, 9)),  # allow 09:00-19:00 UTC
-        )
-        ema_fib_running = EmaFibRunningStrategy(
-            fib_entry=0.786,
-            fib_tp=2.5,
-            fractal_n=2,
-            min_swing_pips=30,
-            ema_sep_pct=0.0,
-            cooldown_bars=0,
-            invalidate_swing_on_loss=True,
-            blocked_hours=(*range(20, 24), *range(0, 9)),  # allow 09:00-19:00 UTC
-        )
-        engulfing = ThreeLineStrikeStrategy(
-            sl_mode='fractal',
-            fractal_n=3,
-            min_prev_body_pips=3.0,
-            engulf_ratio=1.5,
-            max_sl_pips=15,
-            allowed_hours=tuple(range(13, 18)),  # NY session: 13:00-17:00 UTC
-            sma_sep_pips=5.0,
-        )
-        IMS_SYMBOLS = ['USDJPY', 'XAUUSD', 'EURAUD', 'CADJPY', 'USDCAD', 'AUDUSD', 'EURUSD', 'GBPCAD', 'GBPUSD']
-        ims = ImsStrategy(
-            tf_htf='H4',
-            tf_ltf='M15',
-            fractal_n=1,
-            ltf_fractal_n=1,
-            htf_lookback=30,
-            entry_mode='pending',
-            tp_mode='rr',
-            rr_ratio=2.5,
-            cooldown_bars=0,
-            blocked_hours=(*range(0, 12), *range(17, 24)),  # London/NY overlap: 12:00-17:00 UTC
-            ema_fast=20,
-            ema_slow=50,
-            ema_sep=0.001,
-            sl_anchor='swing',
-            pip_sizes={s: config.PIP_SIZE[s] for s in IMS_SYMBOLS if s in config.PIP_SIZE},
-        )
-
-        # IMS Reversal H4/M15: 8 symbols, WF STRONG (108% OOS retention).
-        # USA30 in backtest data = US30 on ICMarkets MT5 — verify symbol name if needed.
-        IMS_REV_SYMBOLS = ['GBPNZD', 'AUDUSD', 'US30', 'USDCHF', 'XAUUSD', 'AUDJPY', 'AUDCAD', 'USDCAD']
-        ims_reversal = ImsReversalStrategy(
-            tf_htf='H4',
-            tf_ltf='M15',
-            fractal_n=1,
-            ltf_fractal_n=2,
-            htf_lookback=30,
-            entry_mode='pending',
-            tp_mode='htf_pct',
-            htf_tp_pct=0.5,
-            zone_pct=0.5,
-            cooldown_bars=0,
-            blocked_hours=(*range(0, 12), *range(17, 24)),  # London/NY overlap: 12:00-17:00 UTC
-            ema_fast=20,
-            ema_slow=50,
-            ema_sep=0.001,
-            sl_anchor='swing',
-            sl_buffer_pips=0.0,
-            max_losses_per_bias=1,
-            pip_sizes={s: config.PIP_SIZE[s] for s in IMS_REV_SYMBOLS if s in config.PIP_SIZE},
-        )
-
-        strategies = [ema_fib, ema_fib_running, engulfing, ims, ims_reversal]
-
-        # EmaFib strategies run on all configured symbols
-        for strategy in [ema_fib, ema_fib_running]:
-            event_engine.register(strategy, config.SYMBOLS)
-        # Engulfing: 3 pairs on NY session (USDJPY/NZDUSD removed — negative IS after session sweep 2026-04-15)
-        # GBPUSD and USDCAD London sessions under walk-forward review
-        event_engine.register(engulfing, ['EURUSD', 'AUDUSD', 'USDCAD'])
-        # IMS H4/M15: 9 symbols validated by walk-forward (MODERATE, all 3 folds positive)
-        event_engine.register(ims, IMS_SYMBOLS)
-        # IMS Reversal H4/M15: 8 symbols validated by walk-forward (STRONG, 108% OOS retention)
-        event_engine.register(ims_reversal, IMS_REV_SYMBOLS)
+        strategy_specs = create_live_strategy_specs()
+        strategies = [strategy for strategy, _ in strategy_specs]
+        for strategy, symbols in strategy_specs:
+            event_engine.register(strategy, symbols)
 
         # ── Bar-detection state ───────────────────────────────────────────────
         # Tracks the timestamp of the last processed bar per (symbol, timeframe).
         last_bar_time: dict[tuple[str, str], datetime] = {}
-        subscribed_pairs = event_engine.get_subscribed_pairs()
+        subscribed_pairs = _sort_pairs(event_engine.get_subscribed_pairs())
 
         # ── Warm-up: feed historical bars so EMAs/ATR/fractals are seeded ────
         # D1 needs ~50 bars for EMA(20) + ATR(14) with margin.
@@ -187,26 +120,29 @@ def main():
         WARMUP_BARS = {'D1': 50, 'H4': 100, 'H1': 100, 'M15': 200, 'M5': 250}
         logger.info("Warming up strategy state with historical bars...")
         warmup_count = 0
-        # Sort so higher TFs come first — strategies need bias seeded before entry TF
-        TF_ORDER = {'D1': 0, 'H4': 1, 'H1': 2, 'M15': 3, 'M5': 4}
-        warmup_pairs = sorted(subscribed_pairs, key=lambda p: (p[0], TF_ORDER.get(p[1], 99)))
+        warmup_events = []
+        warmup_pairs = subscribed_pairs
         for symbol, timeframe in warmup_pairs:
             count = WARMUP_BARS.get(timeframe, 50)
             bars = get_recent_bars(symbol, timeframe, count)
-            for bar in bars:
-                event_engine.warmup_bar(bar)
-                warmup_count += 1
             if bars:
+                warmup_events.extend(bars)
                 # Set last_bar_time so the poll loop doesn't re-process the last bar
                 last_bar_time[(symbol, timeframe)] = bars[-1].timestamp
+        warmup_events.sort(key=lambda b: (bar_close_time(b), TF_RANK.get(b.timeframe, 99), b.symbol))
+        for bar in warmup_events:
+            event_engine.warmup_bar(bar)
+            warmup_count += 1
         logger.info(f"Warm-up complete: {warmup_count} bars processed across {len(subscribed_pairs)} pairs")
 
+        tracked_tickets = _reconcile_portfolio(portfolio, execution)
+        logger.info(f"Reconciled {len(tracked_tickets)} existing MT5 positions/orders")
+
         logger.info(f"Live trading started — watching {len(subscribed_pairs)} symbol/timeframe pairs")
-        notifier.notify_started(config.SYMBOLS, [s.NAME for s in strategies])
+        notifier.notify_started(live_symbols(), [s.NAME for s in strategies])
 
         consecutive_failures = 0
         last_heartbeat_date = None
-        tracked_tickets: dict[int, dict] = {}  # ticket -> position info
 
         while True:
             # Daily heartbeat at 8am UTC+2
@@ -224,32 +160,54 @@ def main():
                 current_tickets = {p['ticket'] for p in current_positions}
                 for ticket, pos in list(tracked_tickets.items()):
                     if ticket not in current_tickets:
+                        if any(_is_same_live_slot(pos, current) for current in current_positions):
+                            # Pending order likely filled into a broker position with a new ticket.
+                            del tracked_tickets[ticket]
+                            continue
                         # Position closed (SL/TP hit on broker side)
                         del tracked_tickets[ticket]
-                        pnl = pos.get('profit', 0.0)
-                        result = 'WIN' if pnl > 0 else ('BE' if pnl == 0 else 'LOSS')
-                        strategy_name = pos.get('comment', 'unknown')
+                        closed = execution.get_recent_closed_trade(pos)
+                        if closed is None and pos.get('state') == 'PENDING':
+                            strategy_name = pos.get('strategy_name') or pos.get('comment') or ''
+                            portfolio.record_close(pos['symbol'], 0.0, strategy_name)
+                            logger.info(
+                                f"Pending order no longer active: {pos['symbol']} "
+                                f"ticket={ticket} ({strategy_name})"
+                            )
+                            continue
+                        if closed is None:
+                            pnl = pos.get('profit', 0.0)
+                            result = 'WIN' if pnl > 0 else ('BE' if pnl == 0 else 'LOSS')
+                            strategy_name = pos.get('comment', 'unknown')
+                            closed = {
+                                'symbol': pos['symbol'], 'direction': pos['direction'],
+                                'result': result, 'pnl': pnl, 'r_multiple': 0.0,
+                                'strategy_name': strategy_name,
+                            }
+                            logger.warning(f"Closed deal history not found for ticket={ticket}; using last cached PnL")
+                        strategy_name = closed['strategy_name']
                         logger.info(
-                            f"Trade closed by broker: {pos['symbol']} {pos['direction']} "
-                            f"ticket={ticket} result={result} pnl={pnl:.2f}"
+                            f"Trade closed by broker: {closed['symbol']} {closed['direction']} "
+                            f"ticket={ticket} result={closed['result']} pnl={closed['pnl']:.2f}"
                         )
                         notifier.notify_order_closed(
-                            symbol=pos['symbol'],
-                            direction=pos['direction'],
-                            result=result,
-                            r_multiple=0.0,
-                            pnl=pnl,
+                            symbol=closed['symbol'],
+                            direction=closed['direction'],
+                            result=closed['result'],
+                            r_multiple=closed.get('r_multiple', 0.0),
+                            pnl=closed['pnl'],
                             strategy=strategy_name,
                         )
-                        portfolio.record_close(pos['symbol'], pnl, strategy_name)
+                        portfolio.record_close(closed['symbol'], closed['pnl'], strategy_name)
                         event_engine.notify_trade_closed({
-                            'symbol':        pos['symbol'],
+                            'symbol':        closed['symbol'],
                             'strategy_name': strategy_name,
-                            'result':        result,
+                            'result':        closed['result'],
                         })
                 # Update tracked positions with latest profit values
                 for p in current_positions:
                     tracked_tickets[p['ticket']] = p
+                portfolio.sync_existing(current_positions)
 
                 for symbol, timeframe in subscribed_pairs:
                     bar = get_latest_completed_bar(symbol, timeframe)
@@ -290,6 +248,7 @@ def main():
                     if not reconnect():
                         logger.error("Reconnect failed — shutting down")
                         return
+                    tracked_tickets = _reconcile_portfolio(portfolio, execution)
                     consecutive_failures = 0
 
             time.sleep(POLL_INTERVAL_SECONDS)

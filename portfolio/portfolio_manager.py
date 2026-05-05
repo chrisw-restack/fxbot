@@ -14,8 +14,8 @@ class PortfolioManager:
         max_open_trades: int = config.MAX_OPEN_TRADES,
         max_daily_loss_pct: float | None = config.MAX_DAILY_LOSS_PCT,
     ):
-        # symbol -> {'ticket': int, 'signal': EnrichedSignal}
-        self._open_positions: dict[str, dict] = {}
+        # (symbol, strategy_name) -> {'ticket': int, 'signal': EnrichedSignal | None}
+        self._open_positions: dict[tuple[str, str], dict] = {}
         self._daily_loss: float = 0.0
         self._current_date: date = date.today()
         self._max_open_trades = max_open_trades
@@ -60,6 +60,21 @@ class PortfolioManager:
         key = (signal.symbol, signal.strategy_name)
         self._open_positions[key] = {'ticket': ticket, 'signal': signal}
         logger.debug(f"Position recorded: {signal.symbol} ({signal.strategy_name}) ticket={ticket}")
+
+    def record_existing(self, symbol: str, strategy_name: str, ticket: int):
+        """Record an already-open broker position/order after startup/reconnect."""
+        key = (symbol, strategy_name)
+        self._open_positions[key] = {'ticket': ticket, 'signal': None}
+        logger.debug(f"Existing position recorded: {symbol} ({strategy_name}) ticket={ticket}")
+
+    def sync_existing(self, positions: list[dict]):
+        """Replace portfolio slots with the broker's current bot-owned positions/orders."""
+        self._open_positions.clear()
+        for pos in positions:
+            strategy_name = pos.get('strategy_name') or pos.get('comment') or ''
+            if not strategy_name:
+                continue
+            self.record_existing(pos['symbol'], strategy_name, pos['ticket'])
 
     def record_close(self, symbol: str, pnl: float, strategy_name: str = ''):
         """Call when a position is closed. pnl in account currency."""

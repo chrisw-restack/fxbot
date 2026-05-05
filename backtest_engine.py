@@ -42,13 +42,18 @@ class BacktestEngine:
         breakeven_at_r: float | None = None,
         news_filter: NewsFilter | None = None,
         risk_pct_overrides: dict[str, float] | None = None,
+        max_open_trades: int = 99,
+        max_daily_loss_pct: float | None = None,
     ):
         config.validate()
         self.execution = SimulatedExecution(
             initial_balance, spread_pips=spread_pips, breakeven_at_r=breakeven_at_r,
             rr_ratio=rr_ratio or config.DEFAULT_RR_RATIO,
         )
-        self.portfolio = PortfolioManager(max_open_trades=99, max_daily_loss_pct=None)
+        self.portfolio = PortfolioManager(
+            max_open_trades=max_open_trades,
+            max_daily_loss_pct=max_daily_loss_pct,
+        )
         self.trade_logger = TradeLogger(initial_balance=initial_balance)
         self.risk = RiskManager(
             account_balance_fn=self.execution.get_account_balance,

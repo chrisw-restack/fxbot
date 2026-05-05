@@ -149,8 +149,10 @@ def filter_bars(
 
 
 _TF_DURATION = {
+    'M1': timedelta(minutes=1),
     'M5': timedelta(minutes=5),
     'M15': timedelta(minutes=15),
+    'M30': timedelta(minutes=30),
     'H1': timedelta(hours=1),
     'H4': timedelta(hours=4),
     'D1': timedelta(days=1),
@@ -193,6 +195,6 @@ def load_and_merge(csv_paths: list[str]) -> list[BarEvent]:
     if n_dupes > 0:
         logger.info(f"Removed {n_dupes} duplicate bars from overlapping CSV files")
 
-    tf_rank = {'M5': 0, 'M15': 1, 'H1': 2, 'H4': 3, 'D1': 4}
+    tf_rank = {'M1': 0, 'M5': 1, 'M15': 2, 'M30': 3, 'H1': 4, 'H4': 5, 'D1': 6}
     deduped.sort(key=lambda e: (bar_close_time(e), tf_rank.get(e.timeframe, 99)))
     return deduped
