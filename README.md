@@ -25,6 +25,7 @@ fxbot/
 ├── param_sweep.py                # Grid search over strategy parameters
 ├── walk_forward.py               # Walk-forward validation (rolling train/test folds)
 ├── fetch_data_dukascopy.py       # Download historical data from Dukascopy (any TF)
+├── fetch_data_histdata.py        # Download/convert free HistData M1 data
 ├── fetch_news_data.py            # Download Forex Factory calendar from Hugging Face
 ├── measure_spreads.py            # Poll live MT5 bid/ask to measure real spreads
 │
@@ -125,7 +126,7 @@ class Signal:
 ## Portfolio & Conflict Management
 
 - **One position per (symbol, strategy) pair**: multiple strategies may hold concurrent positions on the same symbol independently.
-- **Max open trades**: 6 total across all strategies (live). Disabled in backtesting (`max_open_trades=99`) to avoid ordering artifacts skewing multi-symbol evaluation.
+- **Max open trades**: 8 total across all strategies (live). Disabled in backtesting (`max_open_trades=99`) to avoid ordering artifacts skewing multi-symbol evaluation.
 - **Max daily loss**: 2% of account balance (live). Disabled in backtesting (`max_daily_loss_pct=None`) for the same reason.
 
 
@@ -149,6 +150,17 @@ python fetch_data.py
 
 Both output to `data/historical/<SYMBOL>_<TF>_<YYYYMMDD>-<YYYYMMDD>.csv`.
 The backtest runner auto-discovers CSVs matching the symbol and timeframe.
+
+### Option C — HistData (free independent cross-check)
+
+```bash
+python fetch_data_histdata.py --symbols EURUSD GBPUSD AUDUSD NZDUSD USDJPY USDCAD USDCHF XAUUSD EURAUD CADJPY GBPCAD GBPNZD AUDJPY AUDCAD --timeframes M5 M15 H1 H4 D1 --start-year 2016 --end-date 2026-03-20 --insecure
+python run_backtest.py live_suite --data-source histdata
+```
+
+HistData is downloaded as M1 ASCII ZIPs, converted from New York local market time to UTC, resampled locally, and saved under `data/historical/histdata/`.
+`--insecure` is only needed if the HistData certificate fails validation locally.
+US30 is not mapped because HistData does not provide a direct Dow/US30 symbol equivalent.
 
 ### News calendar (for news filtering)
 
@@ -239,7 +251,7 @@ Subscribe to multiple timeframes via `TIMEFRAMES = ['D1', 'H1']`. The strategy r
 |----------|-----------|------------|---------|-------------|
 | EmaFibRetracement | D1, H1 | PENDING | 7 FX pairs | MODERATE (+0.427R OOS, 67% retention) |
 | EmaFibRunning | D1, H1 | PENDING | 7 FX pairs | MODERATE (+0.375R OOS agg, folds 1&2) |
-| Engulfing (ThreeLineStrike) | M5 | MARKET | 5 FX pairs | STRONG (+0.237R OOS, 178% retention) |
+| Engulfing (ThreeLineStrike) | M5 | MARKET | EURUSD, AUDUSD | STRONG on Dukascopy and HistData after bid/ask spread retest |
 | IMS (ImsStrategy) | H4, M15 | PENDING | 9 pairs | MODERATE (+0.165R OOS, 64% retention, all 3 folds positive) |
 
 Run on Windows VPS: `python main_live.py`

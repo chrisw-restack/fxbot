@@ -105,7 +105,7 @@ class SimulatedExecution(BaseExecution):
             entry_tf = pos.get('entry_timeframe')
             if entry_tf is not None and bar.timeframe != entry_tf:
                 continue
-            pos['entry_price'] = self._apply_spread(bar.open, pos['symbol'], pos['direction'])
+            pos['entry_price'] = self._entry_price(bar.open, pos['symbol'], pos['direction'])
             self._recalc_tp(pos)
             pos['open_time'] = bar.timestamp
             self._positions[ticket] = self._pending.pop(ticket)
@@ -121,7 +121,7 @@ class SimulatedExecution(BaseExecution):
             if entry_tf is not None and bar.timeframe != entry_tf:
                 continue
             if bar.low <= pos['entry_price'] <= bar.high:
-                pos['entry_price'] = self._apply_spread(pos['entry_price'], pos['symbol'], pos['direction'])
+                pos['entry_price'] = self._entry_price(pos['entry_price'], pos['symbol'], pos['direction'])
                 pos['open_time'] = bar.timestamp
                 self._positions[ticket] = self._pending.pop(ticket)
                 just_opened.add(ticket)
@@ -172,20 +172,22 @@ class SimulatedExecution(BaseExecution):
             sl_hit = bar.low <= pos['sl']
             tp_hit = bar.high >= pos['tp']
             if sl_hit:
-                exit_price = pos['sl']
+                exit_price = self._exit_price(pos['sl'], pos['symbol'], pos['direction'])
                 result = 'BE' if pos.get('_be_active') else 'LOSS'
             elif tp_hit:
-                exit_price, result = pos['tp'], 'WIN'
+                exit_price, result = self._exit_price(pos['tp'], pos['symbol'], pos['direction']), 'WIN'
             else:
                 return None
         else:  # SELL
-            sl_hit = bar.high >= pos['sl']
-            tp_hit = bar.low <= pos['tp']
+            ask_high = bar.high + self._spread_price(pos['symbol'])
+            ask_low = bar.low + self._spread_price(pos['symbol'])
+            sl_hit = ask_high >= pos['sl']
+            tp_hit = ask_low <= pos['tp']
             if sl_hit:
-                exit_price = pos['sl']
+                exit_price = self._exit_price(pos['sl'], pos['symbol'], pos['direction'])
                 result = 'BE' if pos.get('_be_active') else 'LOSS'
             elif tp_hit:
-                exit_price, result = pos['tp'], 'WIN'
+                exit_price, result = self._exit_price(pos['tp'], pos['symbol'], pos['direction']), 'WIN'
             else:
                 return None
 
@@ -240,14 +242,21 @@ class SimulatedExecution(BaseExecution):
         else:
             pos['tp'] = pos['entry_price'] - sl_dist * self._rr_ratio
 
-    def _apply_spread(self, price: float, symbol: str, direction: str) -> float:
+    def _spread_price(self, symbol: str) -> float:
         pip_size = config.PIP_SIZE.get(symbol, 0.0001)
         if isinstance(self._spread_pips, dict):
             spread_pips = self._spread_pips.get(symbol, 0.1)
         else:
             spread_pips = self._spread_pips
-        spread_price = spread_pips * pip_size
-        return price + spread_price if direction == 'BUY' else price - spread_price
+        return spread_pips * pip_size
+
+    def _entry_price(self, bid_price: float, symbol: str, direction: str) -> float:
+        # Historical OHLC bars are treated as bid prices.
+        return bid_price + self._spread_price(symbol) if direction == 'BUY' else bid_price
+
+    def _exit_price(self, bid_price: float, symbol: str, direction: str) -> float:
+        # BUY closes sell at bid; SELL closes buy at ask.
+        return bid_price if direction == 'BUY' else bid_price + self._spread_price(symbol)
 
     def close_order(self, ticket_id: int) -> bool:
         if ticket_id in self._positions:

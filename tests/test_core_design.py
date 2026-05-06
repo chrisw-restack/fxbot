@@ -63,6 +63,92 @@ class SimulatedExecutionTests(unittest.TestCase):
         execution.check_fills(_bar('EURUSD', 'H1', datetime(2024, 1, 1, 10), 1.1005))
         self.assertEqual(execution.get_open_positions()[0]['open_time'], datetime(2024, 1, 1, 10))
 
+    def test_buy_round_trip_pays_spread_at_entry_only_with_bid_bars(self):
+        execution = SimulatedExecution(10_000, spread_pips=2.0, commission_per_lot=0.0)
+        execution.place_order(
+            symbol='EURUSD',
+            direction='BUY',
+            order_type='MARKET',
+            entry_price=1.1000,
+            lot_size=1.0,
+            sl=1.0990,
+            tp=1.1020,
+            strategy_name='Test',
+            entry_timeframe='H1',
+            tp_locked=True,
+        )
+
+        execution.check_fills(_bar('EURUSD', 'H1', datetime(2024, 1, 1, 10), 1.1000))
+        closed = execution.check_fills(_bar('EURUSD', 'H1', datetime(2024, 1, 1, 11), 1.1020))
+
+        self.assertEqual(len(closed), 1)
+        self.assertAlmostEqual(closed[0]['entry_price'], 1.1002)
+        self.assertAlmostEqual(closed[0]['exit_price'], 1.1020)
+        self.assertAlmostEqual(closed[0]['pnl'], 180.0)
+
+    def test_sell_round_trip_pays_spread_at_exit_with_bid_bars(self):
+        execution = SimulatedExecution(10_000, spread_pips=2.0, commission_per_lot=0.0)
+        execution.place_order(
+            symbol='EURUSD',
+            direction='SELL',
+            order_type='MARKET',
+            entry_price=1.1000,
+            lot_size=1.0,
+            sl=1.1010,
+            tp=1.0980,
+            strategy_name='Test',
+            entry_timeframe='H1',
+            tp_locked=True,
+        )
+
+        execution.check_fills(_bar('EURUSD', 'H1', datetime(2024, 1, 1, 10), 1.1000))
+        closed = execution.check_fills(_bar('EURUSD', 'H1', datetime(2024, 1, 1, 11), 1.0980))
+
+        self.assertEqual(len(closed), 1)
+        self.assertAlmostEqual(closed[0]['entry_price'], 1.1000)
+        self.assertAlmostEqual(closed[0]['exit_price'], 1.0982)
+        self.assertAlmostEqual(closed[0]['pnl'], 180.0)
+
+    def test_sell_tp_is_not_hit_until_ask_reaches_target(self):
+        execution = SimulatedExecution(10_000, spread_pips=2.0, commission_per_lot=0.0)
+        execution.place_order(
+            symbol='EURUSD',
+            direction='SELL',
+            order_type='MARKET',
+            entry_price=1.1000,
+            lot_size=1.0,
+            sl=1.1010,
+            tp=1.0980,
+            strategy_name='Test',
+            entry_timeframe='H1',
+            tp_locked=True,
+        )
+
+        execution.check_fills(_bar('EURUSD', 'H1', datetime(2024, 1, 1, 10), 1.1000))
+        not_closed = execution.check_fills(BarEvent(
+            symbol='EURUSD',
+            timeframe='H1',
+            timestamp=datetime(2024, 1, 1, 11),
+            open=1.0983,
+            high=1.0985,
+            low=1.0979,
+            close=1.0982,
+            volume=1,
+        ))
+        closed = execution.check_fills(BarEvent(
+            symbol='EURUSD',
+            timeframe='H1',
+            timestamp=datetime(2024, 1, 1, 12),
+            open=1.0982,
+            high=1.0984,
+            low=1.0978,
+            close=1.0981,
+            volume=1,
+        ))
+
+        self.assertEqual(not_closed, [])
+        self.assertEqual(len(closed), 1)
+
 
 class HistoricalLoaderTests(unittest.TestCase):
     def test_load_and_merge_processes_lower_timeframe_first_at_same_close_time(self):

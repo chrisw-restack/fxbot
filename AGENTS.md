@@ -69,7 +69,7 @@ As of the imported Claude memory, demo/live code is built around five strategies
 
 - `EmaFibRetracement` - D1/H1 pending fib retracement on 7 FX pairs, WF MODERATE.
 - `EmaFibRunning` - D1/H1 pending running variant on 7 FX pairs, WF STRONG/MODERATE depending on memory source; check `strategy_log/ema_fib_running.md` for latest.
-- `Engulfing` / `ThreeLineStrikeStrategy` - M5 market strategy on EURUSD/AUDUSD/USDCAD, WF STRONG.
+- `Engulfing` / `ThreeLineStrikeStrategy` - M5 NY-session market strategy on EURUSD/AUDUSD only. USDCAD was removed on 2026-05-06 after corrected bid/ask spread modelling and HistData cross-checks showed it was a drag; EUR+AUD-only WF passed on Dukascopy and HistData.
 - `IMS_H4_M15` - H4/M15 pending IMS on 9 symbols including XAUUSD/crosses, WF MODERATE.
 - `IMSRev_H4_M15` - H4/M15 reversal strategy on 8 symbols including XAUUSD/US30, WF STRONG.
 
@@ -78,6 +78,7 @@ Before changing live status or params, check `main_live.py`, `strategy_log/`, an
 ## Known Project Decisions
 
 - Portfolio slots are keyed by `(symbol, strategy_name)` to avoid one strategy suppressing another on the same symbol.
+- Backtest simulated execution treats historical OHLC as bid prices: BUY enters at ask and exits at bid; SELL enters at bid and exits/triggers SL/TP at ask.
 - Break-even stops hurt EmaFib strategies and should not be reintroduced without a new reason.
 - Pending order age was not useful as a quality filter for EmaFibRetracement.
 - Dynamic risk throttling after drawdown hurt low-win-rate, high-payout fib strategies.
@@ -97,6 +98,7 @@ Before changing live status or params, check `main_live.py`, `strategy_log/`, an
 
 - Historical data is stored under `data/historical/` with names like `<SYMBOL>_<TF>_<YYYYMMDD>-<YYYYMMDD>.csv`.
 - Dukascopy data is preferred for long backtests and is natively UTC.
+- HistData is available as a free second source via `fetch_data_histdata.py`; raw M1 ZIPs are stored under `data/raw/histdata/`, converted from New York local market time to UTC, resampled, and written to `data/historical/histdata/`. Use `--data-source histdata` in `run_backtest.py`/`walk_forward.py`.
 - MT5 data requires Windows/VPS and is converted from broker server time to UTC by the loader.
 - Backtest outputs and charts are written to `output/`.
 - Live logs are under `logs/`.

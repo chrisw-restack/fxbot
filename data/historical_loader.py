@@ -116,7 +116,18 @@ def load_csv(filepath: str) -> list[BarEvent]:
     return events
 
 
-def find_csv(symbol: str, timeframe: str, path: str = 'data/historical') -> list[str]:
+DATA_SOURCE_DIRS = {
+    'dukascopy': 'data/historical',
+    'histdata': 'data/historical/histdata',
+}
+
+
+def find_csv(
+    symbol: str,
+    timeframe: str,
+    path: str = 'data/historical',
+    data_source: str | None = None,
+) -> list[str]:
     """
     Find all CSVs matching the given symbol and timeframe in the given directory.
     Returns a list of full filepaths (sorted alphabetically), or an empty list.
@@ -124,6 +135,9 @@ def find_csv(symbol: str, timeframe: str, path: str = 'data/historical') -> list
     Multiple files for the same symbol/timeframe are supported — load_and_merge
     handles deduplication of any overlapping bars automatically.
     """
+    if data_source is not None:
+        path = DATA_SOURCE_DIRS.get(data_source, os.path.join('data', 'historical', data_source))
+
     if not os.path.isdir(path):
         return []
 

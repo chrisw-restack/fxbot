@@ -292,3 +292,80 @@ Why the hypothesis was wrong: the suppressed re-entries are statistically lower-
 - [ ] Monitor 3-pair demo performance — target 30+ trades before drawing conclusions
 - [ ] Track per-pair performance — USDCAD low expectancy (+0.037R/27t), watch if it becomes a drag. 2-pair (EUR+AUD only) WF showed +0.708R OOS expectancy vs 3-pair's +0.588R — if live USDCAD trades confirm drag, drop it
 - [ ] GBPUSD London revisit — positive IS edge exists but fold 3 WF collapse (2024–2026) disqualifies it now, both with and without the unlock change. Revisit when 2026+ data accumulates
+
+---
+
+## Corrected Bid/Ask Spread Retest (2026-05-06)
+
+Backtest execution was corrected to model bid/ask explicitly:
+- BUY entry at ask, BUY exit at bid
+- SELL entry at bid, SELL exit and SL/TP trigger at ask
+
+Also fixed `run_backtest.py` so the `three_line_strike` registry uses the same NY session as live (`13:00-17:00 UTC`) instead of accidentally testing all hours.
+
+### Fixed-Param Backtest After Spread Fix
+
+Live params: `fractal_n=3, min_body=3, engulf_ratio=1.5, max_sl=15, rr=2.5, NY session`.
+
+```text
+Config        Source     Trades  Win    Total R   PF    Exp     Max DD         Loss Streak
+3-pair live   Dukascopy  63      39.7%  +23.90R   1.62  +0.38R  8.62R / 4.8%  8
+3-pair live   HistData   70      40.0%  +27.37R   1.65  +0.39R  6.60R / 3.6%  6
+EUR+AUD only  Dukascopy  36      50.0%  +26.70R   2.47  +0.74R  6.06R / 3.3%  6
+EUR+AUD only  HistData   43      53.5%  +37.19R   2.85  +0.86R  4.04R / 2.1%  4
+```
+
+Per-symbol fixed-param result:
+
+```text
+Symbol  Source     Trades  Win    Total R   PF    Exp
+EURUSD  Dukascopy  24      58.3%  +24.88R   3.48  +1.04R
+EURUSD  HistData   27      59.3%  +28.86R   3.61  +1.07R
+AUDUSD  Dukascopy  12      33.3%  +1.82R    1.22  +0.15R
+AUDUSD  HistData   16      43.8%  +8.33R    1.92  +0.52R
+USDCAD  Dukascopy  27      25.9%  -2.80R    0.86  -0.10R
+USDCAD  HistData   27      18.5%  -9.82R    0.56  -0.36R
+```
+
+### Walk-Forward After Spread Fix
+
+Same 4yr/2yr/2yr WF and 36-combo grid as prior validation.
+
+```text
+Config        Source     OOS Trades  OOS R   OOS Exp  Avg Retain  Verdict
+3-pair live   Dukascopy  63          +27.0R  +0.429R  189%        STRONG
+3-pair live   HistData   34          +2.3R   +0.068R  -5%         FAIL
+EUR+AUD only  Dukascopy  23          +23.7R  +1.030R  190%        STRONG
+EUR+AUD only  HistData   21          +17.3R  +0.824R  109%        STRONG
+```
+
+Interpretation:
+- USDCAD is now consistently the weak leg under the corrected spread model and fails on both data sources.
+- The 3-pair setup still passes Dukascopy WF, but fails HistData WF because USDCAD and optimizer instability drag fold 1/2.
+- EURUSD+AUDUSD passes on both data sources, with materially better OOS expectancy and lower drawdown, but lower trade count.
+
+Decision: USDCAD removed from the live Engulfing symbol list after user approval, leaving EURUSD and AUDUSD only.
+
+### Major-Symbol Fixed-Param Retest
+
+Tested the validated NY-session fixed params across USD majors on Dukascopy and HistData after removing USDCAD from live.
+
+```text
+Symbol  Source     Trades  Win    Total R   PF    Exp     Max DD          Verdict
+EURUSD  Dukascopy  24      58.3%  +24.88R   3.48  +1.04R  3.01R / 1.6%   KEEP
+EURUSD  HistData   27      59.3%  +28.86R   3.61  +1.07R  3.02R / 1.6%   KEEP
+AUDUSD  Dukascopy  12      33.3%  +1.82R    1.22  +0.15R  4.07R / 2.2%   KEEP, SPARSE
+AUDUSD  HistData   16      43.8%  +8.33R    1.92  +0.52R  4.05R / 2.1%   KEEP, SPARSE
+NZDUSD  Dukascopy  13      30.8%  +0.67R    1.07  +0.05R  4.13R / 2.3%   REJECT
+NZDUSD  HistData   15      33.3%  +2.20R    1.22  +0.15R  5.10R / 2.7%   REJECT
+USDJPY  Dukascopy  25      28.0%  -0.79R    0.96  -0.03R  5.12R / 3.1%   REJECT
+USDJPY  HistData   22      31.8%  +2.29R    1.15  +0.10R  5.04R / 2.7%   REJECT
+GBPUSD  Dukascopy  37      24.3%  -5.85R    0.79  -0.16R  13.27R / 7.5%  REJECT
+GBPUSD  HistData   35      22.9%  -7.39R    0.73  -0.21R  17.80R / 9.5%  REJECT
+USDCAD  Dukascopy  27      25.9%  -2.80R    0.86  -0.10R  7.64R / 4.2%   REMOVED
+USDCAD  HistData   27      18.5%  -9.82R    0.56  -0.36R  9.82R / 5.6%   REMOVED
+USDCHF  Dukascopy  17      23.5%  -3.10R    0.76  -0.18R  9.58R / 5.2%   REJECT
+USDCHF  HistData   19      26.3%  -1.61R    0.89  -0.08R  7.57R / 4.2%   REJECT
+```
+
+Decision: no additional majors added. Keep Engulfing live symbols at EURUSD and AUDUSD.

@@ -31,7 +31,20 @@
     ✓  data/historical/XAUUSD_M5_20160103-20260319.csv
 
   ---
-  Option B — MT5 (recent data only, Windows VPS required)
+  Option B — HistData (free independent cross-check against Dukascopy)
+
+  4. Download HistData M1 ZIPs, convert New York local market timestamps to UTC, and resample locally:
+  python fetch_data_histdata.py --symbols EURUSD GBPUSD AUDUSD NZDUSD USDJPY USDCAD USDCHF XAUUSD EURAUD CADJPY GBPCAD GBPNZD AUDJPY AUDCAD --timeframes M5 M15 H1 H4 D1 --start-year 2016 --end-date 2026-03-20 --insecure
+
+  5. Run a backtest against the HistData folder:
+  python run_backtest.py live_suite --data-source histdata
+
+  HistData files are saved under data/historical/histdata/.
+  Use --insecure only if your machine rejects HistData's SSL certificate.
+  US30 is not mapped because HistData does not provide a direct Dow/US30 equivalent.
+
+  ---
+  Option C — MT5 (recent data only, Windows VPS required)
 
   4. On the Windows VPS — copy the project folder across (or clone/sync it)
 

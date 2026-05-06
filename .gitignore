@@ -3,6 +3,7 @@ __pycache__/
 *.pyc
 *.pyo
 *.log
-data/historical/*.csv
+data/historical/*
 data/news/*
+data/raw/*
 output/*

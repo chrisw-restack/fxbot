@@ -410,6 +410,24 @@ STRATEGY_CONFIGS = {
             'rr_ratio':           [2.0, 2.5],
         },
     },
+    'engulfing_eur_aud': {
+        'class': ThreeLineStrikeStrategy,
+        'timeframes': ['M5'],
+        'symbols': ['EURUSD', 'AUDUSD'],
+        'min_trades': 10,   # 2-pair candidate is sparse but materially cleaner than USDCAD.
+        'fixed_params': {
+            'allowed_hours': tuple(range(13, 18)),  # NY session only
+            'sma_sep_pips': 5.0,
+            'sl_mode': 'fractal',
+            'fractal_n': 3,
+        },
+        'param_grid': {
+            'min_prev_body_pips': [0.0, 3.0, 5.0],
+            'engulf_ratio':       [1.0, 1.5, 2.0],
+            'max_sl_pips':        [15, 20],
+            'rr_ratio':           [2.0, 2.5],
+        },
+    },
     # ── Engulfing single-symbol / alternative-session configs ────────────────
     # Session sweep (2026-04-15) showed GBPUSD positive in London, negative in NY.
     # USDCAD has better expectancy in London than in NY core.
@@ -850,6 +868,11 @@ def main():
         '--workers', type=int, default=N_WORKERS,
         help=f'Parallel worker processes for IS optimisation (default: {N_WORKERS})',
     )
+    parser.add_argument(
+        '--data-source', choices=['dukascopy', 'histdata'],
+        default='dukascopy',
+        help='Historical data source. dukascopy uses data/historical; histdata uses data/historical/histdata.',
+    )
     args = parser.parse_args()
 
     cfg = STRATEGY_CONFIGS[args.strategy]
@@ -865,7 +888,7 @@ def main():
     csv_paths = []
     for sym in symbols:
         for tf in timeframes:
-            paths = find_csv(sym, tf)
+            paths = find_csv(sym, tf, data_source=args.data_source)
             if paths:
                 csv_paths.extend(paths)
                 for p in paths:

@@ -14,7 +14,7 @@ MIN_RR_RATIO = 1.0          # Minimum acceptable R:R — signals below this are 
 MIN_SL_PIPS = 5             # Signals with a stop-loss smaller than this are rejected
 
 # ── Portfolio Limits ──────────────────────────────────────────────────────────
-MAX_OPEN_TRADES = 6
+MAX_OPEN_TRADES = 8
 MAX_DAILY_LOSS_PCT = 0.02   # 2% of account balance — pauses trading for the day if hit
 
 # ── Pip Sizes ─────────────────────────────────────────────────────────────────

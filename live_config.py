@@ -10,7 +10,7 @@ from strategies.ims_reversal import ImsReversalStrategy
 
 IMS_SYMBOLS = ['USDJPY', 'XAUUSD', 'EURAUD', 'CADJPY', 'USDCAD', 'AUDUSD', 'EURUSD', 'GBPCAD', 'GBPUSD']
 IMS_REV_SYMBOLS = ['GBPNZD', 'AUDUSD', 'US30', 'USDCHF', 'XAUUSD', 'AUDJPY', 'AUDCAD', 'USDCAD']
-ENGULFING_SYMBOLS = ['EURUSD', 'AUDUSD', 'USDCAD']
+ENGULFING_SYMBOLS = ['EURUSD', 'AUDUSD']
 
 
 def create_live_strategy_specs():

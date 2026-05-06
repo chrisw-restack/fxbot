@@ -52,7 +52,7 @@ logging.basicConfig(
 # LIVE SYMBOLS:
 # EmaFibRetracementStrategy for ['EURUSD', 'GBPUSD', 'AUDUSD', 'NZDUSD', 'USDJPY', 'USDCAD', 'USDCHF']
 # EmaFibRunningStrategy for ['EURUSD', 'GBPUSD', 'AUDUSD', 'NZDUSD', 'USDJPY', 'USDCAD', 'USDCHF']
-# ThreeLineStrikeStrategy for ['EURUSD', 'AUDUSD', 'NZDUSD', 'USDJPY', 'USDCAD']
+# ThreeLineStrikeStrategy for ['EURUSD', 'AUDUSD', 'USDCAD']
 # ImsStrategy for ['USDJPY', 'XAUUSD', 'EURAUD', 'CADJPY', 'USDCAD', 'AUDUSD', 'EURUSD', 'GBPCAD', 'GBPUSD']
 
 # SYMBOLS         = ['EURUSD', 'GBPUSD', 'AUDUSD', 'NZDUSD', 'USDJPY', 'USDCAD', 'USDCHF', 'XAUUSD', 'USA100']
@@ -106,7 +106,7 @@ STRATEGIES = {
     'bigbeluga_h4_novol':           BigBelugaSdStrategy(tf_entry='H4', atr_period=200, zone_atr_mult=2.0, sl_buffer_atr=0.5, require_volume=False, d1_ema_period=50, cooldown_bars=15, blocked_hours=(*range(20,24),*range(0,9))),
     'smc_reversal':                 SmcReversalStrategy(fractal_n=3, fvg_window=4, ob_max_per_tf=3, wiggle_room_pct=0.003, sl_buffer_pct=0.0006, multiple_trades_per_bias=True),
     'smc_reversal_single':          SmcReversalStrategy(fractal_n=3, fvg_window=4, ob_max_per_tf=3, wiggle_room_pct=0.003, sl_buffer_pct=0.0006, multiple_trades_per_bias=False),
-    'three_line_strike':            ThreeLineStrikeStrategy(sl_mode='fractal', fractal_n=3, min_prev_body_pips=3.0, engulf_ratio=1.5, max_sl_pips=15, allowed_hours=tuple(range(0,24)), sma_sep_pips=5.0, pip_sizes={'USDJPY': 0.01}),
+    'three_line_strike':            ThreeLineStrikeStrategy(sl_mode='fractal', fractal_n=3, min_prev_body_pips=3.0, engulf_ratio=1.5, max_sl_pips=15, allowed_hours=tuple(range(13,18)), sma_sep_pips=5.0, pip_sizes={'USDJPY': 0.01}),
     # WF-validated params (XAUUSD M5, London session, STRONG): all 3 folds +, +0.265R OOS expect
     'hmr':    HourlyMeanReversionStrategy(tf_lower='M5',  min_move_pips=100, entry_window_start=20, entry_window_end=45, fractal_n=1, max_pullback_pips=0,  session_hours=tuple(range(8,17))),
     'hmr_m1': HourlyMeanReversionStrategy(tf_lower='M1',  min_move_pips=100, entry_window_start=20, entry_window_end=45, fractal_n=2, max_pullback_pips=30, session_hours=tuple(range(8,17))),
@@ -152,12 +152,31 @@ parser.add_argument(
     '--breakeven-at-r', type=float, default=None,
     help='Move SL to break-even once price reaches N×R in profit (e.g. 2.0, 3.0, 5.0). Default: off.',
 )
+parser.add_argument(
+    '--data-source', choices=['dukascopy', 'histdata'],
+    default='dukascopy',
+    help='Historical data source. dukascopy uses data/historical; histdata uses data/historical/histdata.',
+)
+parser.add_argument(
+    '--symbols', nargs='+', default=None,
+    help='Optional symbol override, e.g. --symbols EURUSD. For live_suite this filters each strategy to matching symbols.',
+)
 args = parser.parse_args()
+
+if args.symbols:
+    requested_symbols = {symbol.upper() for symbol in args.symbols}
 
 if args.strategy == 'live_suite':
     strategy_specs = create_live_strategy_specs()
+    if args.symbols:
+        strategy_specs = [
+            (strategy, [symbol for symbol in symbols if symbol.upper() in requested_symbols])
+            for strategy, symbols in strategy_specs
+        ]
+        strategy_specs = [(strategy, symbols) for strategy, symbols in strategy_specs if symbols]
 else:
-    strategy_specs = [(STRATEGIES[args.strategy], SYMBOLS)]
+    symbols = [symbol.upper() for symbol in args.symbols] if args.symbols else SYMBOLS
+    strategy_specs = [(STRATEGIES[args.strategy], symbols)]
 
 # Collect all timeframes needed across all strategies
 csv_paths = []
@@ -165,7 +184,7 @@ seen_paths = set()
 for strategy, symbols in strategy_specs:
     for symbol in symbols:
         for tf in strategy.TIMEFRAMES:
-            paths = find_csv(symbol, tf)
+            paths = find_csv(symbol, tf, data_source=args.data_source)
             if paths:
                 for p in paths:
                     if p not in seen_paths:
@@ -223,5 +242,6 @@ end_date = datetime.strptime(args.end_date, '%Y-%m-%d') if args.end_date else No
 if start_date or end_date:
     date_range = f"{args.start_date or 'start'} to {args.end_date or 'end'}"
     print(f"\nDate range: {date_range}")
+print(f"\nData source: {args.data_source}")
 
 engine.run(csv_paths, start_date=start_date, end_date=end_date)
