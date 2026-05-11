@@ -66,6 +66,7 @@ MAGIC_NUMBERS: dict[str, int] = {
     'IMS_H4_M15':        1004,
     'IMSRev_H4_M15':     1005,
     'LondonBreakout':    1006,
+    'Failed2_H4_H1_M5_market': 1007,
 }
 
 # ── Spread ───────────────────────────────────────────────────────────────────
@@ -100,12 +101,12 @@ BACKTEST_SPREAD_PIPS: dict[str, float] = {
     'GBPNZD': 0.8,
     'NZDJPY': 0.5,
     'XAUUSD': 1.1,
-    'USTEC':  0.9,    # measured via measure_spreads.py on ICMarkets Raw demo, active session, 2026-04-02
+    'USTEC':  1.0,    # measured via measure_spreads.py on ICMarkets Raw demo, active session, 2026-05-11
     'US30':   0.7,    # measured 2026-04-02
     'US500':  3.0,    # measured 2026-04-02
     'DE40':   0.8,    # measured 2026-04-02
     # Dukascopy labels — same spread assumptions as USTEC/US30/US500
-    'USA100': 0.9,
+    'USA100': 1.0,
     'USA30':  0.7,
     'USA500': 3.0,
 }

@@ -47,6 +47,10 @@ DEFAULT_TIMEFRAMES = ['M5', 'M15', 'H1', 'H4', 'D1']
 # Project symbol -> HistData symbol. US30 is intentionally absent: HistData's
 # closest comparable index is SPXUSD/NSXUSD, not Dow/US30.
 HISTDATA_SYMBOLS = {symbol: symbol for symbol in DEFAULT_SYMBOLS}
+HISTDATA_SYMBOLS.update({
+    'USA100': 'NSXUSD',
+    'USTEC': 'NSXUSD',
+})
 
 RESAMPLE_RULES = {
     'M1': '1min',
@@ -157,6 +161,8 @@ def read_histdata_zip(path: Path) -> pd.DataFrame:
 
 def round_prices(df: pd.DataFrame, symbol: str) -> pd.DataFrame:
     if symbol == 'XAUUSD':
+        decimals = 2
+    elif symbol in {'USA100', 'USTEC'}:
         decimals = 2
     elif 'JPY' in symbol:
         decimals = 3

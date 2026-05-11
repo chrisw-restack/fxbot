@@ -99,6 +99,20 @@ Note: XAUUSD is included in run_backtest.py SYMBOLS. For WF and param sweep, XAU
 
 **New-filter conclusion (definitive):** All 3 folds chose `align=False, pend_age=0`. The recent-swing alignment filter (#5) and pending max-age (#6) **do not improve OOS performance** for this strategy. They remain available as toggleable params (defaults False / 0) but should not be enabled.
 
+### Live-suite pending expiry tests (2026-05-08)
+
+Question tested: standalone pending-age tests may miss portfolio effects because EmaFib pendings consume global `MAX_OPEN_TRADES` slots in the live suite. A full live-suite replay was run with `MAX_OPEN_TRADES=8` and `MAX_DAILY_LOSS_PCT=2%`, varying only EmaFibRetracement pending invalidation.
+
+| Scenario | Trades | Win% | Total R | PF | Exp | Max DD | Max-open blocks |
+|----------|--------|------|---------|----|-----|--------|-----------------|
+| Baseline (no extra expiry) | 2417 | 27.2 | **+842.6R** | 1.47 | **+0.349R** | 28.2R | 205 |
+| Virtual TP reached before fill | 2644 | 25.2 | +777.5R | 1.39 | +0.294R | 35.1R | 229 |
+| Price moved 1R away before fill | 2642 | 24.6 | +516.6R | 1.25 | +0.196R | 45.5R | 161 |
+| Price moved 1.5R away before fill | 2679 | 24.2 | +477.5R | 1.23 | +0.178R | 48.5R | 167 |
+| Price moved 2R away before fill | 2707 | 24.0 | +488.7R | 1.23 | +0.181R | 53.1R | 177 |
+
+Conclusion: extra pending expiry should stay **off**. The move-away rules reduced global max-open blocks, but the freed capacity was redeployed into lower-quality trades and the suite lost substantial total R with larger drawdowns. Virtual-TP expiry also worsened results and increased max-open blocks.
+
 ---
 
 ### Walk-forward 2026-03-30 (superseded — pre-fixes)

@@ -6,11 +6,14 @@ from strategies.ema_fib_running import EmaFibRunningStrategy
 from strategies.three_line_strike import ThreeLineStrikeStrategy
 from strategies.ims import ImsStrategy
 from strategies.ims_reversal import ImsReversalStrategy
+from strategies.failed2 import Failed2Strategy
 
 
 IMS_SYMBOLS = ['USDJPY', 'XAUUSD', 'EURAUD', 'CADJPY', 'USDCAD', 'AUDUSD', 'EURUSD', 'GBPCAD', 'GBPUSD']
 IMS_REV_SYMBOLS = ['GBPNZD', 'AUDUSD', 'US30', 'USDCHF', 'XAUUSD', 'AUDJPY', 'AUDCAD', 'USDCAD']
 ENGULFING_SYMBOLS = ['EURUSD', 'AUDUSD']
+FAILED2_SYMBOLS = ['USTEC']
+FAILED2_NAME = 'Failed2_H4_H1_M5_market'
 
 
 def create_live_strategy_specs():
@@ -81,13 +84,33 @@ def create_live_strategy_specs():
         max_losses_per_bias=1,
         pip_sizes={s: config.PIP_SIZE[s] for s in IMS_REV_SYMBOLS if s in config.PIP_SIZE},
     )
+    failed2 = Failed2Strategy(
+        tf_bias='H4',
+        tf_intermediate='H1',
+        tf_entry='M5',
+        entry_mode='market',
+        mss_fractal_n=4,
+        sl_fractal_n=2,
+        rr_ratio=4.0,
+        blocked_hours=(*range(0, 13), *range(18, 24)),
+        trend_filter='d1_ema',
+        d1_range_filter='block_top_pct',
+        d1_range_block_pct=0.7,
+        pip_sizes={s: config.PIP_SIZE[s] for s in FAILED2_SYMBOLS if s in config.PIP_SIZE},
+    )
     return [
         (ema_fib, config.SYMBOLS),
         (ema_fib_running, config.SYMBOLS),
         (engulfing, ENGULFING_SYMBOLS),
         (ims, IMS_SYMBOLS),
         (ims_reversal, IMS_REV_SYMBOLS),
+        (failed2, FAILED2_SYMBOLS),
     ]
+
+
+def live_risk_pct_overrides() -> dict[str, float]:
+    """Per-strategy risk settings; empty means all strategies use config.RISK_PCT."""
+    return {}
 
 
 def live_strategy_names() -> list[str]:

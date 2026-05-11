@@ -34,6 +34,8 @@ class EmaFibRetracementStrategy:
         d1_atr_period: int = 14,
         require_recent_swing_alignment: bool = False,
         pending_max_age_bars: int = 0,
+        cancel_if_virtual_tp_hit: bool = False,
+        pending_cancel_at_r: float | None = None,
         pip_sizes: dict[str, float] | None = None,
     ):
         self.ema_fast = ema_fast
@@ -52,6 +54,8 @@ class EmaFibRetracementStrategy:
         self.d1_atr_period = d1_atr_period
         self.require_recent_swing_alignment = require_recent_swing_alignment
         self.pending_max_age_bars = pending_max_age_bars
+        self.cancel_if_virtual_tp_hit = cancel_if_virtual_tp_hit
+        self.pending_cancel_at_r = pending_cancel_at_r
         self.pip_sizes = pip_sizes or {
             'EURUSD': 0.0001, 'GBPUSD': 0.0001, 'AUDUSD': 0.0001,
             'NZDUSD': 0.0001, 'USDJPY': 0.01,   'USDCAD': 0.0001,
@@ -207,6 +211,68 @@ class EmaFibRetracementStrategy:
         k = 2.0 / (period + 1)
         return close * k + prev_ema * (1 - k), sma_sum
 
+    def _pending_levels(self, symbol: str) -> tuple[float, float, float] | None:
+        swing_high = self._pending_swing_high.get(symbol)
+        swing_low = self._pending_swing_low.get(symbol)
+        direction = self._pending_direction.get(symbol)
+        if swing_high is None or swing_low is None or direction is None:
+            return None
+        if swing_high <= swing_low:
+            return None
+
+        swing_range = swing_high - swing_low
+        if direction == 'BUY':
+            entry = swing_high - self.fib_entry * swing_range
+            stop_loss = swing_low
+            take_profit = swing_low + self.fib_tp * swing_range
+        else:
+            entry = swing_low + self.fib_entry * swing_range
+            stop_loss = swing_high
+            take_profit = swing_high - self.fib_tp * swing_range
+        return entry, stop_loss, take_profit
+
+    def _pending_stale_by_price(self, symbol: str, event: BarEvent) -> bool:
+        levels = self._pending_levels(symbol)
+        if levels is None:
+            return False
+
+        entry, stop_loss, take_profit = levels
+        direction = self._pending_direction[symbol]
+        risk = abs(entry - stop_loss)
+        if risk <= 0:
+            return False
+
+        if direction == 'BUY':
+            if self.cancel_if_virtual_tp_hit and event.high >= take_profit:
+                return True
+            if self.pending_cancel_at_r is not None:
+                return event.high >= entry + self.pending_cancel_at_r * risk
+        else:
+            if self.cancel_if_virtual_tp_hit and event.low <= take_profit:
+                return True
+            if self.pending_cancel_at_r is not None:
+                return event.low <= entry - self.pending_cancel_at_r * risk
+
+        return False
+
+    def _clear_pending(self, symbol: str):
+        self._pending_entry[symbol] = None
+        self._pending_direction[symbol] = None
+        self._pending_swing_high[symbol] = None
+        self._pending_swing_low[symbol] = None
+        self._pending_placed_bar[symbol] = None
+
+    def _cancel_signal(self, symbol: str, event: BarEvent) -> Signal:
+        return Signal(
+            symbol=symbol,
+            direction='CANCEL',
+            order_type=self.ORDER_TYPE,
+            entry_price=0.0,
+            stop_loss=0.0,
+            strategy_name=self.NAME,
+            timestamp=event.timestamp,
+        )
+
     # ── D1 processing ────────────────────────────────────────────────────────
 
     def _update_d1(self, symbol: str, event: BarEvent):
@@ -298,22 +364,11 @@ class EmaFibRetracementStrategy:
                 and placed_bar is not None
                 and (bar_idx - placed_bar) >= self.pending_max_age_bars
             )
+            price_stale = self._pending_stale_by_price(symbol, event)
 
-            if h1_flipped or d1_flipped or aged_out:
-                self._pending_entry[symbol] = None
-                self._pending_direction[symbol] = None
-                self._pending_swing_high[symbol] = None
-                self._pending_swing_low[symbol] = None
-                self._pending_placed_bar[symbol] = None
-                return Signal(
-                    symbol=symbol,
-                    direction='CANCEL',
-                    order_type=self.ORDER_TYPE,
-                    entry_price=0.0,
-                    stop_loss=0.0,
-                    strategy_name=self.NAME,
-                    timestamp=event.timestamp,
-                )
+            if h1_flipped or d1_flipped or aged_out or price_stale:
+                self._clear_pending(symbol)
+                return self._cancel_signal(symbol, event)
             return None  # Pending still valid, wait
 
         # ── Filter 1: Cooldown after stop-out ────────────────────────────────

@@ -20,9 +20,10 @@ from risk.risk_manager import RiskManager
 from portfolio.portfolio_manager import PortfolioManager
 from execution.mt5_execution import MT5Execution
 from utils.trade_logger import TradeLogger
+from utils.trade_journal import TradeJournal
 from data.mt5_data import connect, disconnect, reconnect, get_latest_completed_bar, get_recent_bars
 from data.historical_loader import bar_close_time
-from live_config import create_live_strategy_specs, live_symbols
+from live_config import create_live_strategy_specs, live_symbols, live_risk_pct_overrides
 
 from utils.telegram_notifier import TelegramNotifier
 import config
@@ -88,9 +89,11 @@ def main():
         execution    = MT5Execution(magic_numbers=config.MAGIC_NUMBERS)
         portfolio    = PortfolioManager()
         trade_logger = TradeLogger()
+        trade_journal = TradeJournal()
         risk         = RiskManager(
             account_balance_fn=execution.get_account_balance,
             rr_ratio=2.5,  # engulfing uses 2.5R (fib strategies set their own TP and bypass this)
+            risk_pct_overrides=live_risk_pct_overrides(),
         )
 
         notifier = TelegramNotifier()
@@ -101,6 +104,7 @@ def main():
             execution=execution,
             trade_logger=trade_logger,
             notifier=notifier,
+            trade_journal=trade_journal,
         )
 
         strategy_specs = create_live_strategy_specs()
@@ -170,6 +174,7 @@ def main():
                         if closed is None and pos.get('state') == 'PENDING':
                             strategy_name = pos.get('strategy_name') or pos.get('comment') or ''
                             portfolio.record_close(pos['symbol'], 0.0, strategy_name)
+                            trade_journal.log_order_cancelled(pos, reason='pending_missing_from_broker')
                             logger.info(
                                 f"Pending order no longer active: {pos['symbol']} "
                                 f"ticket={ticket} ({strategy_name})"
@@ -190,6 +195,7 @@ def main():
                             f"Trade closed by broker: {closed['symbol']} {closed['direction']} "
                             f"ticket={ticket} result={closed['result']} pnl={closed['pnl']:.2f}"
                         )
+                        trade_journal.log_close(closed)
                         notifier.notify_order_closed(
                             symbol=closed['symbol'],
                             direction=closed['direction'],

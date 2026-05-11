@@ -5,6 +5,7 @@ from risk.risk_manager import RiskManager
 from portfolio.portfolio_manager import PortfolioManager
 from execution.base_execution import BaseExecution
 from utils.trade_logger import TradeLogger
+from utils.trade_journal import TradeJournal
 from data.news_filter import NewsFilter
 
 logger = logging.getLogger(__name__)
@@ -25,6 +26,7 @@ class EventEngine:
         trade_logger: TradeLogger,
         notifier=None,
         news_filter: NewsFilter | None = None,
+        trade_journal: TradeJournal | None = None,
     ):
         self.risk = risk_manager
         self.portfolio = portfolio_manager
@@ -32,6 +34,7 @@ class EventEngine:
         self.logger = trade_logger
         self.notifier = notifier
         self.news_filter = news_filter
+        self.trade_journal = trade_journal
         # (symbol, timeframe) -> list of strategy instances
         self._subscriptions: dict[tuple[str, str], list] = {}
         # strategy NAME -> strategy instance (for trade-closed callbacks)
@@ -88,6 +91,9 @@ class EventEngine:
             # bars of the appropriate granularity.
             if signal.direction != 'CANCEL':
                 signal.entry_timeframe = event.timeframe
+            context = self._journal_context(strategy, signal.symbol)
+            if self.trade_journal:
+                self.trade_journal.log_signal(signal, context)
 
             logger.info(
                 f"Signal: {signal.symbol} {signal.direction} {signal.order_type} "
@@ -96,6 +102,8 @@ class EventEngine:
             )
 
             if signal.direction == 'CANCEL':
+                if self.trade_journal:
+                    self.trade_journal.log_cancel_requested(signal, context)
                 self._handle_cancel(signal)
                 continue
 
@@ -104,14 +112,20 @@ class EventEngine:
                 signal.symbol, signal.timestamp
             ):
                 logger.info(f"Blocked by news filter: {signal.symbol} {signal.direction}")
+                if self.trade_journal:
+                    self.trade_journal.log_rejected(signal, 'news_filter', context)
                 continue
 
             enriched = self.risk.process(signal)
             if enriched is None:
                 logger.info(f"Rejected by risk manager: {signal.symbol} {signal.direction}")
+                if self.trade_journal:
+                    self.trade_journal.log_rejected(signal, 'risk_manager', context)
                 continue
 
             if not self.portfolio.approve(enriched):
+                if self.trade_journal:
+                    self.trade_journal.log_rejected(signal, 'portfolio', context)
                 continue
 
             ticket = self.execution.place_order(
@@ -137,6 +151,11 @@ class EventEngine:
                 )
                 self.portfolio.record_open(enriched, ticket)
                 self.logger.log_open(enriched, ticket)
+                if self.trade_journal:
+                    execution_details = None
+                    if hasattr(self.execution, 'get_last_order_details'):
+                        execution_details = self.execution.get_last_order_details()
+                    self.trade_journal.log_order_placed(enriched, ticket, context, execution_details)
                 if self.notifier:
                     self.notifier.notify_order_placed(
                         symbol=enriched.symbol,
@@ -147,6 +166,8 @@ class EventEngine:
                         lots=enriched.lot_size,
                         strategy=enriched.strategy_name,
                     )
+            elif self.trade_journal:
+                self.trade_journal.log_rejected(signal, 'execution_order_failed', context)
 
     def _handle_cancel(self, signal):
         """Cancel pending orders matching the signal's symbol and strategy."""
@@ -156,6 +177,8 @@ class EventEngine:
                     and pos.get('open_time') is None):
                 self.execution.close_order(pos['ticket'])
                 self.portfolio.record_close(signal.symbol, 0.0, signal.strategy_name)
+                if self.trade_journal:
+                    self.trade_journal.log_order_cancelled(pos, reason='strategy_cancel')
                 logger.info(
                     f"Cancelled pending order: {signal.symbol} "
                     f"ticket={pos['ticket']} ({signal.strategy_name})"
@@ -170,3 +193,17 @@ class EventEngine:
             strategy.notify_loss(trade['symbol'])
         elif trade.get('result') == 'WIN' and hasattr(strategy, 'notify_win'):
             strategy.notify_win(trade['symbol'])
+
+    def _journal_context(self, strategy, symbol: str) -> dict:
+        if hasattr(strategy, 'get_last_signal_context'):
+            context = strategy.get_last_signal_context(symbol)
+            if context:
+                return context
+        if hasattr(strategy, 'get_status'):
+            try:
+                status = strategy.get_status(symbol)
+            except Exception:
+                status = None
+            if status:
+                return {'status': status}
+        return {}

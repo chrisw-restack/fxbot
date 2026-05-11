@@ -23,6 +23,7 @@ from strategies.ema_fib_retracement_intraday import EmaFibRetracementIntradayStr
 from strategies.ict_judas_swing import IctJudasSwingStrategy
 from strategies.gaussian_channel import GaussianChannelStrategy
 from strategies.the_strat import TheStratStrategy
+from strategies.failed2 import Failed2Strategy
 from strategies.supply_demand import SupplyDemandStrategy
 from strategies.keltner_reversion import KeltnerReversionStrategy
 from strategies.range_fade import RangeFadeStrategy
@@ -76,6 +77,14 @@ STRATEGIES = {
     'gaussian_channel':             GaussianChannelStrategy(period=144, poles=4, tr_mult=1.414),
     'the_strat':                    TheStratStrategy(min_sl_pips=8, cooldown_bars=3),
     'the_strat_m15':                TheStratStrategy(min_sl_pips=5, cooldown_bars=3, tf_bias='H4', tf_intermediate='H1', tf_entry='M15'),
+    'failed2':                      Failed2Strategy(tf_bias='H4', tf_intermediate='H1', tf_entry='M5', entry_mode='market', mss_fractal_n=2, sl_fractal_n=2, rr_ratio=2.0, pip_sizes=dict(config.PIP_SIZE)),
+    'failed2_fvg':                  Failed2Strategy(tf_bias='H4', tf_intermediate='H1', tf_entry='M5', entry_mode='fvg', mss_fractal_n=2, sl_fractal_n=2, rr_ratio=2.0, fvg_entry_pct=0.5, pip_sizes=dict(config.PIP_SIZE)),
+    'failed2_best':                 Failed2Strategy(tf_bias='H4', tf_intermediate='H1', tf_entry='M5', entry_mode='market', mss_fractal_n=3, sl_fractal_n=2, rr_ratio=3.5, blocked_hours=(*range(0, 12), *range(17, 24)), pip_sizes=dict(config.PIP_SIZE)),
+    'failed2_best_ny':              Failed2Strategy(tf_bias='H4', tf_intermediate='H1', tf_entry='M5', entry_mode='market', mss_fractal_n=3, sl_fractal_n=2, rr_ratio=3.5, blocked_hours=(*range(0, 13), *range(18, 24)), pip_sizes=dict(config.PIP_SIZE)),
+    'failed2_best_htf_extreme':     Failed2Strategy(tf_bias='H4', tf_intermediate='H1', tf_entry='M5', entry_mode='market', mss_fractal_n=3, sl_fractal_n=2, rr_ratio=3.5, blocked_hours=(*range(0, 12), *range(17, 24)), invalidate_on_bias_extreme=True, pip_sizes=dict(config.PIP_SIZE)),
+    'failed2_filtered':             Failed2Strategy(tf_bias='H4', tf_intermediate='H1', tf_entry='M5', entry_mode='market', mss_fractal_n=3, sl_fractal_n=2, rr_ratio=3.5, blocked_hours=(*range(0, 12), *range(17, 24)), trend_filter='d1_ema', d1_range_filter='block_top_pct', d1_range_block_pct=0.8, pip_sizes=dict(config.PIP_SIZE)),
+    'failed2_usa100_candidate':     Failed2Strategy(tf_bias='H4', tf_intermediate='H1', tf_entry='M5', entry_mode='market', mss_fractal_n=4, sl_fractal_n=2, rr_ratio=4.0, blocked_hours=(*range(0, 13), *range(18, 24)), trend_filter='d1_ema', d1_range_filter='block_top_pct', d1_range_block_pct=0.7, pip_sizes=dict(config.PIP_SIZE)),
+    'failed2_fx_usdjpy_candidate':  Failed2Strategy(tf_bias='H4', tf_intermediate='H1', tf_entry='M5', entry_mode='market', mss_fractal_n=3, sl_fractal_n=3, rr_ratio=4.0, allowed_bias_kinds=('2', 'failed2'), blocked_hours=tuple(h for h in range(24) if h not in (12, 13, 15, 16)), trend_filter='d1_ema', d1_range_filter='block_top_pct', d1_range_block_pct=0.8, pip_sizes=dict(config.PIP_SIZE)),
     'supply_demand':                SupplyDemandStrategy(),
     'keltner_reversion':            KeltnerReversionStrategy(),
     'range_fade':                   RangeFadeStrategy(),

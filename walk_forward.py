@@ -39,6 +39,7 @@ from strategies.smc_reversal import SmcReversalStrategy
 from strategies.three_line_strike import ThreeLineStrikeStrategy
 from strategies.hourly_mean_reversion import HourlyMeanReversionStrategy
 from strategies.london_breakout import LondonBreakoutStrategy
+from strategies.failed2 import Failed2Strategy
 
 logging.basicConfig(level=logging.ERROR)
 sys.stdout.reconfigure(line_buffering=True)
@@ -638,6 +639,338 @@ STRATEGY_CONFIGS = {
             'rr_ratio': [1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 2.0],
         },
     },
+    'failed2_wf': {
+        'class': Failed2Strategy,
+        'timeframes': ['H4', 'H1', 'M5'],
+        'symbols': ['USA100', 'EURUSD', 'GBPUSD'],
+        'min_trades': 100,
+        'fixed_params': {
+            'tf_bias': 'H4',
+            'tf_intermediate': 'H1',
+            'tf_entry': 'M5',
+            'fvg_entry_pct': 0.5,
+            'pip_sizes': dict(config.PIP_SIZE),
+        },
+        'param_grid': {
+            'entry_mode':      ['market', 'fvg'],
+            'mss_fractal_n':   [1, 2, 3],
+            'sl_fractal_n':    [1, 2, 3],
+            'sl_anchor':       ['wick', 'body'],
+            'tp_rr_ratio':     [2.5, 3.0, 3.5],
+            'blocked_hours':   [
+                (*range(0, 12), *range(17, 24)),  # 12-17 UTC London/NY overlap
+                (*range(0, 13), *range(18, 24)),  # 13-18 UTC NY
+            ],
+        },
+    },
+    'failed2_filters_all': {
+        'class': Failed2Strategy,
+        'timeframes': ['D1', 'H4', 'H1', 'M5'],
+        'symbols': ['USA100', 'EURUSD', 'GBPUSD'],
+        'min_trades': 50,
+        'fixed_params': {
+            'tf_bias': 'H4',
+            'tf_intermediate': 'H1',
+            'tf_entry': 'M5',
+            'entry_mode': 'market',
+            'mss_fractal_n': 3,
+            'sl_fractal_n': 2,
+            'sl_anchor': 'wick',
+            'tp_rr_ratio': 3.5,
+            'blocked_hours': (*range(0, 12), *range(17, 24)),
+            'd1_range_block_pct': 0.8,
+            'pip_sizes': dict(config.PIP_SIZE),
+        },
+        'param_grid': {
+            'allowed_bias_kinds': [
+                ('2', '3', 'failed2'),
+                ('failed2',),
+                ('2', '3'),
+            ],
+            'd1_range_filter': ['off', 'block_top_pct'],
+            'trend_filter': ['off', 'd1_ema', 'h4_ema'],
+        },
+    },
+    'failed2_filters_usa100': {
+        'class': Failed2Strategy,
+        'timeframes': ['D1', 'H4', 'H1', 'M5'],
+        'symbols': ['USA100'],
+        'min_trades': 25,
+        'fixed_params': {
+            'tf_bias': 'H4',
+            'tf_intermediate': 'H1',
+            'tf_entry': 'M5',
+            'entry_mode': 'market',
+            'mss_fractal_n': 3,
+            'sl_fractal_n': 2,
+            'sl_anchor': 'wick',
+            'tp_rr_ratio': 3.5,
+            'blocked_hours': (*range(0, 12), *range(17, 24)),
+            'd1_range_block_pct': 0.8,
+            'pip_sizes': dict(config.PIP_SIZE),
+        },
+        'param_grid': {
+            'allowed_bias_kinds': [
+                ('2', '3', 'failed2'),
+                ('failed2',),
+                ('2', '3'),
+            ],
+            'd1_range_filter': ['off', 'block_top_pct'],
+            'trend_filter': ['off', 'd1_ema', 'h4_ema'],
+        },
+    },
+    'failed2_usa100_candidate': {
+        # Focused candidate-family WF from 2026-05-09 robustness suite.
+        # Tests whether the better-looking cluster around MSS4/SL2/4R/13-18
+        # generalizes, without reopening a broad blind search.
+        'class': Failed2Strategy,
+        'timeframes': ['D1', 'H4', 'H1', 'M5'],
+        'symbols': ['USA100'],
+        'min_trades': 25,
+        'fixed_params': {
+            'tf_bias': 'H4',
+            'tf_intermediate': 'H1',
+            'tf_entry': 'M5',
+            'entry_mode': 'market',
+            'sl_anchor': 'wick',
+            'allowed_bias_kinds': ('2', '3', 'failed2'),
+            'd1_range_filter': 'block_top_pct',
+            'trend_filter': 'd1_ema',
+            'pip_sizes': dict(config.PIP_SIZE),
+        },
+        'param_grid': {
+            'mss_fractal_n': [3, 4],
+            'sl_fractal_n': [2, 3],
+            'tp_rr_ratio': [3.5, 4.0],
+            'blocked_hours': [
+                (*range(0, 12), *range(17, 24)),  # allow 12-17 UTC
+                (*range(0, 13), *range(18, 24)),  # allow 13-18 UTC
+            ],
+            'd1_range_block_pct': [0.7, 0.8],
+        },
+    },
+    'failed2_filters_fx': {
+        'class': Failed2Strategy,
+        'timeframes': ['D1', 'H4', 'H1', 'M5'],
+        'symbols': ['EURUSD', 'GBPUSD'],
+        'min_trades': 40,
+        'fixed_params': {
+            'tf_bias': 'H4',
+            'tf_intermediate': 'H1',
+            'tf_entry': 'M5',
+            'entry_mode': 'market',
+            'mss_fractal_n': 3,
+            'sl_fractal_n': 2,
+            'sl_anchor': 'wick',
+            'tp_rr_ratio': 3.5,
+            'blocked_hours': (*range(0, 12), *range(17, 24)),
+            'd1_range_block_pct': 0.8,
+            'pip_sizes': dict(config.PIP_SIZE),
+        },
+        'param_grid': {
+            'allowed_bias_kinds': [
+                ('2', '3', 'failed2'),
+                ('failed2',),
+                ('2', '3'),
+            ],
+            'd1_range_filter': ['off', 'block_top_pct'],
+            'trend_filter': ['off', 'd1_ema', 'h4_ema'],
+        },
+    },
+    'failed2_fx_top5_candidate': {
+        # FX-major branch from 2026-05 diagnostics.
+        # Excludes NZDUSD/USDCHF, which were clear drags in the baseline.
+        # Tests no-HTF-3 bias and skips 14 UTC, the weakest entry hour.
+        'class': Failed2Strategy,
+        'timeframes': ['D1', 'H4', 'H1', 'M5'],
+        'symbols': ['USDCAD', 'USDJPY', 'AUDUSD', 'GBPUSD', 'EURUSD'],
+        'min_trades': 75,
+        'fixed_params': {
+            'tf_bias': 'H4',
+            'tf_intermediate': 'H1',
+            'tf_entry': 'M5',
+            'entry_mode': 'market',
+            'sl_anchor': 'wick',
+            'trend_filter': 'd1_ema',
+            'pip_sizes': dict(config.PIP_SIZE),
+        },
+        'param_grid': {
+            'mss_fractal_n': [3, 4],
+            'sl_fractal_n': [2, 3],
+            'tp_rr_ratio': [3.5, 4.0],
+            'allowed_bias_kinds': [
+                ('2',),
+                ('2', 'failed2'),
+            ],
+            'blocked_hours': [
+                tuple(h for h in range(24) if h not in (12, 13, 15)),
+                tuple(h for h in range(24) if h not in (12, 13, 15, 16)),
+                tuple(h for h in range(24) if h not in (13, 15)),
+            ],
+            'd1_range_filter': ['off', 'block_top_pct'],
+            'd1_range_block_pct': [0.8],
+        },
+    },
+    'failed2_fx_top4_candidate': {
+        # Drops EURUSD as well if pooled top5 remains too diluted.
+        'class': Failed2Strategy,
+        'timeframes': ['D1', 'H4', 'H1', 'M5'],
+        'symbols': ['USDCAD', 'USDJPY', 'AUDUSD', 'GBPUSD'],
+        'min_trades': 60,
+        'fixed_params': {
+            'tf_bias': 'H4',
+            'tf_intermediate': 'H1',
+            'tf_entry': 'M5',
+            'entry_mode': 'market',
+            'sl_anchor': 'wick',
+            'trend_filter': 'd1_ema',
+            'pip_sizes': dict(config.PIP_SIZE),
+        },
+        'param_grid': {
+            'mss_fractal_n': [3, 4],
+            'sl_fractal_n': [2, 3],
+            'tp_rr_ratio': [3.5, 4.0],
+            'allowed_bias_kinds': [
+                ('2',),
+                ('2', 'failed2'),
+            ],
+            'blocked_hours': [
+                tuple(h for h in range(24) if h not in (12, 13, 15)),
+                tuple(h for h in range(24) if h not in (12, 13, 15, 16)),
+                tuple(h for h in range(24) if h not in (13, 15)),
+            ],
+            'd1_range_filter': ['off', 'block_top_pct'],
+            'd1_range_block_pct': [0.8],
+        },
+    },
+    'failed2_fx_usdcad_candidate': {
+        'class': Failed2Strategy,
+        'timeframes': ['D1', 'H4', 'H1', 'M5'],
+        'symbols': ['USDCAD'],
+        'min_trades': 15,
+        'fixed_params': {
+            'tf_bias': 'H4',
+            'tf_intermediate': 'H1',
+            'tf_entry': 'M5',
+            'entry_mode': 'market',
+            'sl_anchor': 'wick',
+            'trend_filter': 'd1_ema',
+            'pip_sizes': dict(config.PIP_SIZE),
+        },
+        'param_grid': {
+            'mss_fractal_n': [3, 4],
+            'sl_fractal_n': [2, 3],
+            'tp_rr_ratio': [3.5, 4.0],
+            'allowed_bias_kinds': [
+                ('2',),
+                ('2', 'failed2'),
+            ],
+            'blocked_hours': [
+                tuple(h for h in range(24) if h not in (12, 13, 15)),
+                tuple(h for h in range(24) if h not in (12, 13, 15, 16)),
+                tuple(h for h in range(24) if h not in (13, 15)),
+            ],
+            'd1_range_filter': ['off', 'block_top_pct'],
+            'd1_range_block_pct': [0.8],
+        },
+    },
+    'failed2_fx_usdjpy_candidate': {
+        'class': Failed2Strategy,
+        'timeframes': ['D1', 'H4', 'H1', 'M5'],
+        'symbols': ['USDJPY'],
+        'min_trades': 15,
+        'fixed_params': {
+            'tf_bias': 'H4',
+            'tf_intermediate': 'H1',
+            'tf_entry': 'M5',
+            'entry_mode': 'market',
+            'sl_anchor': 'wick',
+            'trend_filter': 'd1_ema',
+            'pip_sizes': dict(config.PIP_SIZE),
+        },
+        'param_grid': {
+            'mss_fractal_n': [3, 4],
+            'sl_fractal_n': [2, 3],
+            'tp_rr_ratio': [3.5, 4.0],
+            'allowed_bias_kinds': [
+                ('2',),
+                ('2', 'failed2'),
+            ],
+            'blocked_hours': [
+                tuple(h for h in range(24) if h not in (12, 13, 15)),
+                tuple(h for h in range(24) if h not in (12, 13, 15, 16)),
+                tuple(h for h in range(24) if h not in (13, 15)),
+            ],
+            'd1_range_filter': ['off', 'block_top_pct'],
+            'd1_range_block_pct': [0.8],
+        },
+    },
+    'failed2_fx_audusd_candidate': {
+        # Focused from 2026-05-11 USD-major session/parameter sweep.
+        # Best optimisation row: AUDUSD, 12-15 UTC, MSS3/SL2, 3.5R, 2+failed2, D1 range on.
+        'class': Failed2Strategy,
+        'timeframes': ['D1', 'H4', 'H1', 'M5'],
+        'symbols': ['AUDUSD'],
+        'min_trades': 15,
+        'fixed_params': {
+            'tf_bias': 'H4',
+            'tf_intermediate': 'H1',
+            'tf_entry': 'M5',
+            'entry_mode': 'market',
+            'sl_anchor': 'wick',
+            'trend_filter': 'd1_ema',
+            'pip_sizes': dict(config.PIP_SIZE),
+        },
+        'param_grid': {
+            'mss_fractal_n': [3, 4],
+            'sl_fractal_n': [2],
+            'tp_rr_ratio': [3.5, 4.0],
+            'allowed_bias_kinds': [
+                ('2',),
+                ('2', 'failed2'),
+            ],
+            'blocked_hours': [
+                tuple(h for h in range(24) if h not in (12, 13, 14, 15)),
+                tuple(h for h in range(24) if h not in (12, 13, 15, 16)),
+                tuple(h for h in range(24) if h not in (12, 13, 14, 15, 16)),
+            ],
+            'd1_range_filter': ['off', 'block_top_pct'],
+            'd1_range_block_pct': [0.8],
+        },
+    },
+    'failed2_fx_gbpusd_candidate': {
+        # Focused from 2026-05-11 USD-major session/parameter sweep.
+        # Best optimisation row: GBPUSD, 17-20 UTC, MSS4/SL3, 4R, 2+failed2, D1 range off.
+        'class': Failed2Strategy,
+        'timeframes': ['D1', 'H4', 'H1', 'M5'],
+        'symbols': ['GBPUSD'],
+        'min_trades': 15,
+        'fixed_params': {
+            'tf_bias': 'H4',
+            'tf_intermediate': 'H1',
+            'tf_entry': 'M5',
+            'entry_mode': 'market',
+            'sl_anchor': 'wick',
+            'trend_filter': 'd1_ema',
+            'pip_sizes': dict(config.PIP_SIZE),
+        },
+        'param_grid': {
+            'mss_fractal_n': [3, 4],
+            'sl_fractal_n': [2, 3],
+            'tp_rr_ratio': [3.5, 4.0],
+            'allowed_bias_kinds': [
+                ('2',),
+                ('2', 'failed2'),
+            ],
+            'blocked_hours': [
+                tuple(h for h in range(24) if h not in (17, 18, 19, 20)),
+                tuple(h for h in range(24) if h not in (12, 13, 15, 16)),
+                tuple(h for h in range(24) if h not in (12, 13, 14, 15, 16)),
+            ],
+            'd1_range_filter': ['off', 'block_top_pct'],
+            'd1_range_block_pct': [0.8],
+        },
+    },
 }
 
 
@@ -1009,7 +1342,9 @@ def main():
           f"{avg_oos_expect:+.3f}R expectancy")
     print(f"  Avg OOS retention: {avg_retention:.0f}% of in-sample expectancy")
 
-    if avg_retention >= 70:
+    if avg_oos_expect <= 0:
+        verdict = "FAIL — strategy loses money out-of-sample, likely curve-fit"
+    elif avg_retention >= 70:
         verdict = "STRONG — strategy is robust, parameters generalize well"
     elif avg_retention >= 40:
         verdict = "MODERATE — some overfitting, but strategy has edge out-of-sample"

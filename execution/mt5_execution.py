@@ -27,6 +27,7 @@ class MT5Execution(BaseExecution):
         """
         self._magic_numbers = magic_numbers or {}
         self._known_magic: set[int] = set(self._magic_numbers.values())
+        self._last_order_details: dict | None = None
 
     @staticmethod
     def _round_to_step(value: float, step: float) -> float:
@@ -87,6 +88,15 @@ class MT5Execution(BaseExecution):
         if tick is None:
             logger.error(f"Could not get tick for {symbol}")
             return 0
+        spread_pips = None
+        info_point = config_pip_size = None
+        try:
+            from config import PIP_SIZE
+            config_pip_size = PIP_SIZE.get(symbol)
+            if config_pip_size:
+                spread_pips = (tick.ask - tick.bid) / config_pip_size
+        except Exception:
+            spread_pips = None
 
         if order_type == 'MARKET':
             action = mt5.TRADE_ACTION_DEAL
@@ -131,8 +141,21 @@ class MT5Execution(BaseExecution):
             logger.error(f"Order failed for {symbol}: retcode={code} {comment}")
             return 0
 
+        fill_price = getattr(result, 'price', None) or price
+        self._last_order_details = {
+            'ticket': result.order,
+            'deal': getattr(result, 'deal', 0),
+            'fill_price': fill_price,
+            'request_price': price,
+            'bid': getattr(tick, 'bid', None),
+            'ask': getattr(tick, 'ask', None),
+            'spread_pips': round(spread_pips, 2) if spread_pips is not None else '',
+        }
         logger.info(f"Order placed: {symbol} {direction} {order_type} ticket={result.order}")
         return result.order
+
+    def get_last_order_details(self) -> dict | None:
+        return self._last_order_details
 
     def close_order(self, ticket_id: int) -> bool:
         # Cancel a pending order if it exists
