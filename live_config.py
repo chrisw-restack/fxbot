@@ -7,6 +7,7 @@ from strategies.three_line_strike import ThreeLineStrikeStrategy
 from strategies.ims import ImsStrategy
 from strategies.ims_reversal import ImsReversalStrategy
 from strategies.failed2 import Failed2Strategy
+from strategies.candle_confirmation import CandleConfirmationStrategy
 
 
 IMS_SYMBOLS = ['USDJPY', 'XAUUSD', 'EURAUD', 'CADJPY', 'USDCAD', 'AUDUSD', 'EURUSD', 'GBPCAD', 'GBPUSD']
@@ -14,6 +15,8 @@ IMS_REV_SYMBOLS = ['GBPNZD', 'AUDUSD', 'US30', 'USDCHF', 'XAUUSD', 'AUDJPY', 'AU
 ENGULFING_SYMBOLS = ['EURUSD', 'AUDUSD']
 FAILED2_SYMBOLS = ['USTEC']
 FAILED2_NAME = 'Failed2_H4_H1_M5_market'
+CANDLE_CONFIRMATION_USDJPY_SYMBOLS = ['USDJPY']
+CANDLE_CONFIRMATION_GBPUSD_SYMBOLS = ['GBPUSD']
 
 
 def create_live_strategy_specs():
@@ -98,6 +101,48 @@ def create_live_strategy_specs():
         d1_range_block_pct=0.7,
         pip_sizes={s: config.PIP_SIZE[s] for s in FAILED2_SYMBOLS if s in config.PIP_SIZE},
     )
+    candle_confirmation = CandleConfirmationStrategy(
+        name='CandleConfirmation_USDJPY_H1_M5',
+        tf_bias='H1',
+        tf_entry='M5',
+        fractal_n=2,
+        retrace_pct=0.5,
+        tp_range_pct=1.25,
+        sl_rr_ratio=1.5,
+        sl_mode='symmetric',
+        require_fvg=True,
+        min_sl_pips=8.0,
+        tf_trend='D1',
+        ema_fast=20,
+        ema_slow=50,
+        ema_sep_pct=0.0005,
+        min_engulf_range_pips=8.0,
+        min_engulf_body_pct=0.5,
+        close_extreme_pct=1.0,
+        require_engulf_color=False,
+        pip_sizes={s: config.PIP_SIZE[s] for s in CANDLE_CONFIRMATION_USDJPY_SYMBOLS if s in config.PIP_SIZE},
+    )
+    candle_confirmation_gbpusd = CandleConfirmationStrategy(
+        name='CandleConfirmation_GBPUSD_H1_M5',
+        tf_bias='H1',
+        tf_entry='M5',
+        fractal_n=3,
+        retrace_pct=0.5,
+        tp_range_pct=1.5,
+        sl_rr_ratio=2.0,
+        sl_mode='symmetric',
+        require_fvg=True,
+        min_sl_pips=8.0,
+        tf_trend='D1',
+        ema_fast=20,
+        ema_slow=50,
+        ema_sep_pct=0.001,
+        min_engulf_range_pips=8.0,
+        min_engulf_body_pct=0.6,
+        close_extreme_pct=1.0,
+        require_engulf_color=False,
+        pip_sizes={s: config.PIP_SIZE[s] for s in CANDLE_CONFIRMATION_GBPUSD_SYMBOLS if s in config.PIP_SIZE},
+    )
     return [
         (ema_fib, config.SYMBOLS),
         (ema_fib_running, config.SYMBOLS),
@@ -105,6 +150,8 @@ def create_live_strategy_specs():
         (ims, IMS_SYMBOLS),
         (ims_reversal, IMS_REV_SYMBOLS),
         (failed2, FAILED2_SYMBOLS),
+        (candle_confirmation, CANDLE_CONFIRMATION_USDJPY_SYMBOLS),
+        (candle_confirmation_gbpusd, CANDLE_CONFIRMATION_GBPUSD_SYMBOLS),
     ]
 
 

@@ -30,6 +30,7 @@ from strategies.range_fade import RangeFadeStrategy
 from strategies.ema_fib_running import EmaFibRunningStrategy
 from strategies.ebp import EbpStrategy
 from strategies.ebp_limit import EbpLimitStrategy
+from strategies.candle_confirmation import CandleConfirmationStrategy
 from strategies.ims import ImsStrategy
 from strategies.ims_reversal import ImsReversalStrategy
 from strategies.smc_zone import SmcZoneStrategy
@@ -92,6 +93,7 @@ STRATEGIES = {
     'ebp':                          EbpStrategy(tf_bias='H4', tf_entry='H1', fractal_n=2, min_retrace_pct=0.382, max_retrace_pct=0.618, require_fvg=False),
     'ebp_mss_sl':                   EbpStrategy(tf_bias='H4', tf_entry='H1', fractal_n=2, min_retrace_pct=0.382, max_retrace_pct=0.618, require_fvg=False, sl_mode='mss_bar'),
     'ebp_symmetric_sl':             EbpStrategy(tf_bias='H4', tf_entry='H1', fractal_n=2, min_retrace_pct=0.382, max_retrace_pct=0.618, require_fvg=False, sl_mode='symmetric'),
+    'candle_confirmation':          CandleConfirmationStrategy(tf_bias='H1', tf_entry='M5', fractal_n=2, retrace_pct=0.5, tp_range_pct=1.0, sl_mode='symmetric', require_fvg=True, pip_sizes=dict(config.PIP_SIZE)),
     'ebp_limit_h4':                 EbpLimitStrategy(tf='H4'),
     'ebp_limit_h1':                 EbpLimitStrategy(tf='H1'),
     'ebp_limit_d1':                 EbpLimitStrategy(tf='D1'),

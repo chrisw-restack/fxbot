@@ -8,6 +8,7 @@ from execution.simulated_execution import SimulatedExecution
 from models import BarEvent, Signal
 from portfolio.portfolio_manager import PortfolioManager
 from risk.risk_manager import RiskManager
+from strategies.candle_confirmation import CandleConfirmationStrategy
 
 
 class PortfolioManagerTests(unittest.TestCase):
@@ -163,6 +164,84 @@ class HistoricalLoaderTests(unittest.TestCase):
         self.assertEqual([b.timeframe for b in bars], ['M15', 'H4'])
 
 
+class CandleConfirmationStrategyTests(unittest.TestCase):
+    def test_bullish_entry_requires_retrace_swing_break_and_fvg(self):
+        strategy = CandleConfirmationStrategy(fractal_n=1)
+        strategy.generate_signal(_cc_bar('H1', 0, 1.1050, 1.1060, 1.1010, 1.1020))
+        strategy.generate_signal(_cc_bar('H1', 60, 1.1020, 1.1100, 1.1000, 1.1051))
+
+        sequence = [
+            _cc_bar('M5', 65, 1.1050, 1.1050, 1.1040, 1.1045),
+            _cc_bar('M5', 70, 1.1045, 1.1060, 1.1048, 1.1055),
+            _cc_bar('M5', 75, 1.1055, 1.1055, 1.1052, 1.1053),
+            _cc_bar('M5', 80, 1.1053, 1.1057, 1.1051, 1.1056),
+        ]
+        for bar in sequence:
+            self.assertIsNone(strategy.generate_signal(bar))
+
+        signal = strategy.generate_signal(_cc_bar('M5', 85, 1.1056, 1.1064, 1.1054, 1.1062))
+
+        self.assertIsNotNone(signal)
+        self.assertEqual(signal.direction, 'BUY')
+        self.assertAlmostEqual(signal.take_profit, 1.1100)
+        self.assertAlmostEqual(signal.stop_loss, 1.1024)
+
+    def test_no_entry_before_retrace_level_is_touched(self):
+        strategy = CandleConfirmationStrategy(fractal_n=1)
+        strategy.generate_signal(_cc_bar('H1', 0, 1.1050, 1.1060, 1.1010, 1.1020))
+        strategy.generate_signal(_cc_bar('H1', 60, 1.1020, 1.1100, 1.1000, 1.1051))
+
+        bars = [
+            _cc_bar('M5', 65, 1.1060, 1.1062, 1.1056, 1.1058),
+            _cc_bar('M5', 70, 1.1058, 1.1070, 1.1057, 1.1065),
+            _cc_bar('M5', 75, 1.1065, 1.1066, 1.1058, 1.1061),
+            _cc_bar('M5', 80, 1.1061, 1.1067, 1.1059, 1.1064),
+            _cc_bar('M5', 85, 1.1064, 1.1074, 1.1062, 1.1072),
+        ]
+
+        for bar in bars:
+            self.assertIsNone(strategy.generate_signal(bar))
+
+    def test_fvg_is_required_in_breaking_leg(self):
+        strategy = CandleConfirmationStrategy(fractal_n=1)
+        strategy.generate_signal(_cc_bar('H1', 0, 1.1050, 1.1060, 1.1010, 1.1020))
+        strategy.generate_signal(_cc_bar('H1', 60, 1.1020, 1.1100, 1.1000, 1.1051))
+
+        bars = [
+            _cc_bar('M5', 65, 1.1050, 1.1050, 1.1040, 1.1045),
+            _cc_bar('M5', 70, 1.1045, 1.1060, 1.1048, 1.1055),
+            _cc_bar('M5', 75, 1.1055, 1.1055, 1.1049, 1.1053),
+            _cc_bar('M5', 80, 1.1053, 1.1057, 1.1051, 1.1056),
+            _cc_bar('M5', 85, 1.1056, 1.1064, 1.1054, 1.1062),
+        ]
+
+        for bar in bars:
+            self.assertIsNone(strategy.generate_signal(bar))
+
+    def test_touching_engulf_extreme_before_entry_invalidates_bias(self):
+        strategy = CandleConfirmationStrategy(fractal_n=1)
+        strategy.generate_signal(_cc_bar('H1', 0, 1.1050, 1.1060, 1.1010, 1.1020))
+        strategy.generate_signal(_cc_bar('H1', 60, 1.1020, 1.1100, 1.1000, 1.1051))
+
+        self.assertIsNone(strategy.generate_signal(
+            _cc_bar('M5', 65, 1.1060, 1.1100, 1.1050, 1.1065)
+        ))
+
+        self.assertIsNone(strategy._bias['EURUSD'])
+
+    def test_opposing_engulf_replaces_bias_before_entry_but_not_after_signal(self):
+        strategy = CandleConfirmationStrategy(fractal_n=1)
+        strategy.generate_signal(_cc_bar('H1', 0, 1.1050, 1.1060, 1.1010, 1.1020))
+        strategy.generate_signal(_cc_bar('H1', 60, 1.1020, 1.1100, 1.1000, 1.1051))
+
+        strategy.generate_signal(_cc_bar('H1', 120, 1.1051, 1.1060, 1.0980, 1.1010))
+        self.assertEqual(strategy._bias['EURUSD']['direction'], 'SELL')
+
+        strategy._signal_fired['EURUSD'] = True
+        strategy.generate_signal(_cc_bar('H1', 180, 1.1010, 1.1120, 1.1000, 1.1065))
+        self.assertEqual(strategy._bias['EURUSD']['direction'], 'SELL')
+
+
 def _enriched_signal(symbol, strategy_name):
     from models import EnrichedSignal
 
@@ -188,6 +267,19 @@ def _bar(symbol, timeframe, timestamp, open_price):
         high=open_price + 0.0005,
         low=open_price - 0.0005,
         close=open_price,
+        volume=1,
+    )
+
+
+def _cc_bar(timeframe, minute, open_price, high, low, close):
+    return BarEvent(
+        symbol='EURUSD',
+        timeframe=timeframe,
+        timestamp=datetime(2024, 1, 1, minute // 60, minute % 60),
+        open=open_price,
+        high=high,
+        low=low,
+        close=close,
         volume=1,
     )
 

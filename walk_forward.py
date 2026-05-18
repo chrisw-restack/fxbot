@@ -40,6 +40,7 @@ from strategies.three_line_strike import ThreeLineStrikeStrategy
 from strategies.hourly_mean_reversion import HourlyMeanReversionStrategy
 from strategies.london_breakout import LondonBreakoutStrategy
 from strategies.failed2 import Failed2Strategy
+from strategies.candle_confirmation import CandleConfirmationStrategy
 
 logging.basicConfig(level=logging.ERROR)
 sys.stdout.reconfigure(line_buffering=True)
@@ -971,6 +972,131 @@ STRATEGY_CONFIGS = {
             'd1_range_block_pct': [0.8],
         },
     },
+    'candle_confirmation_usdjpy_wf': {
+        # 2026-05-13: WF test for the conservative USDJPY TP/SL pocket.
+        # Fixed filter came from the EMA/engulf-quality sweep:
+        # D1 EMA 20/50 sep 0.0005, H1 engulf >=8 pips and >=50% body.
+        'class': CandleConfirmationStrategy,
+        'timeframes': ['D1', 'H1', 'M5'],
+        'symbols': ['USDJPY'],
+        'min_trades': 50,
+        'fixed_params': {
+            'tf_bias': 'H1',
+            'tf_entry': 'M5',
+            'fractal_n': 2,
+            'retrace_pct': 0.5,
+            'require_fvg': True,
+            'tf_trend': 'D1',
+            'ema_fast': 20,
+            'ema_slow': 50,
+            'ema_sep_pct': 0.0005,
+            'min_engulf_range_pips': 8.0,
+            'min_engulf_body_pct': 0.5,
+            'close_extreme_pct': 1.0,
+            'require_engulf_color': False,
+            'pip_sizes': dict(config.PIP_SIZE),
+        },
+        'param_grid': {
+            'tp_range_pct': [1.25],
+            'sl_mode': ['symmetric'],
+            'sl_rr_ratio': [1.25, 1.5],
+            'min_sl_pips': [8.0, 10.0, 12.0],
+        },
+    },
+    'candle_confirmation_eurusd_wf': {
+        # 2026-05-14: WF test for the EURUSD broad-sweep winners.
+        # Sweep winners clustered around fractal_n=1, EMA 10/20, TP 1.25,
+        # SL RR 2.0, and H1 engulf body 0.4.
+        'class': CandleConfirmationStrategy,
+        'timeframes': ['D1', 'H4', 'H1', 'M5'],
+        'symbols': ['EURUSD'],
+        'min_trades': 30,
+        'fixed_params': {
+            'tf_bias': 'H1',
+            'tf_entry': 'M5',
+            'retrace_pct': 0.5,
+            'sl_mode': 'symmetric',
+            'require_fvg': True,
+            'close_extreme_pct': 1.0,
+            'require_engulf_color': False,
+            'pip_sizes': dict(config.PIP_SIZE),
+        },
+        'param_grid': {
+            'fractal_n': [1, 3],
+            'tf_trend': ['D1', 'H4'],
+            'ema_fast': [10, 20],
+            'ema_slow': [20, 50],
+            'ema_sep_pct': [0.0, 0.0005, 0.001],
+            'min_engulf_range_pips': [8.0, 12.0, 15.0],
+            'min_engulf_body_pct': [0.4, 0.5],
+            'tp_range_pct': [1.0, 1.25],
+            'sl_rr_ratio': [1.5, 2.0],
+            'min_sl_pips': [10.0, 12.0],
+        },
+    },
+    'candle_confirmation_gbpusd_wf': {
+        # 2026-05-14: WF test for the GBPUSD broad-sweep winners.
+        # Sweep winners clustered around fractal_n=3, D1 EMA 20/50,
+        # H1 engulf body 0.6, TP 1.5, SL RR 2.0.
+        'class': CandleConfirmationStrategy,
+        'timeframes': ['D1', 'H4', 'H1', 'M5'],
+        'symbols': ['GBPUSD'],
+        'min_trades': 30,
+        'fixed_params': {
+            'tf_bias': 'H1',
+            'tf_entry': 'M5',
+            'retrace_pct': 0.5,
+            'sl_mode': 'symmetric',
+            'require_fvg': True,
+            'close_extreme_pct': 1.0,
+            'require_engulf_color': False,
+            'pip_sizes': dict(config.PIP_SIZE),
+        },
+        'param_grid': {
+            'fractal_n': [1, 3],
+            'tf_trend': ['D1', 'H4'],
+            'ema_fast': [10, 20],
+            'ema_slow': [20, 50],
+            'ema_sep_pct': [0.0, 0.0005, 0.001],
+            'min_engulf_range_pips': [8.0, 12.0, 15.0],
+            'min_engulf_body_pct': [0.5, 0.6],
+            'tp_range_pct': [1.0, 1.25, 1.5],
+            'sl_rr_ratio': [1.5, 2.0],
+            'min_sl_pips': [8.0, 10.0, 12.0],
+        },
+    },
+    'candle_confirmation_audusd_wf': {
+        # 2026-05-15: WF test for the AUDUSD broad-sweep winners.
+        # Sweep winners clustered around D1 EMA 20/50, fractal_n=1,
+        # H1 engulf range >=8/body >=0.6, TP 1.0, SL RR 2.0, with
+        # a secondary H4 EMA 10/20 pocket using stricter range/min-SL.
+        'class': CandleConfirmationStrategy,
+        'timeframes': ['D1', 'H4', 'H1', 'M5'],
+        'symbols': ['AUDUSD'],
+        'min_trades': 30,
+        'fixed_params': {
+            'tf_bias': 'H1',
+            'tf_entry': 'M5',
+            'retrace_pct': 0.5,
+            'sl_mode': 'symmetric',
+            'require_fvg': True,
+            'close_extreme_pct': 1.0,
+            'require_engulf_color': False,
+            'pip_sizes': dict(config.PIP_SIZE),
+        },
+        'param_grid': {
+            'fractal_n': [1, 2, 3],
+            'tf_trend': ['D1', 'H4'],
+            'ema_fast': [10, 20],
+            'ema_slow': [20, 50],
+            'ema_sep_pct': [0.0, 0.0005, 0.001],
+            'min_engulf_range_pips': [8.0, 15.0],
+            'min_engulf_body_pct': [0.4, 0.6],
+            'tp_range_pct': [1.0, 1.25],
+            'sl_rr_ratio': [2.0],
+            'min_sl_pips': [8.0, 12.0],
+        },
+    },
 }
 
 
@@ -1129,14 +1255,21 @@ def optimize(all_bars, train_start, train_end, strategy_class,
     else:
         all_results = []
         for params in combos:
-            full_params = {**fixed_params, **params}
-            rr = full_params.pop('rr_ratio', RR_RATIO)
-            strategy = strategy_class(**full_params)
-            m = run_backtest(
-                train_bars, strategy, symbols,
-                INITIAL_BALANCE, rr, config.BACKTEST_SPREAD_PIPS, RISK_PCT_OVERRIDES,
-            )
-            all_results.append({**params, **m})
+            try:
+                full_params = {**fixed_params, **params}
+                rr = full_params.pop('rr_ratio', RR_RATIO)
+                strategy = strategy_class(**full_params)
+                m = run_backtest(
+                    train_bars, strategy, symbols,
+                    INITIAL_BALANCE, rr, config.BACKTEST_SPREAD_PIPS, RISK_PCT_OVERRIDES,
+                )
+                all_results.append({**params, **m})
+            except Exception:
+                all_results.append({
+                    **params, 'trades': 0, 'win_rate': 0, 'total_r': 0,
+                    'expectancy': 0, 'pf': 0, 'max_dd_r': 0,
+                    'worst_loss_streak': 0, 'best_win_streak': 0,
+                })
 
     best_score = -float('inf')
     best_params = None
