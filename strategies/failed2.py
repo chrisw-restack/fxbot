@@ -43,12 +43,15 @@ class Failed2Strategy:
         max_sl_pips: float | None = None,
         tp_rr_ratio: float | None = None,
         allowed_bias_kinds: set[str] | tuple[str, ...] | None = None,
+        allowed_directions: set[str] | tuple[str, ...] | None = None,
         trend_filter: str = 'off',  # 'off' | 'h4_ema' | 'd1_ema'
         ema_fast: int = 20,
         ema_slow: int = 50,
-        d1_range_filter: str = 'off',  # 'off' | 'block_top_pct'
+        d1_range_filter: str = 'off',  # 'off' | 'block_top_pct' | 'allow_band_pct'
         d1_range_lookback: int = 60,
         d1_range_block_pct: float = 0.8,
+        d1_range_min_pct: float = 0.0,
+        d1_range_max_pct: float = 1.0,
         use_d1_diagnostics: bool = False,
         pip_sizes: dict[str, float] | None = None,
         name: str | None = None,
@@ -66,8 +69,14 @@ class Failed2Strategy:
             raise ValueError("sl_anchor must be 'wick' or 'body'")
         if trend_filter not in {'off', 'h4_ema', 'd1_ema'}:
             raise ValueError("trend_filter must be 'off', 'h4_ema', or 'd1_ema'")
-        if d1_range_filter not in {'off', 'block_top_pct'}:
-            raise ValueError("d1_range_filter must be 'off' or 'block_top_pct'")
+        if d1_range_filter not in {'off', 'block_top_pct', 'allow_band_pct'}:
+            raise ValueError("d1_range_filter must be 'off', 'block_top_pct', or 'allow_band_pct'")
+        if allowed_directions is not None and not set(allowed_directions).issubset({'BUY', 'SELL'}):
+            raise ValueError("allowed_directions must be a subset of {'BUY', 'SELL'}")
+        if not 0.0 <= d1_range_min_pct <= 1.0 or not 0.0 <= d1_range_max_pct <= 1.0:
+            raise ValueError('d1_range_min_pct and d1_range_max_pct must be between 0.0 and 1.0')
+        if d1_range_min_pct > d1_range_max_pct:
+            raise ValueError('d1_range_min_pct must be <= d1_range_max_pct')
 
         self.tf_bias = tf_bias
         self.tf_intermediate = tf_intermediate
@@ -83,12 +92,15 @@ class Failed2Strategy:
         self.sl_buffer_pips = sl_buffer_pips
         self.max_sl_pips = max_sl_pips
         self.allowed_bias_kinds = set(allowed_bias_kinds) if allowed_bias_kinds else None
+        self.allowed_directions = set(allowed_directions) if allowed_directions else None
         self.trend_filter = trend_filter
         self.ema_fast = ema_fast
         self.ema_slow = ema_slow
         self.d1_range_filter = d1_range_filter
         self.d1_range_lookback = d1_range_lookback
         self.d1_range_block_pct = d1_range_block_pct
+        self.d1_range_min_pct = d1_range_min_pct
+        self.d1_range_max_pct = d1_range_max_pct
         self.use_d1_diagnostics = use_d1_diagnostics
         self.pip_sizes = pip_sizes or {}
 
@@ -209,9 +221,12 @@ class Failed2Strategy:
         if ranges:
             pct = sum(1 for value in ranges if value <= d1_range) / len(ranges)
             self._d1_range_percentile[symbol] = pct
-            self._d1_range_blocked[symbol] = (
-                self.d1_range_filter == 'block_top_pct' and pct >= self.d1_range_block_pct
-            )
+            if self.d1_range_filter == 'block_top_pct':
+                self._d1_range_blocked[symbol] = pct >= self.d1_range_block_pct
+            elif self.d1_range_filter == 'allow_band_pct':
+                self._d1_range_blocked[symbol] = not (self.d1_range_min_pct <= pct <= self.d1_range_max_pct)
+            else:
+                self._d1_range_blocked[symbol] = False
         ranges.append(d1_range)
 
     def _on_bias_bar(self, bar: BarEvent) -> Signal | None:
@@ -233,6 +248,8 @@ class Failed2Strategy:
             return cancel
 
         if self.allowed_bias_kinds is not None and new_bias['kind'] not in self.allowed_bias_kinds:
+            return cancel
+        if self.allowed_directions is not None and new_bias['direction'] not in self.allowed_directions:
             return cancel
 
         existing = self._bias[symbol]

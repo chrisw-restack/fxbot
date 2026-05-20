@@ -95,7 +95,7 @@ def create_live_strategy_specs():
         mss_fractal_n=4,
         sl_fractal_n=2,
         rr_ratio=4.0,
-        blocked_hours=(*range(0, 13), *range(18, 24)),
+        blocked_hours=(*range(0, 13), *range(16, 24)),
         trend_filter='d1_ema',
         d1_range_filter='block_top_pct',
         d1_range_block_pct=0.7,

@@ -54,15 +54,18 @@ logging.basicConfig(
 # LIVE SYMBOLS:
 # EmaFibRetracementStrategy for ['EURUSD', 'GBPUSD', 'AUDUSD', 'NZDUSD', 'USDJPY', 'USDCAD', 'USDCHF']
 # EmaFibRunningStrategy for ['EURUSD', 'GBPUSD', 'AUDUSD', 'NZDUSD', 'USDJPY', 'USDCAD', 'USDCHF']
-# ThreeLineStrikeStrategy for ['EURUSD', 'AUDUSD', 'USDCAD']
+# ThreeLineStrikeStrategy for ['EURUSD', 'AUDUSD']
 # ImsStrategy for ['USDJPY', 'XAUUSD', 'EURAUD', 'CADJPY', 'USDCAD', 'AUDUSD', 'EURUSD', 'GBPCAD', 'GBPUSD']
 
-# SYMBOLS         = ['EURUSD', 'GBPUSD', 'AUDUSD', 'NZDUSD', 'USDJPY', 'USDCAD', 'USDCHF', 'XAUUSD', 'USA100']
-# SYMBOLS         = ['EURUSD', 'GBPUSD', 'AUDUSD' , 'USDJPY', 'USDCAD', 'GBPCAD' ]
-# SYMBOLS         = ['AUDCAD','AUDJPY','AUDNZD','AUDUSD','CADJPY','EURAUD','EURCAD','EURCHF','EURGBP','EURJPY','EURUSD','GBPAUD','GBPCAD','GBPJPY','GBPNZD','GBPUSD','NZDJPY','NZDUSD','USA100','USA30','USA500','USDCAD','USDCHF','USDJPY','XAUUSD']
-# SYMBOLS         = ['AUDUSD','CADJPY']
-# SYMBOLS         = ['EURAUD','EURCAD','EURCHF','EURGBP','EURJPY']
-SYMBOLS         = ['EURUSD', 'GBPUSD']  # LBS initial test
+# Default symbols are strategy-aware to avoid accidental backtests on a stale
+# ad hoc subset. Override with --symbols when doing targeted research.
+DEFAULT_SYMBOLS_BY_STRATEGY = {
+    'failed2_usa100_candidate': ['USA100'],
+    'failed2_usa100_1316_candidate': ['USA100'],
+    'failed2_fx_usdjpy_candidate': ['USDJPY'],
+    'hmr': ['XAUUSD'],
+    'hmr_m1': ['XAUUSD'],
+}
 
 INITIAL_BALANCE = 10_000.0   # starting account balance in USD
 RR_RATIO        = 2.5        # risk/reward ratio (overrides config default)
@@ -85,6 +88,7 @@ STRATEGIES = {
     'failed2_best_htf_extreme':     Failed2Strategy(tf_bias='H4', tf_intermediate='H1', tf_entry='M5', entry_mode='market', mss_fractal_n=3, sl_fractal_n=2, rr_ratio=3.5, blocked_hours=(*range(0, 12), *range(17, 24)), invalidate_on_bias_extreme=True, pip_sizes=dict(config.PIP_SIZE)),
     'failed2_filtered':             Failed2Strategy(tf_bias='H4', tf_intermediate='H1', tf_entry='M5', entry_mode='market', mss_fractal_n=3, sl_fractal_n=2, rr_ratio=3.5, blocked_hours=(*range(0, 12), *range(17, 24)), trend_filter='d1_ema', d1_range_filter='block_top_pct', d1_range_block_pct=0.8, pip_sizes=dict(config.PIP_SIZE)),
     'failed2_usa100_candidate':     Failed2Strategy(tf_bias='H4', tf_intermediate='H1', tf_entry='M5', entry_mode='market', mss_fractal_n=4, sl_fractal_n=2, rr_ratio=4.0, blocked_hours=(*range(0, 13), *range(18, 24)), trend_filter='d1_ema', d1_range_filter='block_top_pct', d1_range_block_pct=0.7, pip_sizes=dict(config.PIP_SIZE)),
+    'failed2_usa100_1316_candidate': Failed2Strategy(tf_bias='H4', tf_intermediate='H1', tf_entry='M5', entry_mode='market', mss_fractal_n=4, sl_fractal_n=2, rr_ratio=4.0, blocked_hours=(*range(0, 13), *range(16, 24)), trend_filter='d1_ema', d1_range_filter='block_top_pct', d1_range_block_pct=0.7, pip_sizes=dict(config.PIP_SIZE)),
     'failed2_fx_usdjpy_candidate':  Failed2Strategy(tf_bias='H4', tf_intermediate='H1', tf_entry='M5', entry_mode='market', mss_fractal_n=3, sl_fractal_n=3, rr_ratio=4.0, allowed_bias_kinds=('2', 'failed2'), blocked_hours=tuple(h for h in range(24) if h not in (12, 13, 15, 16)), trend_filter='d1_ema', d1_range_filter='block_top_pct', d1_range_block_pct=0.8, pip_sizes=dict(config.PIP_SIZE)),
     'supply_demand':                SupplyDemandStrategy(),
     'keltner_reversion':            KeltnerReversionStrategy(),
@@ -118,7 +122,7 @@ STRATEGIES = {
     'smc_reversal':                 SmcReversalStrategy(fractal_n=3, fvg_window=4, ob_max_per_tf=3, wiggle_room_pct=0.003, sl_buffer_pct=0.0006, multiple_trades_per_bias=True),
     'smc_reversal_single':          SmcReversalStrategy(fractal_n=3, fvg_window=4, ob_max_per_tf=3, wiggle_room_pct=0.003, sl_buffer_pct=0.0006, multiple_trades_per_bias=False),
     'three_line_strike':            ThreeLineStrikeStrategy(sl_mode='fractal', fractal_n=3, min_prev_body_pips=3.0, engulf_ratio=1.5, max_sl_pips=15, allowed_hours=tuple(range(13,18)), sma_sep_pips=5.0, pip_sizes={'USDJPY': 0.01}),
-    # WF-validated params (XAUUSD M5, London session, STRONG): all 3 folds +, +0.265R OOS expect
+    # Post-bugfix XAUUSD M5 candidate. Current verdict is MODERATE; not live-eligible due to sparse trade count.
     'hmr':    HourlyMeanReversionStrategy(tf_lower='M5',  min_move_pips=100, entry_window_start=20, entry_window_end=45, fractal_n=1, max_pullback_pips=0,  session_hours=tuple(range(8,17))),
     'hmr_m1': HourlyMeanReversionStrategy(tf_lower='M1',  min_move_pips=100, entry_window_start=20, entry_window_end=45, fractal_n=2, max_pullback_pips=30, session_hours=tuple(range(8,17))),
     'lbs':         LondonBreakoutStrategy(rr_ratio=2.5),
@@ -186,7 +190,11 @@ if args.strategy == 'live_suite':
         ]
         strategy_specs = [(strategy, symbols) for strategy, symbols in strategy_specs if symbols]
 else:
-    symbols = [symbol.upper() for symbol in args.symbols] if args.symbols else SYMBOLS
+    symbols = (
+        [symbol.upper() for symbol in args.symbols]
+        if args.symbols
+        else DEFAULT_SYMBOLS_BY_STRATEGY.get(args.strategy, list(config.SYMBOLS))
+    )
     strategy_specs = [(STRATEGIES[args.strategy], symbols)]
 
 # Collect all timeframes needed across all strategies

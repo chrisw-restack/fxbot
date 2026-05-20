@@ -377,6 +377,81 @@ Decision:
 - Fixed final candidate remains demo-worthy, with consistent cross-source performance and no source-specific failure.
 - Caveat: early history 2016-2019 is choppy/weak, while 2020-2024 is much stronger. Demo should be monitored for regime degradation.
 
+## Next Targeted Refinement Matrix - 2026-05-19
+
+Purpose: keep the validated USA100 core intact and only test the highest-value refinement questions.
+
+Added focused walk-forward configs in `walk_forward.py`:
+
+- `failed2_usa100_bias_refine` — compare all bias types vs `2`-only vs `2+failed2` vs `2+3`
+- `failed2_usa100_session_refine` — compare tighter hour windows around the validated `13-18 UTC` session
+- `failed2_usa100_range_refine` — compare the current top-30%-blocked D1 regime filter vs tighter allowed percentile bands
+- `failed2_usa100_direction_refine` — compare both directions vs `SELL`-only vs `BUY`-only
+
+Suggested test order:
+
+1. `python walk_forward.py failed2_usa100_bias_refine --metric expectancy --workers 1 --data-source dukascopy`
+2. `python walk_forward.py failed2_usa100_bias_refine --metric expectancy --workers 1 --data-source histdata`
+3. `python walk_forward.py failed2_usa100_session_refine --metric expectancy --workers 1 --data-source dukascopy`
+4. `python walk_forward.py failed2_usa100_session_refine --metric expectancy --workers 1 --data-source histdata`
+5. `python walk_forward.py failed2_usa100_range_refine --metric expectancy --workers 1 --data-source dukascopy`
+6. `python walk_forward.py failed2_usa100_range_refine --metric expectancy --workers 1 --data-source histdata`
+7. `python walk_forward.py failed2_usa100_direction_refine --metric expectancy --workers 1 --data-source dukascopy`
+8. `python walk_forward.py failed2_usa100_direction_refine --metric expectancy --workers 1 --data-source histdata`
+
+Decision rule:
+
+- Only keep a refinement if aggregate OOS stays positive on both sources and the later folds remain constructive.
+- Prefer improvements that cut drawdown or improve expectancy without collapsing trade count.
+
+## Fixed Session Head-to-Head - 2026-05-19
+
+Purpose: compare the current fixed USA100 candidate (`13-18 UTC`) against the only refinement that showed a consistent walk-forward improvement (`13-16 UTC`).
+
+Compare-only backtest key added:
+
+- `failed2_usa100_1316_candidate`
+
+Fixed core shared by both candidates:
+
+- `H4/H1/M5`
+- market entry
+- MSS fractal `4`
+- SL fractal `2`
+- wick SL
+- `4R` TP
+- D1 EMA alignment
+- D1 range filter `block_top_pct=0.7`
+- all HTF bias types
+
+Results:
+
+| Data source | Session | Trades | WR | Total R | PF | Exp | Max DD | Ending balance |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| Dukascopy | `13-18 UTC` | 373 | 29.5% | +156.58R | 1.59 | +0.42R | 16.68R | $12,174.93 |
+| Dukascopy | `13-16 UTC` | 353 | 29.7% | +153.23R | 1.62 | +0.43R | 15.68R | $12,467.24 |
+| HistData | `13-18 UTC` | 351 | 30.2% | +160.56R | 1.65 | +0.46R | 15.68R | $13,123.47 |
+| HistData | `13-16 UTC` | 337 | 30.6% | +159.89R | 1.68 | +0.47R | 14.68R | $13,346.52 |
+
+Interpretation:
+
+- `13-16 UTC` gives up a small amount of trade count and almost no total R.
+- In return it improves expectancy, profit factor, max drawdown, and ending balance on both sources.
+- The improvement is modest, but it is directionally consistent across both sources and matches the walk-forward refinement result.
+
+Decision:
+
+- `13-16 UTC` is the better fixed candidate.
+- Do not update demo/live automatically from this note alone; make the promotion consciously after reviewing current forward-demo behaviour.
+
+## Demo Session Update - 2026-05-20
+
+Decision:
+
+- Updated the live/demo `USTEC` Failed2 config in `live_config.py` from `13-18 UTC` to `13-16 UTC`.
+- Reason: this was the only refinement in the targeted matrix that improved consistently across both Dukascopy and HistData in both walk-forward selection and fixed-candidate comparison.
+- No other core logic changed: still `MSS4 / SL2 / 4R / D1 EMA alignment / D1 range block 70% / all bias types`.
+
 ## Demo Registration - 2026-05-11
 
 Registered `failed2_usa100_candidate` for demo/live runner as `Failed2_H4_H1_M5_market`.

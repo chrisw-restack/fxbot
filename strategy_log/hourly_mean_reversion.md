@@ -160,16 +160,15 @@ FX + USA100: **SHELVED**.
 
 ## Backtest Commands
 ```bash
-# Edit SYMBOLS in run_backtest.py: SYMBOLS = ['XAUUSD']
-python3 run_backtest.py hmr
+python3 run_backtest.py hmr --symbols XAUUSD
 
 # Parameter sweep:
 python3 param_sweep_hmr.py        # M5
 python3 param_sweep_hmr_m1.py     # M1
 
 # Walk-forward validation:
-python3 walk_forward.py hmr           # M5 STRONG ✓
-python3 walk_forward.py hmr_m1        # M1 — pending results
+python3 walk_forward.py hmr           # M5 MODERATE
+python3 walk_forward.py hmr_m1        # M1 WEAK/FAIL — shelved
 python3 walk_forward.py hmr_fx        # FAIL — do not use
 python3 walk_forward.py hmr_usa100    # MODERATE/WEAK — not live-eligible
 ```

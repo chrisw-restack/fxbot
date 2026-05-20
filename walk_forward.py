@@ -750,6 +750,129 @@ STRATEGY_CONFIGS = {
             'd1_range_block_pct': [0.7, 0.8],
         },
     },
+    'failed2_usa100_bias_refine': {
+        # Narrow follow-up on the validated USA100 candidate.
+        # Question: can bias-type pruning improve robustness or DD without
+        # reopening the core MSS/SL/session/TP search?
+        'class': Failed2Strategy,
+        'timeframes': ['D1', 'H4', 'H1', 'M5'],
+        'symbols': ['USA100'],
+        'min_trades': 25,
+        'fixed_params': {
+            'tf_bias': 'H4',
+            'tf_intermediate': 'H1',
+            'tf_entry': 'M5',
+            'entry_mode': 'market',
+            'mss_fractal_n': 4,
+            'sl_fractal_n': 2,
+            'sl_anchor': 'wick',
+            'tp_rr_ratio': 4.0,
+            'blocked_hours': (*range(0, 13), *range(18, 24)),  # allow 13-18 UTC
+            'trend_filter': 'd1_ema',
+            'd1_range_filter': 'block_top_pct',
+            'd1_range_block_pct': 0.7,
+            'pip_sizes': dict(config.PIP_SIZE),
+        },
+        'param_grid': {
+            'allowed_bias_kinds': [
+                ('2', '3', 'failed2'),
+                ('2',),
+                ('2', 'failed2'),
+                ('2', '3'),
+            ],
+        },
+    },
+    'failed2_usa100_session_refine': {
+        # Question: does tightening the active window around the strongest
+        # entry hours keep edge while trimming weaker trades?
+        'class': Failed2Strategy,
+        'timeframes': ['D1', 'H4', 'H1', 'M5'],
+        'symbols': ['USA100'],
+        'min_trades': 25,
+        'fixed_params': {
+            'tf_bias': 'H4',
+            'tf_intermediate': 'H1',
+            'tf_entry': 'M5',
+            'entry_mode': 'market',
+            'mss_fractal_n': 4,
+            'sl_fractal_n': 2,
+            'sl_anchor': 'wick',
+            'tp_rr_ratio': 4.0,
+            'allowed_bias_kinds': ('2', '3', 'failed2'),
+            'trend_filter': 'd1_ema',
+            'd1_range_filter': 'block_top_pct',
+            'd1_range_block_pct': 0.7,
+            'pip_sizes': dict(config.PIP_SIZE),
+        },
+        'param_grid': {
+            'blocked_hours': [
+                (*range(0, 13), *range(18, 24)),  # allow 13-18 UTC
+                (*range(0, 13), *range(17, 24)),  # allow 13-17 UTC
+                (*range(0, 13), *range(16, 24)),  # allow 13-16 UTC
+                tuple(h for h in range(24) if h not in (13, 14, 15)),
+                tuple(h for h in range(24) if h not in (13, 14, 16, 17)),
+            ],
+        },
+    },
+    'failed2_usa100_range_refine': {
+        # Question: is a tighter D1 range percentile regime better than the
+        # current "block top 30%" filter?
+        'class': Failed2Strategy,
+        'timeframes': ['D1', 'H4', 'H1', 'M5'],
+        'symbols': ['USA100'],
+        'min_trades': 25,
+        'fixed_params': {
+            'tf_bias': 'H4',
+            'tf_intermediate': 'H1',
+            'tf_entry': 'M5',
+            'entry_mode': 'market',
+            'mss_fractal_n': 4,
+            'sl_fractal_n': 2,
+            'sl_anchor': 'wick',
+            'tp_rr_ratio': 4.0,
+            'blocked_hours': (*range(0, 13), *range(18, 24)),  # allow 13-18 UTC
+            'allowed_bias_kinds': ('2', '3', 'failed2'),
+            'trend_filter': 'd1_ema',
+            'pip_sizes': dict(config.PIP_SIZE),
+        },
+        'param_grid': {
+            'd1_range_filter': ['block_top_pct', 'allow_band_pct'],
+            'd1_range_block_pct': [0.7],
+            'd1_range_min_pct': [0.0, 0.2, 0.2],
+            'd1_range_max_pct': [1.0, 0.6, 0.8],
+        },
+    },
+    'failed2_usa100_direction_refine': {
+        # Question: are sells structurally stronger enough to justify a
+        # one-sided production candidate?
+        'class': Failed2Strategy,
+        'timeframes': ['D1', 'H4', 'H1', 'M5'],
+        'symbols': ['USA100'],
+        'min_trades': 20,
+        'fixed_params': {
+            'tf_bias': 'H4',
+            'tf_intermediate': 'H1',
+            'tf_entry': 'M5',
+            'entry_mode': 'market',
+            'mss_fractal_n': 4,
+            'sl_fractal_n': 2,
+            'sl_anchor': 'wick',
+            'tp_rr_ratio': 4.0,
+            'blocked_hours': (*range(0, 13), *range(18, 24)),  # allow 13-18 UTC
+            'allowed_bias_kinds': ('2', '3', 'failed2'),
+            'trend_filter': 'd1_ema',
+            'd1_range_filter': 'block_top_pct',
+            'd1_range_block_pct': 0.7,
+            'pip_sizes': dict(config.PIP_SIZE),
+        },
+        'param_grid': {
+            'allowed_directions': [
+                ('BUY', 'SELL'),
+                ('SELL',),
+                ('BUY',),
+            ],
+        },
+    },
     'failed2_filters_fx': {
         'class': Failed2Strategy,
         'timeframes': ['D1', 'H4', 'H1', 'M5'],
