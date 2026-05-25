@@ -6,6 +6,7 @@ from datetime import datetime
 import pandas as pd
 import MetaTrader5 as mt5
 
+from data.historical_loader import _server_to_utc
 from models import BarEvent
 
 logger = logging.getLogger(__name__)
@@ -23,6 +24,19 @@ _credentials: dict | None = None
 
 MAX_RECONNECT_ATTEMPTS = 5
 RECONNECT_BASE_DELAY = 2  # seconds — doubles each attempt (exponential backoff)
+
+
+def mt5_time_to_utc(timestamp: int | float) -> datetime:
+    """
+    Convert an MT5 bar timestamp to the project's canonical UTC timestamp.
+
+    IC Markets history arrives from the terminal in broker server time
+    (UTC+2/UTC+3 depending on DST), despite being exposed as Unix seconds by
+    the MetaTrader5 package. Treat the raw value as server wall-clock time,
+    then convert it to UTC before strategies see it.
+    """
+    server_time = datetime.utcfromtimestamp(timestamp)
+    return _server_to_utc(server_time)
 
 
 def connect(login: int, password: str, server: str) -> bool:
@@ -82,7 +96,7 @@ def get_latest_completed_bar(symbol: str, timeframe: str) -> BarEvent | None:
     return BarEvent(
         symbol=symbol,
         timeframe=timeframe,
-        timestamp=datetime.utcfromtimestamp(b['time']),
+        timestamp=mt5_time_to_utc(b['time']),
         open=float(b['open']),
         high=float(b['high']),
         low=float(b['low']),
@@ -108,7 +122,7 @@ def get_recent_bars(symbol: str, timeframe: str, count: int) -> list[BarEvent]:
         BarEvent(
             symbol=symbol,
             timeframe=timeframe,
-            timestamp=datetime.utcfromtimestamp(b['time']),
+            timestamp=mt5_time_to_utc(b['time']),
             open=float(b['open']),
             high=float(b['high']),
             low=float(b['low']),
@@ -130,7 +144,7 @@ def fetch_historical(symbol: str, timeframe: str, start: datetime, end: datetime
         raise RuntimeError(f"No historical data returned for {symbol} {timeframe}")
 
     df = pd.DataFrame(bars)
-    df['time'] = pd.to_datetime(df['time'], unit='s')
+    df['time'] = df['time'].apply(mt5_time_to_utc)
     df = df[['time', 'open', 'high', 'low', 'close', 'tick_volume']].rename(
         columns={'tick_volume': 'volume'}
     )

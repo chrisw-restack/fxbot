@@ -81,8 +81,11 @@ def load_csv(filepath: str) -> list[BarEvent]:
 
     # Detect whether data is already UTC (Dukascopy) or server time (MT5/ICMarkets).
     # UTC data has Sunday bars (market opens ~22:00 UTC Sunday); server-time data never does.
+    is_utc_normalized_mt5 = 'mt5_icmarkets_utc' in os.path.normpath(filepath).split(os.sep)
     has_sunday = (df['time'].dt.dayofweek == 6).any()
-    if has_sunday:
+    if is_utc_normalized_mt5:
+        logger.info(f"CSV {filename} is from UTC-normalized MT5 data — no conversion needed")
+    elif has_sunday:
         logger.info(f"CSV {filename} appears to be UTC (has Sunday bars) — no conversion needed")
     else:
         logger.info(f"CSV {filename} appears to be server time — converting to UTC")
@@ -119,6 +122,8 @@ def load_csv(filepath: str) -> list[BarEvent]:
 DATA_SOURCE_DIRS = {
     'dukascopy': 'data/historical',
     'histdata': 'data/historical/histdata',
+    'mt5_icmarkets': 'data/historical/mt5_icmarkets_utc',
+    'mt5_icmarkets_utc': 'data/historical/mt5_icmarkets_utc',
 }
 
 

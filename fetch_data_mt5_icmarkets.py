@@ -18,6 +18,7 @@ import pandas as pd
 from dotenv import load_dotenv
 
 import config
+from data.historical_loader import _server_to_utc
 from live_config import create_live_strategy_specs
 
 
@@ -32,6 +33,11 @@ TIMEFRAME_MAP: dict[str, str] = {
 
 def _parse_date(value: str) -> datetime:
     return datetime.strptime(value, '%Y-%m-%d').replace(tzinfo=timezone.utc)
+
+
+def _mt5_time_to_utc(timestamp: int | float) -> datetime:
+    server_time = datetime.utcfromtimestamp(timestamp)
+    return _server_to_utc(server_time)
 
 
 def _live_pairs() -> list[tuple[str, str]]:
@@ -65,8 +71,8 @@ def main() -> int:
     parser.add_argument('--end', default=None, help='UTC end date, YYYY-MM-DD; default now')
     parser.add_argument(
         '--output-dir',
-        default='data/historical/mt5_icmarkets',
-        help='Directory for CSV output',
+        default='data/historical/mt5_icmarkets_utc',
+        help='Directory for UTC-normalized CSV output',
     )
     parser.add_argument(
         '--symbols',
@@ -150,7 +156,7 @@ def main() -> int:
             continue
 
         df = pd.DataFrame(rates)
-        df['time'] = pd.to_datetime(df['time'], unit='s', utc=True).dt.tz_localize(None)
+        df['time'] = df['time'].apply(_mt5_time_to_utc)
         df = df[['time', 'open', 'high', 'low', 'close', 'tick_volume']].rename(
             columns={'tick_volume': 'volume'}
         )

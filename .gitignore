@@ -7,3 +7,4 @@ data/historical/*
 data/news/*
 data/raw/*
 output/*
+logs/*
