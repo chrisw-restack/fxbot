@@ -433,6 +433,112 @@ Notes:
 - The optimized-family WF failed outright because it selected sparse H4 high-expectancy configs that did not generalize.
 - EURUSD is not ready for demo/live. It may be worth further research, but the next step should focus on why the 2023-2025 fold fails before adding it to the suite.
 
+## EURUSD Regime-Refine Plan - 2026-05-20
+
+Working assumption:
+
+- EURUSD Candle Confirmation is not dead.
+- The best fixed D1 candidate is still the right anchor, but it needs a regime filter that fixes the latest fold.
+
+Anchor candidate for refinement:
+
+- `fractal_n=1`
+- `tf_trend='D1'`
+- `ema_fast=10`, `ema_slow=20`, `ema_sep_pct=0.0`
+- `min_engulf_range_pips=8`
+- `min_engulf_body_pct=0.4`
+- `tp_range_pct=1.25`
+- `sl_rr_ratio=2.0`
+- `min_sl_pips=10`
+
+Added narrow walk-forward configs in `walk_forward.py`:
+
+- `candle_confirmation_eurusd_vol_refine`
+  - tests D1 high-volatility blocking as the first regime hypothesis
+- `candle_confirmation_eurusd_direction_refine`
+  - tests both directions vs BUY-only vs SELL-only
+- `candle_confirmation_eurusd_location_refine`
+  - tests D1 close-location gating to avoid stretched daily closes
+- `candle_confirmation_eurusd_session_refine`
+  - tests simple session restrictions only after the regime-focused refinements
+
+Suggested run order:
+
+1. `python walk_forward.py candle_confirmation_eurusd_vol_refine --metric expectancy --workers 1`
+2. `python walk_forward.py candle_confirmation_eurusd_direction_refine --metric expectancy --workers 1`
+3. `python walk_forward.py candle_confirmation_eurusd_location_refine --metric expectancy --workers 1`
+4. `python walk_forward.py candle_confirmation_eurusd_session_refine --metric expectancy --workers 1`
+
+Decision rule:
+
+- A refinement is only interesting if it materially improves the `2023-2025` fold without making aggregate OOS negative.
+- Test one lever at a time first; do not combine filters until an individual lever proves useful.
+
+### 2026-05-20 - EURUSD volatility refinement diagnosis
+
+Initial ad hoc fixed-window diagnostics returned zero trades for the base D1 EURUSD candidate. That result was invalid. The cause was a regression in the newly added D1 regime-filter hook: D1 bars updated the regime state but returned before the existing D1 EMA trend state was updated, so any `tf_trend='D1'` Candle Confirmation config could not pass the trend filter.
+
+Fix:
+
+- `strategies/candle_confirmation.py`: D1 bars now update the regime state and then continue into the existing trend EMA update when `tf_trend='D1'`.
+
+Corrected `candle_confirmation_eurusd_vol_refine` walk-forward:
+
+| Fold | Test period | Selected params | OOS trades | OOS R | OOS exp | OOS PF | Retention |
+|---:|---|---|---:|---:|---:|---:|---:|
+| 1 | 2020-2022 | `block_high_pct`, `d1_vol_block_pct=0.8` | 49 | +22.6R | +0.461R | 1.90 | 161% |
+| 2 | 2022-2024 | `block_high_pct`, `d1_vol_block_pct=0.8` | 60 | +17.5R | +0.291R | 1.51 | 74% |
+| 3 | 2024-2026 | `block_high_pct`, `d1_vol_block_pct=0.8` | 33 | -3.3R | -0.101R | 0.86 | -27% |
+
+Aggregate OOS: `142` trades, `+36.8R`, `+0.259R` expectancy, average retention `69%`, MODERATE.
+
+Interpretation:
+
+- The D1 volatility filter is useful and consistently selected `block_high_pct` at `0.8`.
+- It improves the anchor candidate's aggregate quality but does not fully fix the latest OOS fold.
+- Next refinement should test direction and D1 location separately before combining filters.
+
+### 2026-05-20 - EURUSD direction refinement
+
+Command:
+
+`./venv/bin/python -u walk_forward.py candle_confirmation_eurusd_direction_refine --metric expectancy --workers 1`
+
+| Fold | Test period | Selected params | OOS trades | OOS R | OOS exp | OOS PF | Retention |
+|---:|---|---|---:|---:|---:|---:|---:|
+| 1 | 2020-2022 | `allowed_directions=('SELL',)` | 40 | +19.6R | +0.489R | 1.97 | 304% |
+| 2 | 2022-2024 | `allowed_directions=('SELL',)` | 63 | +2.6R | +0.041R | 1.06 | 12% |
+| 3 | 2024-2026 | `allowed_directions=('BUY',)` | 31 | +1.7R | +0.055R | 1.09 | 17% |
+
+Aggregate OOS: `134` trades, `+23.9R`, `+0.178R` expectancy, average retention `111%`.
+
+Interpretation:
+
+- Direction filtering improves the latest fold from negative to slightly positive.
+- The selected direction is not stable: SELL-only in folds 1-2, BUY-only in fold 3.
+- Treat this as evidence of directional regime dependence, not as a clean production candidate by itself.
+- Next test should be D1 location, then consider a very small combined test only if location shows an independent benefit.
+
+### 2026-05-20 - EURUSD D1 location refinement
+
+Command:
+
+`./venv/bin/python -u walk_forward.py candle_confirmation_eurusd_location_refine --metric expectancy --workers 1`
+
+| Fold | Test period | Selected params | OOS trades | OOS R | OOS exp | OOS PF | Retention |
+|---:|---|---|---:|---:|---:|---:|---:|
+| 1 | 2020-2022 | `extreme_band`, long max `0.6`, short min `0.4` | 33 | +8.5R | +0.258R | 1.45 | 132% |
+| 2 | 2022-2024 | `extreme_band`, long max `0.6`, short min `0.4` | 44 | -5.5R | -0.125R | 0.82 | -38% |
+| 3 | 2024-2026 | `off` | 50 | -5.5R | -0.110R | 0.84 | -44% |
+
+Aggregate OOS: `127` trades, `-2.5R`, `-0.020R` expectancy, average retention `17%`, FAIL.
+
+Interpretation:
+
+- D1 close-location gating does not help EURUSD Candle Confirmation.
+- It worsens the middle fold and does not rescue the latest fold.
+- Do not combine this filter into further EURUSD tests.
+
 ### 2026-05-14 - GBPUSD broad parameter sweep
 
 Command:

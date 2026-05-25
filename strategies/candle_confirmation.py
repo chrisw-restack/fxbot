@@ -16,6 +16,7 @@ Defaults are H1 bias and M5 entry.
 """
 
 from collections import deque
+from math import fabs
 
 from models import BarEvent, Signal
 
@@ -44,6 +45,13 @@ class CandleConfirmationStrategy:
         min_engulf_body_pct: float = 0.0,
         close_extreme_pct: float = 1.0,
         require_engulf_color: bool = False,
+        allowed_directions: tuple[str, ...] | None = None,
+        d1_vol_filter: str = 'off',  # 'off' | 'block_high_pct'
+        d1_vol_lookback: int = 60,
+        d1_vol_block_pct: float = 0.8,
+        d1_location_filter: str = 'off',  # 'off' | 'extreme_band'
+        d1_long_max_pct: float = 1.0,
+        d1_short_min_pct: float = 0.0,
         name: str | None = None,
     ):
         if fractal_n < 1:
@@ -66,6 +74,16 @@ class CandleConfirmationStrategy:
             raise ValueError('min_engulf_body_pct must be between 0.0 and 1.0')
         if close_extreme_pct <= 0.0 or close_extreme_pct > 1.0:
             raise ValueError('close_extreme_pct must be between 0.0 and 1.0')
+        if allowed_directions is not None and not set(allowed_directions).issubset({'BUY', 'SELL'}):
+            raise ValueError("allowed_directions must be a subset of {'BUY', 'SELL'}")
+        if d1_vol_filter not in {'off', 'block_high_pct'}:
+            raise ValueError("d1_vol_filter must be 'off' or 'block_high_pct'")
+        if d1_location_filter not in {'off', 'extreme_band'}:
+            raise ValueError("d1_location_filter must be 'off' or 'extreme_band'")
+        if not 0.0 <= d1_vol_block_pct <= 1.0:
+            raise ValueError('d1_vol_block_pct must be between 0.0 and 1.0')
+        if not 0.0 <= d1_long_max_pct <= 1.0 or not 0.0 <= d1_short_min_pct <= 1.0:
+            raise ValueError('d1_long_max_pct and d1_short_min_pct must be between 0.0 and 1.0')
 
         self.tf_bias = tf_bias
         self.tf_entry = tf_entry
@@ -86,10 +104,21 @@ class CandleConfirmationStrategy:
         self.min_engulf_body_pct = min_engulf_body_pct
         self.close_extreme_pct = close_extreme_pct
         self.require_engulf_color = require_engulf_color
+        self.allowed_directions = set(allowed_directions) if allowed_directions else None
+        self.d1_vol_filter = d1_vol_filter
+        self.d1_vol_lookback = d1_vol_lookback
+        self.d1_vol_block_pct = d1_vol_block_pct
+        self.d1_location_filter = d1_location_filter
+        self.d1_long_max_pct = d1_long_max_pct
+        self.d1_short_min_pct = d1_short_min_pct
 
         self.TIMEFRAMES = [tf_bias, tf_entry]
         if tf_trend and tf_trend not in self.TIMEFRAMES:
             self.TIMEFRAMES.append(tf_trend)
+        if (
+            d1_vol_filter != 'off' or d1_location_filter != 'off'
+        ) and 'D1' not in self.TIMEFRAMES:
+            self.TIMEFRAMES.append('D1')
         self.NAME = name or f'CandleConfirmation_{tf_bias}_{tf_entry}'
 
         self._prev_bias_bar: dict[str, BarEvent | None] = {}
@@ -101,6 +130,11 @@ class CandleConfirmationStrategy:
         self._trend_fast_sum: dict[str, float] = {}
         self._trend_slow_sum: dict[str, float] = {}
         self._trend_count: dict[str, int] = {}
+        self._prev_d1_bar: dict[str, BarEvent | None] = {}
+        self._d1_tr_values: dict[str, deque] = {}
+        self._d1_vol_pct: dict[str, float | None] = {}
+        self._d1_vol_blocked: dict[str, bool] = {}
+        self._d1_close_pos: dict[str, float | None] = {}
 
     def reset(self):
         self._prev_bias_bar.clear()
@@ -112,6 +146,11 @@ class CandleConfirmationStrategy:
         self._trend_fast_sum.clear()
         self._trend_slow_sum.clear()
         self._trend_count.clear()
+        self._prev_d1_bar.clear()
+        self._d1_tr_values.clear()
+        self._d1_vol_pct.clear()
+        self._d1_vol_blocked.clear()
+        self._d1_close_pos.clear()
 
     def notify_loss(self, symbol: str):
         self._bias[symbol] = None
@@ -129,7 +168,10 @@ class CandleConfirmationStrategy:
             self._bias[symbol] = None
             self._signal_fired[symbol] = False
             self._init_trend_state(symbol)
+            self._init_d1_state(symbol)
 
+        if event.timeframe == 'D1':
+            self._on_d1_bar(symbol, event)
         if self.tf_trend and event.timeframe == self.tf_trend:
             self._update_trend_ema(symbol, event)
             return None
@@ -164,7 +206,16 @@ class CandleConfirmationStrategy:
             self._signal_fired[symbol] = False
             return
 
+        if self.allowed_directions is not None and direction not in self.allowed_directions:
+            self._bias[symbol] = None
+            self._signal_fired[symbol] = False
+            return
+
         if not self._trend_allows(symbol, direction):
+            self._bias[symbol] = None
+            self._signal_fired[symbol] = False
+            return
+        if not self._d1_regime_allows(symbol, direction):
             self._bias[symbol] = None
             self._signal_fired[symbol] = False
             return
@@ -394,6 +445,43 @@ class CandleConfirmationStrategy:
         self._trend_slow_sum[symbol] = 0.0
         self._trend_count[symbol] = 0
 
+    def _init_d1_state(self, symbol: str):
+        if symbol in self._d1_tr_values:
+            return
+        self._prev_d1_bar[symbol] = None
+        self._d1_tr_values[symbol] = deque(maxlen=max(self.d1_vol_lookback, 1))
+        self._d1_vol_pct[symbol] = None
+        self._d1_vol_blocked[symbol] = False
+        self._d1_close_pos[symbol] = None
+
+    def _on_d1_bar(self, symbol: str, bar: BarEvent):
+        self._init_d1_state(symbol)
+
+        prev = self._prev_d1_bar[symbol]
+        tr = bar.high - bar.low
+        if prev is not None:
+            tr = max(tr, fabs(bar.high - prev.close), fabs(bar.low - prev.close))
+
+        tr_values = self._d1_tr_values[symbol]
+        if tr_values:
+            pct = sum(1 for value in tr_values if value <= tr) / len(tr_values)
+            self._d1_vol_pct[symbol] = pct
+            self._d1_vol_blocked[symbol] = (
+                self.d1_vol_filter == 'block_high_pct' and pct >= self.d1_vol_block_pct
+            )
+        else:
+            self._d1_vol_pct[symbol] = None
+            self._d1_vol_blocked[symbol] = False
+        tr_values.append(tr)
+
+        rng = bar.high - bar.low
+        if rng > 0:
+            self._d1_close_pos[symbol] = (bar.close - bar.low) / rng
+        else:
+            self._d1_close_pos[symbol] = None
+
+        self._prev_d1_bar[symbol] = bar
+
     def _update_trend_ema(self, symbol: str, bar: BarEvent):
         self._init_trend_state(symbol)
         self._trend_count[symbol] += 1
@@ -420,6 +508,20 @@ class CandleConfirmationStrategy:
             return False
 
         return (direction == 'BUY' and fast > slow) or (direction == 'SELL' and fast < slow)
+
+    def _d1_regime_allows(self, symbol: str, direction: str) -> bool:
+        if self.d1_vol_filter == 'block_high_pct' and self._d1_vol_blocked.get(symbol, False):
+            return False
+
+        if self.d1_location_filter != 'extreme_band':
+            return True
+
+        close_pos = self._d1_close_pos.get(symbol)
+        if close_pos is None:
+            return False
+        if direction == 'BUY':
+            return close_pos <= self.d1_long_max_pct
+        return close_pos >= self.d1_short_min_pct
 
     @staticmethod
     def _update_ema(
