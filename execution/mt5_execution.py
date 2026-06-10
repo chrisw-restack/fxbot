@@ -35,6 +35,13 @@ class MT5Execution(BaseExecution):
             return value
         return round(round(value / step) * step, 10)
 
+    @staticmethod
+    def _last_error_text() -> str:
+        try:
+            return str(mt5.last_error())
+        except Exception as exc:
+            return f"last_error unavailable: {exc}"
+
     def _normalize_volume(self, symbol: str, volume: float) -> float:
         info = mt5.symbol_info(symbol)
         if info is None:
@@ -138,7 +145,10 @@ class MT5Execution(BaseExecution):
         if result is None or result.retcode not in success_codes:
             code = result.retcode if result else 'None'
             comment = result.comment if result else ''
-            logger.error(f"Order failed for {symbol}: retcode={code} {comment}")
+            logger.error(
+                f"Order failed for {symbol}: retcode={code} {comment} "
+                f"last_error={self._last_error_text()}"
+            )
             return 0
 
         fill_price = getattr(result, 'price', None) or price
@@ -168,7 +178,11 @@ class MT5Execution(BaseExecution):
             result = mt5.order_send(request)
             if result is None or result.retcode != mt5.TRADE_RETCODE_DONE:
                 code = result.retcode if result else 'None'
-                logger.error(f"Cancel pending order failed for ticket {ticket_id}: retcode={code}")
+                comment = result.comment if result else ''
+                logger.error(
+                    f"Cancel pending order failed for ticket {ticket_id}: "
+                    f"retcode={code} {comment} last_error={self._last_error_text()}"
+                )
                 return False
             logger.info(f"Pending order cancelled: ticket={ticket_id}")
             return True
@@ -196,7 +210,7 @@ class MT5Execution(BaseExecution):
 
         result = mt5.order_send(request)
         if result is None or result.retcode != mt5.TRADE_RETCODE_DONE:
-            logger.error(f"Close failed for ticket {ticket_id}: {result}")
+            logger.error(f"Close failed for ticket {ticket_id}: {result} last_error={self._last_error_text()}")
             return False
         return True
 
@@ -275,20 +289,20 @@ class MT5Execution(BaseExecution):
         strategy_name = tracked_pos.get('strategy_name') or tracked_pos.get('comment') or ''
         symbol = tracked_pos.get('symbol')
 
+        identifiers = {
+            value for value in (ticket, position_id)
+            if value not in (None, 0, '')
+        }
+
         matching = []
         for d in deals:
-            if self._known_magic and getattr(d, 'magic', 0) not in self._known_magic:
-                continue
-            if strategy_name and getattr(d, 'comment', strategy_name) not in ('', strategy_name):
-                continue
             if symbol and getattr(d, 'symbol', symbol) != symbol:
                 continue
             deal_position_id = getattr(d, 'position_id', None)
             deal_order = getattr(d, 'order', None)
             deal_ticket = getattr(d, 'ticket', None)
-            if position_id not in (deal_position_id, deal_order, deal_ticket) and ticket not in (
-                deal_position_id, deal_order, deal_ticket,
-            ):
+            deal_ids = {deal_position_id, deal_order, deal_ticket}
+            if identifiers.isdisjoint(deal_ids):
                 continue
             matching.append(d)
 
@@ -303,22 +317,55 @@ class MT5Execution(BaseExecution):
         if not exit_deals:
             return None
 
+        # Net the full matched deal set, not only the exit deals. Entry commissions
+        # are charged on the entry deal while realized price P/L appears on exit.
         pnl = sum(
             float(getattr(d, 'profit', 0.0))
             + float(getattr(d, 'commission', 0.0))
             + float(getattr(d, 'swap', 0.0))
             + float(getattr(d, 'fee', 0.0))
-            for d in exit_deals
+            for d in matching
         )
+        commission = sum(float(getattr(d, 'commission', 0.0)) for d in matching)
+        swap = sum(float(getattr(d, 'swap', 0.0)) for d in matching)
+        fee = sum(float(getattr(d, 'fee', 0.0)) for d in matching)
         latest = max(exit_deals, key=lambda d: getattr(d, 'time', 0))
+        exit_price = float(getattr(latest, 'price', 0.0))
+        entry_price = tracked_pos.get('open_price')
+        sl = tracked_pos.get('sl')
+        direction = tracked_pos.get('direction', '')
+        r_multiple = 0.0
+        try:
+            entry_price = float(entry_price)
+            sl = float(sl)
+            if direction == 'BUY':
+                risk = entry_price - sl
+                move = exit_price - entry_price
+            else:
+                risk = sl - entry_price
+                move = entry_price - exit_price
+            if risk > 0:
+                r_multiple = round(move / risk, 2)
+        except (TypeError, ValueError):
+            r_multiple = 0.0
+
         result = 'WIN' if pnl > 0 else ('BE' if pnl == 0 else 'LOSS')
         return {
             'ticket': ticket,
             'symbol': symbol or getattr(latest, 'symbol', ''),
-            'direction': tracked_pos.get('direction', ''),
+            'direction': direction,
             'strategy_name': strategy_name,
             'result': result,
             'pnl': round(pnl, 2),
             'close_time': datetime.fromtimestamp(getattr(latest, 'time', 0), tz=timezone.utc),
-            'r_multiple': 0.0,
+            'r_multiple': r_multiple,
+            'entry_price': tracked_pos.get('open_price', ''),
+            'exit_price': exit_price,
+            'sl': tracked_pos.get('sl', ''),
+            'tp': tracked_pos.get('tp', ''),
+            'lot_size': tracked_pos.get('volume', ''),
+            'commission': round(commission, 2),
+            'swap': round(swap, 2),
+            'fee': round(fee, 2),
+            'close_reason': getattr(latest, 'comment', ''),
         }

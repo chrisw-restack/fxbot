@@ -149,6 +149,29 @@ couldn't recover during good ones.
 - Loss streaks are slow bleeds (1–3 losses/day over 1–3 weeks during trending regimes).
   Extensive DD reduction testing (see below) found no approach worth deploying.
 
+### Forward Demo Review — 2026-06-10
+
+Files reviewed: `logs/trade_journal.csv`, `logs/trading.log`, and `logs/ReportHistory-52775013.html`.
+
+MT5 report attribution since 2026-05-11:
+
+| Scope | Trades | Wins | Net P/L | Notes |
+|-------|-------:|-----:|--------:|-------|
+| IMSRev_H4_M15 | 12 | 1 | -$1,131.55 | 8.3% WR; recent demo underperforming validation |
+| Full bot suite | 24 | 2 | -$2,269.99 | 8.3% WR across all closed positions |
+
+This is poor, but not yet outside the known IMSRev risk profile. The latest available local Dukascopy
+data only reaches 2026-03-19, so the May/June 2026 demo cluster cannot be replayed locally. A focused
+replay over 2024-01-01 through available data (`python run_backtest.py ims_reversal_best --symbols
+GBPNZD AUDUSD USA30 USDCHF XAUUSD AUDJPY AUDCAD USDCAD --start-date 2024-01-01 --end-date 2026-06-10`)
+remained positive: 385 trades, 23.1% WR, +79.96R, PF 1.26, expectancy +0.21R, max DD 46.8R, worst loss
+streak 22. The forward demo run is therefore a serious monitor item, but not enough evidence by itself
+to change IMSRev parameters or remove it from demo.
+
+Operational fix made during the review: MT5 close-history matching now keys off the tracked position/order
+id instead of requiring the exit deal comment to match the strategy name. SL/TP exit deals usually carry
+comments like `[sl ...]`, which caused the journal to fall back to cached PnL and record `r_multiple=0.0`.
+
 ---
 
 ## Drawdown Reduction Analysis (2026-04-23)

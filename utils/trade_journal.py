@@ -171,8 +171,13 @@ class TradeJournal:
             'symbol': trade.get('symbol', ''),
             'strategy_name': trade.get('strategy_name', ''),
             'direction': trade.get('direction', ''),
+            'entry_price_actual': _round(trade.get('entry_price')),
+            'stop_loss': _round(trade.get('sl')),
+            'take_profit': _round(trade.get('tp')),
+            'lot_size': trade.get('lot_size', ''),
             'result': trade.get('result', ''),
             'pnl': trade.get('pnl', ''),
             'r_multiple': trade.get('r_multiple', ''),
             'close_time_utc': _iso(trade.get('close_time')),
+            'reason': trade.get('close_reason', ''),
         })

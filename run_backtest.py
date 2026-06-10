@@ -39,6 +39,7 @@ from strategies.smc_reversal import SmcReversalStrategy
 from strategies.three_line_strike import ThreeLineStrikeStrategy
 from strategies.hourly_mean_reversion import HourlyMeanReversionStrategy
 from strategies.london_breakout import LondonBreakoutStrategy
+from strategies.ny_index_opening_drive import NyIndexOpeningDriveStrategy
 from data.historical_loader import find_csv
 from data.news_filter import NewsFilter
 
@@ -65,6 +66,7 @@ DEFAULT_SYMBOLS_BY_STRATEGY = {
     'failed2_fx_usdjpy_candidate': ['USDJPY'],
     'hmr': ['XAUUSD'],
     'hmr_m1': ['XAUUSD'],
+    'ny_index_opening_drive': ['USA100'],
 }
 
 INITIAL_BALANCE = 10_000.0   # starting account balance in USD
@@ -126,6 +128,21 @@ STRATEGIES = {
     'hmr':    HourlyMeanReversionStrategy(tf_lower='M5',  min_move_pips=100, entry_window_start=20, entry_window_end=45, fractal_n=1, max_pullback_pips=0,  session_hours=tuple(range(8,17))),
     'hmr_m1': HourlyMeanReversionStrategy(tf_lower='M1',  min_move_pips=100, entry_window_start=20, entry_window_end=45, fractal_n=2, max_pullback_pips=30, session_hours=tuple(range(8,17))),
     'lbs':         LondonBreakoutStrategy(rr_ratio=2.5),
+    'ny_index_opening_drive': NyIndexOpeningDriveStrategy(
+        min_drive_pips=40,
+        max_drive_pips=250,
+        min_drive_body_pct=0.45,
+        retrace_min_pct=0.382,
+        retrace_max_pct=0.618,
+        fractal_n=1,
+        rr_ratio=3.0,
+        sl_buffer_pips=5.0,
+        max_sl_pips=180,
+        trend_filter='d1_h1_ema',
+        d1_range_filter='block_top_pct',
+        d1_range_block_pct=0.8,
+        pip_sizes=dict(config.PIP_SIZE),
+    ),
 }
 
 ALL_CHOICES = list(STRATEGIES.keys()) + ['live_suite']

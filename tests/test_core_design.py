@@ -1,7 +1,9 @@
 import os
+import sys
 import tempfile
+import types
 import unittest
-from datetime import datetime
+from datetime import datetime, timezone
 
 from data.historical_loader import load_and_merge
 from execution.simulated_execution import SimulatedExecution
@@ -9,6 +11,11 @@ from models import BarEvent, Signal
 from portfolio.portfolio_manager import PortfolioManager
 from risk.risk_manager import RiskManager
 from strategies.candle_confirmation import CandleConfirmationStrategy
+from strategies.ema_fib_retracement import EmaFibRetracementStrategy
+from strategies.ema_fib_running import EmaFibRunningStrategy
+from strategies.ny_index_opening_drive import NyIndexOpeningDriveStrategy
+from strategies.three_line_strike import ThreeLineStrikeStrategy
+import config
 
 
 class PortfolioManagerTests(unittest.TestCase):
@@ -39,6 +46,13 @@ class RiskManagerTests(unittest.TestCase):
         )
 
         self.assertIsNone(risk.process(signal))
+
+
+class StrategyPipDefaultsTests(unittest.TestCase):
+    def test_strategy_defaults_match_gold_pip_size(self):
+        self.assertEqual(ThreeLineStrikeStrategy()._pip_size('XAUUSD'), config.PIP_SIZE['XAUUSD'])
+        self.assertEqual(EmaFibRetracementStrategy()._pip_size('XAUUSD'), config.PIP_SIZE['XAUUSD'])
+        self.assertEqual(EmaFibRunningStrategy()._pip_size('XAUUSD'), config.PIP_SIZE['XAUUSD'])
 
 
 class SimulatedExecutionTests(unittest.TestCase):
@@ -151,6 +165,91 @@ class SimulatedExecutionTests(unittest.TestCase):
         self.assertEqual(len(closed), 1)
 
 
+class MT5ExecutionTests(unittest.TestCase):
+    def test_closed_trade_lookup_matches_exit_deal_with_sl_comment(self):
+        old_mt5 = sys.modules.get('MetaTrader5')
+        old_module = sys.modules.pop('execution.mt5_execution', None)
+
+        fake_mt5 = types.SimpleNamespace(
+            TIMEFRAME_M5=1,
+            TIMEFRAME_M15=2,
+            TIMEFRAME_H1=3,
+            TIMEFRAME_H4=4,
+            TIMEFRAME_D1=5,
+            TRADE_RETCODE_DONE=10009,
+            TRADE_RETCODE_PLACED=10008,
+            DEAL_ENTRY_OUT=1,
+            DEAL_ENTRY_OUT_BY=3,
+            last_error=lambda: (0, ''),
+        )
+        sys.modules['MetaTrader5'] = fake_mt5
+
+        def cleanup():
+            sys.modules.pop('execution.mt5_execution', None)
+            if old_module is not None:
+                sys.modules['execution.mt5_execution'] = old_module
+            if old_mt5 is not None:
+                sys.modules['MetaTrader5'] = old_mt5
+            else:
+                sys.modules.pop('MetaTrader5', None)
+
+        self.addCleanup(cleanup)
+
+        from execution.mt5_execution import MT5Execution
+
+        close_ts = int(datetime(2026, 6, 9, 12, tzinfo=timezone.utc).timestamp())
+        fake_mt5.history_deals_get = lambda start, end: [
+            types.SimpleNamespace(
+                position_id=12345,
+                order=12345,
+                ticket=1,
+                symbol='EURUSD',
+                entry=0,
+                comment='TestStrategy',
+                profit=0.0,
+                commission=-3.5,
+                swap=0.0,
+                fee=0.0,
+                price=1.1000,
+                time=close_ts - 60,
+            ),
+            types.SimpleNamespace(
+                position_id=12345,
+                order=54321,
+                ticket=2,
+                symbol='EURUSD',
+                entry=fake_mt5.DEAL_ENTRY_OUT,
+                comment='[sl 1.0990]',
+                profit=-100.0,
+                commission=-3.5,
+                swap=0.0,
+                fee=0.0,
+                price=1.0990,
+                time=close_ts,
+            ),
+        ]
+
+        execution = MT5Execution(magic_numbers={'TestStrategy': 1001})
+        closed = execution.get_recent_closed_trade({
+            'ticket': 12345,
+            'position_id': 12345,
+            'symbol': 'EURUSD',
+            'direction': 'BUY',
+            'strategy_name': 'TestStrategy',
+            'open_price': 1.1000,
+            'sl': 1.0990,
+            'tp': 1.1020,
+            'volume': 1.0,
+        })
+
+        self.assertIsNotNone(closed)
+        self.assertEqual(closed['strategy_name'], 'TestStrategy')
+        self.assertEqual(closed['result'], 'LOSS')
+        self.assertEqual(closed['close_reason'], '[sl 1.0990]')
+        self.assertAlmostEqual(closed['pnl'], -107.0)
+        self.assertAlmostEqual(closed['r_multiple'], -1.0)
+
+
 class HistoricalLoaderTests(unittest.TestCase):
     def test_load_and_merge_processes_lower_timeframe_first_at_same_close_time(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -242,6 +341,40 @@ class CandleConfirmationStrategyTests(unittest.TestCase):
         self.assertEqual(strategy._bias['EURUSD']['direction'], 'SELL')
 
 
+class NyIndexOpeningDriveStrategyTests(unittest.TestCase):
+    def test_enters_after_opening_drive_pullback_and_structure_break(self):
+        strategy = NyIndexOpeningDriveStrategy(
+            min_drive_pips=40,
+            max_drive_pips=250,
+            min_drive_body_pct=0.4,
+            trend_filter='off',
+            d1_range_filter='off',
+            fractal_n=1,
+            rr_ratio=3.0,
+            sl_buffer_pips=5.0,
+            pip_sizes={'USA100': 1.0},
+        )
+
+        bars = [
+            _idx_bar(13, 30, 10000, 10030, 9995, 10025),
+            _idx_bar(13, 35, 10025, 10050, 10020, 10045),
+            _idx_bar(13, 40, 10045, 10070, 10040, 10065),
+            _idx_bar(13, 45, 10065, 10090, 10060, 10085),
+            _idx_bar(13, 50, 10085, 10100, 10080, 10095),
+            _idx_bar(13, 55, 10095, 10098, 10085, 10090),
+            _idx_bar(14, 0, 10090, 10080, 10050, 10060),
+        ]
+        for bar in bars:
+            self.assertIsNone(strategy.generate_signal(bar))
+
+        signal = strategy.generate_signal(_idx_bar(14, 5, 10060, 10110, 10055, 10105))
+
+        self.assertIsNotNone(signal)
+        self.assertEqual(signal.direction, 'BUY')
+        self.assertAlmostEqual(signal.stop_loss, 10045)
+        self.assertAlmostEqual(signal.take_profit, 10285)
+
+
 def _enriched_signal(symbol, strategy_name):
     from models import EnrichedSignal
 
@@ -276,6 +409,19 @@ def _cc_bar(timeframe, minute, open_price, high, low, close):
         symbol='EURUSD',
         timeframe=timeframe,
         timestamp=datetime(2024, 1, 1, minute // 60, minute % 60),
+        open=open_price,
+        high=high,
+        low=low,
+        close=close,
+        volume=1,
+    )
+
+
+def _idx_bar(hour, minute, open_price, high, low, close):
+    return BarEvent(
+        symbol='USA100',
+        timeframe='M5',
+        timestamp=datetime(2024, 1, 1, hour, minute),
         open=open_price,
         high=high,
         low=low,

@@ -2,7 +2,7 @@ from collections import deque
 
 from models import BarEvent, Signal
 
-_DEFAULT_PIP_SIZES = {'USDJPY': 0.01, 'XAUUSD': 0.01}
+_DEFAULT_PIP_SIZES = {'USDJPY': 0.01, 'XAUUSD': 0.10}
 
 
 class ThreeLineStrikeStrategy:

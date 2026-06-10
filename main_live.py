@@ -183,11 +183,18 @@ def main():
                         if closed is None:
                             pnl = pos.get('profit', 0.0)
                             result = 'WIN' if pnl > 0 else ('BE' if pnl == 0 else 'LOSS')
-                            strategy_name = pos.get('comment', 'unknown')
+                            strategy_name = pos.get('strategy_name') or pos.get('comment', 'unknown')
                             closed = {
+                                'ticket': ticket,
                                 'symbol': pos['symbol'], 'direction': pos['direction'],
                                 'result': result, 'pnl': pnl, 'r_multiple': 0.0,
                                 'strategy_name': strategy_name,
+                                'entry_price': pos.get('open_price', ''),
+                                'sl': pos.get('sl', ''),
+                                'tp': pos.get('tp', ''),
+                                'lot_size': pos.get('volume', ''),
+                                'close_time': datetime.now(timezone.utc),
+                                'close_reason': 'closed_history_missing',
                             }
                             logger.warning(f"Closed deal history not found for ticket={ticket}; using last cached PnL")
                         strategy_name = closed['strategy_name']
@@ -205,6 +212,7 @@ def main():
                             strategy=strategy_name,
                         )
                         portfolio.record_close(closed['symbol'], closed['pnl'], strategy_name)
+                        portfolio.is_daily_loss_exceeded(execution.get_account_balance())
                         event_engine.notify_trade_closed({
                             'symbol':        closed['symbol'],
                             'strategy_name': strategy_name,

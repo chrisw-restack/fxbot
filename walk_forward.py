@@ -41,6 +41,7 @@ from strategies.hourly_mean_reversion import HourlyMeanReversionStrategy
 from strategies.london_breakout import LondonBreakoutStrategy
 from strategies.failed2 import Failed2Strategy
 from strategies.candle_confirmation import CandleConfirmationStrategy
+from strategies.ny_index_opening_drive import NyIndexOpeningDriveStrategy
 
 logging.basicConfig(level=logging.ERROR)
 sys.stdout.reconfigure(line_buffering=True)
@@ -780,6 +781,38 @@ STRATEGY_CONFIGS = {
                 ('2', 'failed2'),
                 ('2', '3'),
             ],
+        },
+    },
+    'ny_index_opening_drive': {
+        # First validation grid for the USTEC/USA100 NY opening-drive pullback
+        # hypothesis. Focused around the corrected fixed backtest and quick
+        # diagnostics from 2026-06-01.
+        'class': NyIndexOpeningDriveStrategy,
+        'timeframes': ['D1', 'H1', 'M5'],
+        'symbols': ['USA100'],
+        'min_trades': 20,
+        'fixed_params': {
+            'tf_entry': 'M5',
+            'opening_start_hour': 13,
+            'opening_start_minute': 30,
+            'opening_minutes': 30,
+            'entry_cutoff_hour': 16,
+            'entry_cutoff_minute': 0,
+            'max_drive_pips': 250,
+            'retrace_min_pct': 0.382,
+            'retrace_max_pct': 0.618,
+            'fractal_n': 1,
+            'rr_ratio': 3.0,
+            'sl_buffer_pips': 5.0,
+            'max_sl_pips': 180,
+            'd1_range_block_pct': 0.8,
+            'pip_sizes': dict(config.PIP_SIZE),
+        },
+        'param_grid': {
+            'min_drive_pips': [20, 40],
+            'min_drive_body_pct': [0.30, 0.45],
+            'trend_filter': ['d1_h1_ema', 'd1_ema'],
+            'd1_range_filter': ['off', 'block_top_pct'],
         },
     },
     'failed2_usa100_session_refine': {
