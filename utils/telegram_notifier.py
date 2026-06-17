@@ -59,16 +59,17 @@ class TelegramNotifier:
         self._send('\n'.join(lines))
 
     def notify_order_closed(self, symbol: str, direction: str, result: str,
-                            r_multiple: float, pnl: float, strategy: str):
+                            r_multiple: float | None, pnl: float, strategy: str):
         if result == 'WIN':
             emoji = "\u2705"
         elif result == 'BE':
             emoji = "\u2796"
         else:
             emoji = "\u274c"
+        r_text = 'n/a' if r_multiple is None else f'{r_multiple:+.2f}'
         lines = [
             f"{emoji} <b>Trade closed — {symbol} {direction}</b>",
-            f"Result: {result}  |  R: {r_multiple:+.2f}  |  PnL: ${pnl:+.2f}",
+            f"Result: {result}  |  R: {r_text}  |  PnL: ${pnl:+.2f}",
             f"Strategy: {strategy}",
         ]
         self._send('\n'.join(lines))

@@ -15,6 +15,7 @@ from strategies.ema_fib_retracement import EmaFibRetracementStrategy
 from strategies.ema_fib_running import EmaFibRunningStrategy
 from strategies.ny_index_opening_drive import NyIndexOpeningDriveStrategy
 from strategies.three_line_strike import ThreeLineStrikeStrategy
+from utils.telegram_notifier import TelegramNotifier
 import config
 
 
@@ -249,6 +250,87 @@ class MT5ExecutionTests(unittest.TestCase):
         self.assertAlmostEqual(closed['pnl'], -107.0)
         self.assertAlmostEqual(closed['r_multiple'], -1.0)
 
+    def test_closed_trade_uses_sl_exit_for_r_when_tracked_sl_missing(self):
+        old_mt5 = sys.modules.get('MetaTrader5')
+        old_module = sys.modules.pop('execution.mt5_execution', None)
+
+        fake_mt5 = types.SimpleNamespace(
+            TIMEFRAME_M5=1,
+            TIMEFRAME_M15=2,
+            TIMEFRAME_H1=3,
+            TIMEFRAME_H4=4,
+            TIMEFRAME_D1=5,
+            TRADE_RETCODE_DONE=10009,
+            TRADE_RETCODE_PLACED=10008,
+            DEAL_ENTRY_OUT=1,
+            DEAL_ENTRY_OUT_BY=3,
+            last_error=lambda: (0, ''),
+        )
+        sys.modules['MetaTrader5'] = fake_mt5
+
+        def cleanup():
+            sys.modules.pop('execution.mt5_execution', None)
+            if old_module is not None:
+                sys.modules['execution.mt5_execution'] = old_module
+            if old_mt5 is not None:
+                sys.modules['MetaTrader5'] = old_mt5
+            else:
+                sys.modules.pop('MetaTrader5', None)
+
+        self.addCleanup(cleanup)
+
+        from execution.mt5_execution import MT5Execution
+
+        close_ts = int(datetime(2026, 6, 9, 12, tzinfo=timezone.utc).timestamp())
+        fake_mt5.history_deals_get = lambda start, end: [
+            types.SimpleNamespace(
+                position_id=12345,
+                order=12345,
+                ticket=1,
+                symbol='EURUSD',
+                entry=0,
+                comment='TestStrategy',
+                profit=0.0,
+                commission=-3.5,
+                swap=0.0,
+                fee=0.0,
+                price=1.1000,
+                time=close_ts - 60,
+            ),
+            types.SimpleNamespace(
+                position_id=12345,
+                order=54321,
+                ticket=2,
+                symbol='EURUSD',
+                entry=fake_mt5.DEAL_ENTRY_OUT,
+                comment='[sl 1.0990]',
+                profit=-100.0,
+                commission=-3.5,
+                swap=0.0,
+                fee=0.0,
+                price=1.0990,
+                time=close_ts,
+            ),
+        ]
+
+        execution = MT5Execution(magic_numbers={'TestStrategy': 1001})
+        closed = execution.get_recent_closed_trade({
+            'ticket': 12345,
+            'position_id': 12345,
+            'symbol': 'EURUSD',
+            'direction': 'BUY',
+            'strategy_name': 'TestStrategy',
+            'open_price': 1.1000,
+            'sl': 0.0,
+            'tp': 1.1020,
+            'volume': 1.0,
+        })
+
+        self.assertIsNotNone(closed)
+        self.assertEqual(closed['result'], 'LOSS')
+        self.assertAlmostEqual(closed['r_multiple'], -1.0)
+        self.assertAlmostEqual(closed['sl'], 1.0990)
+
 
 class HistoricalLoaderTests(unittest.TestCase):
     def test_load_and_merge_processes_lower_timeframe_first_at_same_close_time(self):
@@ -373,6 +455,26 @@ class NyIndexOpeningDriveStrategyTests(unittest.TestCase):
         self.assertEqual(signal.direction, 'BUY')
         self.assertAlmostEqual(signal.stop_loss, 10045)
         self.assertAlmostEqual(signal.take_profit, 10285)
+
+
+class TelegramNotifierTests(unittest.TestCase):
+    def test_unknown_r_multiple_is_reported_as_not_available(self):
+        notifier = TelegramNotifier(bot_token='', chat_id='')
+        sent = []
+        notifier._send = lambda text: sent.append(text)
+
+        notifier.notify_order_closed(
+            symbol='USDCAD',
+            direction='BUY',
+            result='LOSS',
+            r_multiple=None,
+            pnl=-89.33,
+            strategy='IMS_H4_M15',
+        )
+
+        self.assertEqual(len(sent), 1)
+        self.assertIn('R: n/a', sent[0])
+        self.assertNotIn('R: +0.00', sent[0])
 
 
 def _enriched_signal(symbol, strategy_name):

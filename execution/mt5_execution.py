@@ -1,4 +1,5 @@
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 from math import floor
 
@@ -7,6 +8,8 @@ import MetaTrader5 as mt5
 from execution.base_execution import BaseExecution
 
 logger = logging.getLogger(__name__)
+
+_SL_COMMENT_RE = re.compile(r'\[sl\b', re.IGNORECASE)
 
 MT5_TIMEFRAME_MAP = {
     'M5':  mt5.TIMEFRAME_M5,
@@ -334,7 +337,8 @@ class MT5Execution(BaseExecution):
         entry_price = tracked_pos.get('open_price')
         sl = tracked_pos.get('sl')
         direction = tracked_pos.get('direction', '')
-        r_multiple = 0.0
+        close_reason = getattr(latest, 'comment', '')
+        r_multiple = None
         try:
             entry_price = float(entry_price)
             sl = float(sl)
@@ -344,12 +348,27 @@ class MT5Execution(BaseExecution):
             else:
                 risk = sl - entry_price
                 move = entry_price - exit_price
-            if risk > 0:
+            if sl > 0 and risk > 0:
                 r_multiple = round(move / risk, 2)
         except (TypeError, ValueError):
-            r_multiple = 0.0
+            r_multiple = None
 
         result = 'WIN' if pnl > 0 else ('BE' if pnl == 0 else 'LOSS')
+        output_sl = tracked_pos.get('sl', '')
+        if r_multiple is None and result == 'LOSS' and _SL_COMMENT_RE.search(str(close_reason)):
+            try:
+                entry = float(tracked_pos.get('open_price'))
+                if direction == 'BUY':
+                    risk = entry - exit_price
+                    move = exit_price - entry
+                else:
+                    risk = exit_price - entry
+                    move = entry - exit_price
+                if risk > 0:
+                    r_multiple = round(move / risk, 2)
+                    output_sl = exit_price
+            except (TypeError, ValueError):
+                r_multiple = None
         return {
             'ticket': ticket,
             'symbol': symbol or getattr(latest, 'symbol', ''),
@@ -361,11 +380,11 @@ class MT5Execution(BaseExecution):
             'r_multiple': r_multiple,
             'entry_price': tracked_pos.get('open_price', ''),
             'exit_price': exit_price,
-            'sl': tracked_pos.get('sl', ''),
+            'sl': output_sl,
             'tp': tracked_pos.get('tp', ''),
             'lot_size': tracked_pos.get('volume', ''),
             'commission': round(commission, 2),
             'swap': round(swap, 2),
             'fee': round(fee, 2),
-            'close_reason': getattr(latest, 'comment', ''),
+            'close_reason': close_reason,
         }

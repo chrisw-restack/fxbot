@@ -187,7 +187,7 @@ def main():
                             closed = {
                                 'ticket': ticket,
                                 'symbol': pos['symbol'], 'direction': pos['direction'],
-                                'result': result, 'pnl': pnl, 'r_multiple': 0.0,
+                                'result': result, 'pnl': pnl, 'r_multiple': None,
                                 'strategy_name': strategy_name,
                                 'entry_price': pos.get('open_price', ''),
                                 'sl': pos.get('sl', ''),
@@ -207,7 +207,7 @@ def main():
                             symbol=closed['symbol'],
                             direction=closed['direction'],
                             result=closed['result'],
-                            r_multiple=closed.get('r_multiple', 0.0),
+                            r_multiple=closed.get('r_multiple'),
                             pnl=closed['pnl'],
                             strategy=strategy_name,
                         )

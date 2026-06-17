@@ -66,3 +66,20 @@ Impact:
 - Future `signal_time_utc` values should be actual UTC.
 - Existing journal rows before this change have broker/server candle timestamps
   in `signal_time_utc`, despite the column name.
+
+## Unknown R Multiple Telegram Display - 2026-06-17
+
+Observed Telegram close example:
+
+`USDCAD BUY`, `LOSS`, `PnL: $-89.33`, `R: +0.00`, strategy `IMS_H4_M15`.
+
+Diagnosis:
+
+- The trade result and PnL can be correct while `R` is wrong.
+- `R: +0.00` was used as a fallback when live close reconstruction could not calculate initial risk from tracked entry/SL data, or when MT5 supplied `sl=0.0` and the code treated it as a valid huge risk.
+
+Fix:
+
+- Unknown live `r_multiple` is now stored/passed as `None`, not `0.0`.
+- Telegram now displays `R: n/a` when R cannot be reconstructed.
+- MT5 close reconstruction treats `sl=0.0` as missing and, for broker SL exits with comments like `[sl ...]`, falls back to calculating roughly `-1.00R` from entry to exit price.
