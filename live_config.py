@@ -8,6 +8,7 @@ from strategies.ims import ImsStrategy
 from strategies.ims_reversal import ImsReversalStrategy
 from strategies.failed2 import Failed2Strategy
 from strategies.candle_confirmation import CandleConfirmationStrategy
+from strategies.ny_index_opening_drive import NyIndexOpeningDriveStrategy
 
 
 IMS_SYMBOLS = ['USDJPY', 'XAUUSD', 'EURAUD', 'CADJPY', 'USDCAD', 'AUDUSD', 'EURUSD', 'GBPCAD', 'GBPUSD']
@@ -15,6 +16,7 @@ IMS_REV_SYMBOLS = ['GBPNZD', 'AUDUSD', 'US30', 'USDCHF', 'XAUUSD', 'AUDJPY', 'AU
 ENGULFING_SYMBOLS = ['EURUSD', 'AUDUSD']
 FAILED2_SYMBOLS = ['USTEC']
 FAILED2_NAME = 'Failed2_H4_H1_M5_market'
+NY_INDEX_OPENING_DRIVE_SYMBOLS = ['USTEC']
 CANDLE_CONFIRMATION_USDJPY_SYMBOLS = ['USDJPY']
 CANDLE_CONFIRMATION_GBPUSD_SYMBOLS = ['GBPUSD']
 
@@ -101,6 +103,27 @@ def create_live_strategy_specs():
         d1_range_block_pct=0.7,
         pip_sizes={s: config.PIP_SIZE[s] for s in FAILED2_SYMBOLS if s in config.PIP_SIZE},
     )
+    ny_index_opening_drive = NyIndexOpeningDriveStrategy(
+        tf_entry='M5',
+        opening_start_hour=9,
+        opening_start_minute=30,
+        opening_minutes=30,
+        entry_cutoff_hour=12,
+        entry_cutoff_minute=0,
+        min_drive_pips=40,
+        max_drive_pips=250,
+        min_drive_body_pct=0.30,
+        retrace_min_pct=0.382,
+        retrace_max_pct=0.618,
+        fractal_n=1,
+        rr_ratio=3.0,
+        sl_buffer_pips=5.0,
+        max_sl_pips=180,
+        trend_filter='d1_h1_ema',
+        d1_range_filter='block_top_pct',
+        d1_range_block_pct=0.8,
+        pip_sizes={s: config.PIP_SIZE[s] for s in NY_INDEX_OPENING_DRIVE_SYMBOLS if s in config.PIP_SIZE},
+    )
     candle_confirmation = CandleConfirmationStrategy(
         name='CandleConfirmation_USDJPY_H1_M5',
         tf_bias='H1',
@@ -150,6 +173,7 @@ def create_live_strategy_specs():
         (ims, IMS_SYMBOLS),
         (ims_reversal, IMS_REV_SYMBOLS),
         (failed2, FAILED2_SYMBOLS),
+        (ny_index_opening_drive, NY_INDEX_OPENING_DRIVE_SYMBOLS),
         (candle_confirmation, CANDLE_CONFIRMATION_USDJPY_SYMBOLS),
         (candle_confirmation_gbpusd, CANDLE_CONFIRMATION_GBPUSD_SYMBOLS),
     ]
@@ -157,7 +181,9 @@ def create_live_strategy_specs():
 
 def live_risk_pct_overrides() -> dict[str, float]:
     """Per-strategy risk settings; empty means all strategies use config.RISK_PCT."""
-    return {}
+    return {
+        'NYIndexOpeningDrive': 0.0025,
+    }
 
 
 def live_strategy_names() -> list[str]:

@@ -12,12 +12,37 @@ Current configured suite:
 - `IMS_H4_M15` on USDJPY, XAUUSD, EURAUD, CADJPY, USDCAD, AUDUSD, EURUSD, GBPCAD, GBPUSD.
 - `IMSRev_H4_M15` on GBPNZD, AUDUSD, US30, USDCHF, XAUUSD, AUDJPY, AUDCAD, USDCAD.
 - `Failed2_H4_H1_M5_market` on USTEC.
+- `NYIndexOpeningDrive` on USTEC.
 - `CandleConfirmation_USDJPY_H1_M5` on USDJPY.
 - `CandleConfirmation_GBPUSD_H1_M5` on GBPUSD.
 
-`live_risk_pct_overrides()` currently returns `{}`, so all live/demo strategies use the global `config.RISK_PCT` setting unless changed later.
+`live_risk_pct_overrides()` currently returns `{'NYIndexOpeningDrive': 0.0025}`. All other live/demo strategies use the global `config.RISK_PCT` setting.
 
 Use `live_config.py` as the executable source of truth; update this audit when live/demo membership, symbols, risk, or promotion status changes.
+
+## NY Index Opening Drive Demo Addition - 2026-06-11
+
+Decision:
+
+- Added `NYIndexOpeningDrive` to the demo/live runner on `USTEC`.
+- Added magic number `1011`.
+- Added temporary per-strategy risk override of `0.25%`.
+- Reason: NY-time-aware walk-forward passed STRONG on both Dukascopy and HistData, and fixed `body30` sanity check remained positive across all 2020-2026 OOS periods on both sources.
+
+Configured core:
+
+- `09:30-10:00 America/New_York` opening drive.
+- `12:00 America/New_York` entry cutoff.
+- `min_drive_pips=40`, `min_drive_body_pct=0.30`.
+- D1+H1 EMA 20/50 trend alignment.
+- D1 prior-range block top 20%.
+- 38.2-61.8% pullback, M5 fractal confirmation, `3R` TP.
+
+Monitoring notes:
+
+- Watch overlap with existing `Failed2_H4_H1_M5_market` USTEC exposure.
+- Check first several signals for correct NY-open timing after MT5 UTC normalization.
+- Review USTEC spread/slippage during the NY opening window before considering any risk increase.
 
 ## MT5 Time Normalization - 2026-05-25
 

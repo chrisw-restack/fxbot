@@ -793,10 +793,10 @@ STRATEGY_CONFIGS = {
         'min_trades': 20,
         'fixed_params': {
             'tf_entry': 'M5',
-            'opening_start_hour': 13,
+            'opening_start_hour': 9,
             'opening_start_minute': 30,
             'opening_minutes': 30,
-            'entry_cutoff_hour': 16,
+            'entry_cutoff_hour': 12,
             'entry_cutoff_minute': 0,
             'max_drive_pips': 250,
             'retrace_min_pct': 0.382,
@@ -810,7 +810,7 @@ STRATEGY_CONFIGS = {
         },
         'param_grid': {
             'min_drive_pips': [20, 40],
-            'min_drive_body_pct': [0.30, 0.45],
+            'min_drive_body_pct': [0.0, 0.30, 0.45],
             'trend_filter': ['d1_h1_ema', 'd1_ema'],
             'd1_range_filter': ['off', 'block_top_pct'],
         },

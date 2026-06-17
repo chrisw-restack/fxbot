@@ -70,6 +70,7 @@ MAGIC_NUMBERS: dict[str, int] = {
     'CandleConfirmation_H1_M5': 1008,
     'CandleConfirmation_USDJPY_H1_M5': 1009,
     'CandleConfirmation_GBPUSD_H1_M5': 1010,
+    'NYIndexOpeningDrive': 1011,
 }
 
 # ── Spread ───────────────────────────────────────────────────────────────────

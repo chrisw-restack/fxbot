@@ -1,7 +1,10 @@
 from collections import deque
 from datetime import time
+from zoneinfo import ZoneInfo
 
 from models import BarEvent, Signal
+
+_UTC_TZ = ZoneInfo('UTC')
 
 
 class NyIndexOpeningDriveStrategy:
@@ -19,11 +22,12 @@ class NyIndexOpeningDriveStrategy:
     def __init__(
         self,
         tf_entry: str = 'M5',
-        opening_start_hour: int = 13,
+        opening_start_hour: int = 9,
         opening_start_minute: int = 30,
         opening_minutes: int = 30,
-        entry_cutoff_hour: int = 16,
+        entry_cutoff_hour: int = 12,
         entry_cutoff_minute: int = 0,
+        session_timezone: str = 'America/New_York',
         min_drive_pips: float = 40.0,
         max_drive_pips: float | None = 250.0,
         min_drive_body_pct: float = 0.45,
@@ -66,6 +70,8 @@ class NyIndexOpeningDriveStrategy:
         self.opening_minutes = opening_minutes
         self.entry_cutoff_hour = entry_cutoff_hour
         self.entry_cutoff_minute = entry_cutoff_minute
+        self.session_timezone = session_timezone
+        self._session_tz = ZoneInfo(session_timezone)
         self.min_drive_pips = min_drive_pips
         self.max_drive_pips = max_drive_pips
         self.min_drive_body_pct = min_drive_body_pct
@@ -188,7 +194,7 @@ class NyIndexOpeningDriveStrategy:
         self._traded_day[symbol] = False
 
     def _roll_day(self, symbol: str, event: BarEvent):
-        current_day = event.timestamp.date()
+        current_day = self._session_datetime(event.timestamp).date()
         if self._day[symbol] != current_day:
             self._day[symbol] = current_day
             self._reset_session(symbol)
@@ -227,7 +233,7 @@ class NyIndexOpeningDriveStrategy:
 
     def _on_entry_bar(self, bar: BarEvent) -> Signal | None:
         symbol = bar.symbol
-        now = bar.timestamp.time()
+        now = self._session_datetime(bar.timestamp).time()
         start = time(self.opening_start_hour, self.opening_start_minute)
         end = self._minutes_after(start, self.opening_minutes)
         cutoff = time(self.entry_cutoff_hour, self.entry_cutoff_minute)
@@ -440,6 +446,11 @@ class NyIndexOpeningDriveStrategy:
     def _minutes_after(start: time, minutes: int) -> time:
         total = start.hour * 60 + start.minute + minutes
         return time((total // 60) % 24, total % 60)
+
+    def _session_datetime(self, timestamp):
+        if timestamp.tzinfo is None:
+            timestamp = timestamp.replace(tzinfo=_UTC_TZ)
+        return timestamp.astimezone(self._session_tz)
 
     def _pip_size(self, symbol: str) -> float:
         return self.pip_sizes.get(symbol, 0.0001)

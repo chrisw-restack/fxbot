@@ -421,7 +421,7 @@ def _idx_bar(hour, minute, open_price, high, low, close):
     return BarEvent(
         symbol='USA100',
         timeframe='M5',
-        timestamp=datetime(2024, 1, 1, hour, minute),
+        timestamp=datetime(2024, 6, 3, hour, minute),
         open=open_price,
         high=high,
         low=low,
