@@ -51,6 +51,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 POLL_INTERVAL_SECONDS = 5
+CLOSE_HISTORY_GRACE_SECONDS = 30
 TF_RANK = {'M1': 0, 'M5': 1, 'M15': 2, 'M30': 3, 'H1': 4, 'H4': 5, 'D1': 6}
 
 
@@ -140,6 +141,7 @@ def main():
         logger.info(f"Warm-up complete: {warmup_count} bars processed across {len(subscribed_pairs)} pairs")
 
         tracked_tickets = _reconcile_portfolio(portfolio, execution)
+        missing_close_since: dict[int, datetime] = {}
         logger.info(f"Reconciled {len(tracked_tickets)} existing MT5 positions/orders")
 
         logger.info(f"Live trading started — watching {len(subscribed_pairs)} symbol/timeframe pairs")
@@ -167,10 +169,24 @@ def main():
                         if any(_is_same_live_slot(pos, current) for current in current_positions):
                             # Pending order likely filled into a broker position with a new ticket.
                             del tracked_tickets[ticket]
+                            missing_close_since.pop(ticket, None)
                             continue
                         # Position closed (SL/TP hit on broker side)
-                        del tracked_tickets[ticket]
                         closed = execution.get_recent_closed_trade(pos)
+                        if closed is None:
+                            now_utc = datetime.now(timezone.utc)
+                            first_missing = missing_close_since.setdefault(ticket, now_utc)
+                            wait_seconds = (now_utc - first_missing).total_seconds()
+                            if wait_seconds < CLOSE_HISTORY_GRACE_SECONDS:
+                                if wait_seconds < POLL_INTERVAL_SECONDS:
+                                    logger.info(
+                                        f"Waiting for MT5 close history: {pos['symbol']} "
+                                        f"ticket={ticket}"
+                                    )
+                                continue
+
+                        del tracked_tickets[ticket]
+                        missing_close_since.pop(ticket, None)
                         if closed is None and pos.get('state') == 'PENDING':
                             strategy_name = pos.get('strategy_name') or pos.get('comment') or ''
                             portfolio.record_close(pos['symbol'], 0.0, strategy_name)
@@ -200,7 +216,8 @@ def main():
                         strategy_name = closed['strategy_name']
                         logger.info(
                             f"Trade closed by broker: {closed['symbol']} {closed['direction']} "
-                            f"ticket={ticket} result={closed['result']} pnl={closed['pnl']:.2f}"
+                            f"ticket={ticket} result={closed['result']} pnl={closed['pnl']:.2f} "
+                            f"r={closed.get('r_multiple')} source={closed.get('r_source', 'fallback')}"
                         )
                         trade_journal.log_close(closed)
                         notifier.notify_order_closed(
@@ -220,6 +237,7 @@ def main():
                         })
                 # Update tracked positions with latest profit values
                 for p in current_positions:
+                    missing_close_since.pop(p['ticket'], None)
                     tracked_tickets[p['ticket']] = p
                 portfolio.sync_existing(current_positions)
 

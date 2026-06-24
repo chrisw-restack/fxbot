@@ -83,3 +83,12 @@ Fix:
 - Unknown live `r_multiple` is now stored/passed as `None`, not `0.0`.
 - Telegram now displays `R: n/a` when R cannot be reconstructed.
 - MT5 close reconstruction treats `sl=0.0` as missing and, for broker SL exits with comments like `[sl ...]`, falls back to calculating roughly `-1.00R` from entry to exit price.
+
+Follow-up - 2026-06-24:
+
+- Repeated `R: n/a` alerts showed that converting unknown R to `n/a` exposed, but did not solve, MT5 close-history timing failures.
+- Close reconciliation now waits up to 30 seconds for MT5 to publish the exit deal instead of immediately sending a fallback alert.
+- Deal history is queried directly by MT5 position ID first, with the broad date-range query retained as a fallback.
+- For pending orders that fill and close between polls, the fallback now follows the opening order deal to its MT5 position ID and then includes the linked exit deal.
+- If the last in-memory position snapshot has no valid SL, the original SL/TP is recovered from MT5 order history. The broker `[sl ...]` comment remains the final SL fallback.
+- Close logs now include the calculated R and its source (`tracked_position`, `order_history`, or `sl_comment`) for VPS diagnosis.

@@ -331,6 +331,212 @@ class MT5ExecutionTests(unittest.TestCase):
         self.assertAlmostEqual(closed['r_multiple'], -1.0)
         self.assertAlmostEqual(closed['sl'], 1.0990)
 
+    def test_closed_trade_recovers_entry_and_sl_from_position_history(self):
+        old_mt5 = sys.modules.get('MetaTrader5')
+        old_module = sys.modules.pop('execution.mt5_execution', None)
+        deal_queries = []
+        order_queries = []
+
+        close_ts = int(datetime(2026, 6, 24, 12, tzinfo=timezone.utc).timestamp())
+        deals = [
+            types.SimpleNamespace(
+                position_id=12345,
+                order=12345,
+                ticket=1,
+                symbol='EURUSD',
+                entry=0,
+                comment='TestStrategy',
+                profit=0.0,
+                commission=-3.5,
+                swap=0.0,
+                fee=0.0,
+                price=1.1000,
+                volume=1.0,
+                time=close_ts - 3600,
+            ),
+            types.SimpleNamespace(
+                position_id=12345,
+                order=54321,
+                ticket=2,
+                symbol='EURUSD',
+                entry=1,
+                comment='[tp 1.1020]',
+                profit=200.0,
+                commission=-3.5,
+                swap=0.0,
+                fee=0.0,
+                price=1.1020,
+                volume=1.0,
+                time=close_ts,
+            ),
+        ]
+
+        def history_deals_get(*args, **kwargs):
+            deal_queries.append((args, kwargs))
+            return deals if kwargs.get('position') == 12345 else ()
+
+        def history_orders_get(**kwargs):
+            order_queries.append(kwargs)
+            if kwargs.get('position') != 12345:
+                return ()
+            return [
+                types.SimpleNamespace(
+                    ticket=12345,
+                    position_id=12345,
+                    symbol='EURUSD',
+                    sl=1.0990,
+                    tp=1.1020,
+                    time_setup=close_ts - 3660,
+                ),
+            ]
+
+        fake_mt5 = types.SimpleNamespace(
+            TIMEFRAME_M5=1,
+            TIMEFRAME_M15=2,
+            TIMEFRAME_H1=3,
+            TIMEFRAME_H4=4,
+            TIMEFRAME_D1=5,
+            TRADE_RETCODE_DONE=10009,
+            TRADE_RETCODE_PLACED=10008,
+            DEAL_ENTRY_IN=0,
+            DEAL_ENTRY_OUT=1,
+            DEAL_ENTRY_INOUT=2,
+            DEAL_ENTRY_OUT_BY=3,
+            history_deals_get=history_deals_get,
+            history_orders_get=history_orders_get,
+            last_error=lambda: (0, ''),
+        )
+        sys.modules['MetaTrader5'] = fake_mt5
+
+        def cleanup():
+            sys.modules.pop('execution.mt5_execution', None)
+            if old_module is not None:
+                sys.modules['execution.mt5_execution'] = old_module
+            if old_mt5 is not None:
+                sys.modules['MetaTrader5'] = old_mt5
+            else:
+                sys.modules.pop('MetaTrader5', None)
+
+        self.addCleanup(cleanup)
+
+        from execution.mt5_execution import MT5Execution
+
+        execution = MT5Execution(magic_numbers={'TestStrategy': 1001})
+        closed = execution.get_recent_closed_trade({
+            'ticket': 12345,
+            'position_id': 12345,
+            'symbol': 'EURUSD',
+            'direction': 'BUY',
+            'strategy_name': 'TestStrategy',
+            'open_price': 0.0,
+            'sl': 0.0,
+            'tp': 0.0,
+            'volume': 1.0,
+        })
+
+        self.assertIsNotNone(closed)
+        self.assertEqual(deal_queries[0][1], {'position': 12345})
+        self.assertEqual(order_queries[0], {'position': 12345})
+        self.assertEqual(closed['result'], 'WIN')
+        self.assertAlmostEqual(closed['entry_price'], 1.1000)
+        self.assertAlmostEqual(closed['sl'], 1.0990)
+        self.assertAlmostEqual(closed['tp'], 1.1020)
+        self.assertAlmostEqual(closed['r_multiple'], 2.0)
+        self.assertEqual(closed['r_source'], 'order_history')
+
+    def test_closed_pending_order_follows_position_id_to_exit_deal(self):
+        old_mt5 = sys.modules.get('MetaTrader5')
+        old_module = sys.modules.pop('execution.mt5_execution', None)
+
+        close_ts = int(datetime(2026, 6, 24, 12, tzinfo=timezone.utc).timestamp())
+        deals = [
+            types.SimpleNamespace(
+                position_id=12345,
+                order=777,
+                ticket=1,
+                symbol='EURUSD',
+                entry=0,
+                comment='TestStrategy',
+                profit=0.0,
+                commission=-3.5,
+                swap=0.0,
+                fee=0.0,
+                price=1.1000,
+                volume=1.0,
+                time=close_ts - 30,
+            ),
+            types.SimpleNamespace(
+                position_id=12345,
+                order=888,
+                ticket=2,
+                symbol='EURUSD',
+                entry=1,
+                comment='[sl 1.0990]',
+                profit=-100.0,
+                commission=-3.5,
+                swap=0.0,
+                fee=0.0,
+                price=1.0990,
+                volume=1.0,
+                time=close_ts,
+            ),
+        ]
+
+        def history_deals_get(*args, **kwargs):
+            if kwargs:
+                return ()
+            return deals
+
+        fake_mt5 = types.SimpleNamespace(
+            TIMEFRAME_M5=1,
+            TIMEFRAME_M15=2,
+            TIMEFRAME_H1=3,
+            TIMEFRAME_H4=4,
+            TIMEFRAME_D1=5,
+            TRADE_RETCODE_DONE=10009,
+            TRADE_RETCODE_PLACED=10008,
+            DEAL_ENTRY_IN=0,
+            DEAL_ENTRY_OUT=1,
+            DEAL_ENTRY_INOUT=2,
+            DEAL_ENTRY_OUT_BY=3,
+            history_deals_get=history_deals_get,
+            history_orders_get=lambda **kwargs: (),
+            last_error=lambda: (0, ''),
+        )
+        sys.modules['MetaTrader5'] = fake_mt5
+
+        def cleanup():
+            sys.modules.pop('execution.mt5_execution', None)
+            if old_module is not None:
+                sys.modules['execution.mt5_execution'] = old_module
+            if old_mt5 is not None:
+                sys.modules['MetaTrader5'] = old_mt5
+            else:
+                sys.modules.pop('MetaTrader5', None)
+
+        self.addCleanup(cleanup)
+
+        from execution.mt5_execution import MT5Execution
+
+        execution = MT5Execution(magic_numbers={'TestStrategy': 1001})
+        closed = execution.get_recent_closed_trade({
+            'ticket': 777,
+            'position_id': 0,
+            'symbol': 'EURUSD',
+            'direction': 'BUY',
+            'strategy_name': 'TestStrategy',
+            'open_price': 1.1000,
+            'sl': 1.0990,
+            'tp': 1.1020,
+            'volume': 1.0,
+            'state': 'PENDING',
+        })
+
+        self.assertIsNotNone(closed)
+        self.assertEqual(closed['result'], 'LOSS')
+        self.assertAlmostEqual(closed['pnl'], -107.0)
+        self.assertAlmostEqual(closed['r_multiple'], -1.0)
+
 
 class HistoricalLoaderTests(unittest.TestCase):
     def test_load_and_merge_processes_lower_timeframe_first_at_same_close_time(self):

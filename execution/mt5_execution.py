@@ -9,7 +9,7 @@ from execution.base_execution import BaseExecution
 
 logger = logging.getLogger(__name__)
 
-_SL_COMMENT_RE = re.compile(r'\[sl\b', re.IGNORECASE)
+_SL_COMMENT_RE = re.compile(r'\[sl\s+([0-9]+(?:\.[0-9]+)?)\]', re.IGNORECASE)
 
 MT5_TIMEFRAME_MAP = {
     'M5':  mt5.TIMEFRAME_M5,
@@ -279,13 +279,134 @@ class MT5Execution(BaseExecution):
         info = mt5.account_info()
         return info.balance if info else 0.0
 
+    @staticmethod
+    def _valid_price(value) -> float | None:
+        try:
+            price = float(value)
+        except (TypeError, ValueError):
+            return None
+        return price if price > 0 else None
+
+    @staticmethod
+    def _dedupe_history(items) -> list:
+        unique = {}
+        for item in items or ():
+            key = getattr(item, 'ticket', None)
+            if key is None:
+                key = (
+                    getattr(item, 'time_msc', getattr(item, 'time', 0)),
+                    getattr(item, 'order', None),
+                    getattr(item, 'entry', None),
+                )
+            unique[key] = item
+        return list(unique.values())
+
+    def _get_position_deals(
+        self,
+        position_id,
+        identifiers: set,
+        symbol: str | None,
+        start: datetime,
+        end: datetime,
+    ) -> list:
+        if position_id not in (None, 0, ''):
+            try:
+                deals = mt5.history_deals_get(position=int(position_id))
+            except (TypeError, ValueError):
+                deals = None
+            if deals:
+                return self._dedupe_history(deals)
+
+        deals = [
+            deal for deal in (mt5.history_deals_get(start, end) or ())
+            if not symbol or getattr(deal, 'symbol', symbol) == symbol
+        ]
+        matched_position_ids = {
+            getattr(deal, 'position_id', None)
+            for deal in deals
+            if not identifiers.isdisjoint({
+                getattr(deal, 'position_id', None),
+                getattr(deal, 'order', None),
+                getattr(deal, 'ticket', None),
+            })
+            and getattr(deal, 'position_id', None) not in (None, 0, '')
+        }
+        matching = []
+        for deal in deals:
+            deal_ids = {
+                getattr(deal, 'position_id', None),
+                getattr(deal, 'order', None),
+                getattr(deal, 'ticket', None),
+            }
+            if (
+                not identifiers.isdisjoint(deal_ids)
+                or getattr(deal, 'position_id', None) in matched_position_ids
+            ):
+                matching.append(deal)
+        return self._dedupe_history(matching)
+
+    def _get_original_order(self, position_id, ticket, symbol: str | None):
+        queries = []
+        if position_id not in (None, 0, ''):
+            try:
+                queries.append({'position': int(position_id)})
+            except (TypeError, ValueError):
+                pass
+        if ticket not in (None, 0, ''):
+            try:
+                queries.append({'ticket': int(ticket)})
+            except (TypeError, ValueError):
+                pass
+
+        orders = []
+        for query in queries:
+            try:
+                result = mt5.history_orders_get(**query)
+            except (AttributeError, TypeError, ValueError):
+                result = None
+            if result:
+                orders.extend(result)
+
+        candidates = [
+            order for order in self._dedupe_history(orders)
+            if (not symbol or getattr(order, 'symbol', symbol) == symbol)
+            and self._valid_price(getattr(order, 'sl', None)) is not None
+        ]
+        if not candidates:
+            return None
+        return min(
+            candidates,
+            key=lambda order: getattr(
+                order,
+                'time_setup_msc',
+                getattr(order, 'time_setup', getattr(order, 'time_done', 0)),
+            ),
+        )
+
+    def _entry_price_from_deals(self, deals: list) -> float | None:
+        entry_values = {
+            getattr(mt5, 'DEAL_ENTRY_IN', 0),
+            getattr(mt5, 'DEAL_ENTRY_INOUT', 2),
+        }
+        entries = [
+            deal for deal in deals
+            if getattr(deal, 'entry', None) in entry_values
+            and self._valid_price(getattr(deal, 'price', None)) is not None
+        ]
+        total_volume = sum(float(getattr(deal, 'volume', 0.0)) for deal in entries)
+        if total_volume > 0:
+            return sum(
+                float(deal.price) * float(getattr(deal, 'volume', 0.0))
+                for deal in entries
+            ) / total_volume
+        if entries:
+            return float(entries[0].price)
+        return None
+
     def get_recent_closed_trade(self, tracked_pos: dict, lookback_days: int = 14) -> dict | None:
         """Return realized close details for a recently closed bot-owned position/order."""
         now = datetime.now(timezone.utc)
         start = now - timedelta(days=lookback_days)
-        deals = mt5.history_deals_get(start, now)
-        if not deals:
-            return None
 
         ticket = tracked_pos.get('ticket')
         position_id = tracked_pos.get('position_id') or ticket
@@ -297,18 +418,7 @@ class MT5Execution(BaseExecution):
             if value not in (None, 0, '')
         }
 
-        matching = []
-        for d in deals:
-            if symbol and getattr(d, 'symbol', symbol) != symbol:
-                continue
-            deal_position_id = getattr(d, 'position_id', None)
-            deal_order = getattr(d, 'order', None)
-            deal_ticket = getattr(d, 'ticket', None)
-            deal_ids = {deal_position_id, deal_order, deal_ticket}
-            if identifiers.isdisjoint(deal_ids):
-                continue
-            matching.append(d)
-
+        matching = self._get_position_deals(position_id, identifiers, symbol, start, now)
         if not matching:
             return None
 
@@ -334,41 +444,40 @@ class MT5Execution(BaseExecution):
         fee = sum(float(getattr(d, 'fee', 0.0)) for d in matching)
         latest = max(exit_deals, key=lambda d: getattr(d, 'time', 0))
         exit_price = float(getattr(latest, 'price', 0.0))
-        entry_price = tracked_pos.get('open_price')
-        sl = tracked_pos.get('sl')
-        direction = tracked_pos.get('direction', '')
+        entry_price = self._valid_price(tracked_pos.get('open_price'))
+        if entry_price is None:
+            entry_price = self._entry_price_from_deals(matching)
+
+        sl = self._valid_price(tracked_pos.get('sl'))
+        tp = self._valid_price(tracked_pos.get('tp'))
+        r_source = 'tracked_position'
+        if sl is None:
+            original_order = self._get_original_order(position_id, ticket, symbol)
+            if original_order is not None:
+                sl = self._valid_price(getattr(original_order, 'sl', None))
+                tp = tp or self._valid_price(getattr(original_order, 'tp', None))
+                r_source = 'order_history'
+
         close_reason = getattr(latest, 'comment', '')
+        if sl is None:
+            sl_match = _SL_COMMENT_RE.search(str(close_reason))
+            if sl_match:
+                sl = self._valid_price(sl_match.group(1))
+                r_source = 'sl_comment'
+
+        direction = tracked_pos.get('direction', '')
         r_multiple = None
-        try:
-            entry_price = float(entry_price)
-            sl = float(sl)
+        if entry_price is not None and sl is not None:
             if direction == 'BUY':
                 risk = entry_price - sl
                 move = exit_price - entry_price
             else:
                 risk = sl - entry_price
                 move = entry_price - exit_price
-            if sl > 0 and risk > 0:
+            if risk > 0:
                 r_multiple = round(move / risk, 2)
-        except (TypeError, ValueError):
-            r_multiple = None
 
         result = 'WIN' if pnl > 0 else ('BE' if pnl == 0 else 'LOSS')
-        output_sl = tracked_pos.get('sl', '')
-        if r_multiple is None and result == 'LOSS' and _SL_COMMENT_RE.search(str(close_reason)):
-            try:
-                entry = float(tracked_pos.get('open_price'))
-                if direction == 'BUY':
-                    risk = entry - exit_price
-                    move = exit_price - entry
-                else:
-                    risk = exit_price - entry
-                    move = entry - exit_price
-                if risk > 0:
-                    r_multiple = round(move / risk, 2)
-                    output_sl = exit_price
-            except (TypeError, ValueError):
-                r_multiple = None
         return {
             'ticket': ticket,
             'symbol': symbol or getattr(latest, 'symbol', ''),
@@ -378,10 +487,11 @@ class MT5Execution(BaseExecution):
             'pnl': round(pnl, 2),
             'close_time': datetime.fromtimestamp(getattr(latest, 'time', 0), tz=timezone.utc),
             'r_multiple': r_multiple,
-            'entry_price': tracked_pos.get('open_price', ''),
+            'r_source': r_source if r_multiple is not None else 'unavailable',
+            'entry_price': entry_price or '',
             'exit_price': exit_price,
-            'sl': output_sl,
-            'tp': tracked_pos.get('tp', ''),
+            'sl': sl or '',
+            'tp': tp or '',
             'lot_size': tracked_pos.get('volume', ''),
             'commission': round(commission, 2),
             'swap': round(swap, 2),
