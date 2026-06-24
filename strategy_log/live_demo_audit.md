@@ -92,3 +92,40 @@ Follow-up - 2026-06-24:
 - For pending orders that fill and close between polls, the fallback now follows the opening order deal to its MT5 position ID and then includes the linked exit deal.
 - If the last in-memory position snapshot has no valid SL, the original SL/TP is recovered from MT5 order history. The broker `[sl ...]` comment remains the final SL fallback.
 - Close logs now include the calculated R and its source (`tracked_position`, `order_history`, or `sl_comment`) for VPS diagnosis.
+
+## MT5 Identity And Reconciliation Hardening - 2026-06-24
+
+Review of the June 10-24 forward-demo period found that IC Markets truncates
+the 17-character `EmaFibRetracement` order comment to `EmaFibRetracemen`.
+Live cancellation and portfolio reconciliation were comparing the broker
+comment to the full strategy name, so valid cancellation signals did not find
+the existing pending orders. This allowed duplicate EURUSD and GBPUSD pending
+orders and left six cancelled-by-strategy orders active at the broker.
+
+Corrections:
+
+- Canonical strategy identity is now resolved from the unique MT5 magic number.
+  Broker comments are retained only as diagnostics.
+- Duplicate magic numbers are rejected during execution initialization.
+- Duplicate `(symbol, strategy)` broker slots trigger critical logs and Telegram
+  operational alerts, and every broker ticket counts toward `MAX_OPEN_TRADES`.
+- Strategy cancellation removes every matching pending order, verifies that MT5
+  no longer reports each ticket, and records `CANCEL_FAILED` instead of a false
+  success when broker confirmation fails.
+- Execution failures now store MT5 retcode/comment, `last_error`, normalized
+  request values, bid/ask, stop/freeze levels, filling mode, and `order_check`
+  diagnostics in the journal context. Unsupported filling mode is the only
+  automatically retried execution error.
+- Missing close history is recorded as `CLOSE_PENDING_RECONCILIATION`. Open
+  positions are no longer finalized using cached floating P/L. MT5 deal history
+  remains the source of truth for realized P/L, commission, swap, and R.
+- Added `cancel_mt5_orders.py`, which is read-only by default and can cancel
+  explicitly supplied bot-owned pending tickets with `--execute`.
+
+One-time broker cleanup required on the Windows/VPS terminal:
+
+`python cancel_mt5_orders.py 1688987862 1688988392 1689159224 1713091357 1713091656 1715439958 --execute`
+
+These six orders had already received EmaFibRetracement cancellation signals.
+Do not cancel the open NZDUSD EmaFibRetracement position or CADJPY IMS pending
+order as part of this cleanup.

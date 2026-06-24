@@ -16,6 +16,7 @@ class PortfolioManager:
     ):
         # (symbol, strategy_name) -> {'ticket': int, 'signal': EnrichedSignal | None}
         self._open_positions: dict[tuple[str, str], dict] = {}
+        self._open_ticket_count = 0
         self._daily_loss: float = 0.0
         self._current_date: date = date.today()
         self._max_open_trades = max_open_trades
@@ -47,7 +48,7 @@ class PortfolioManager:
             )
             return False
 
-        if len(self._open_positions) >= self._max_open_trades:
+        if self._open_ticket_count >= self._max_open_trades:
             logger.warning(
                 f"Blocked: max open trades ({self._max_open_trades}) reached — "
                 f"signal for {signal.symbol} dropped"
@@ -58,6 +59,8 @@ class PortfolioManager:
 
     def record_open(self, signal: EnrichedSignal, ticket: int):
         key = (signal.symbol, signal.strategy_name)
+        if key not in self._open_positions:
+            self._open_ticket_count += 1
         self._open_positions[key] = {'ticket': ticket, 'signal': signal}
         logger.debug(f"Position recorded: {signal.symbol} ({signal.strategy_name}) ticket={ticket}")
 
@@ -70,6 +73,7 @@ class PortfolioManager:
     def sync_existing(self, positions: list[dict]):
         """Replace portfolio slots with the broker's current bot-owned positions/orders."""
         self._open_positions.clear()
+        self._open_ticket_count = len(positions)
         for pos in positions:
             strategy_name = pos.get('strategy_name') or pos.get('comment') or ''
             if not strategy_name:
@@ -79,7 +83,8 @@ class PortfolioManager:
     def record_close(self, symbol: str, pnl: float, strategy_name: str = ''):
         """Call when a position is closed. pnl in account currency."""
         key = (symbol, strategy_name)
-        self._open_positions.pop(key, None)
+        if self._open_positions.pop(key, None) is not None:
+            self._open_ticket_count = max(0, self._open_ticket_count - 1)
         if pnl < 0:
             self._daily_loss += abs(pnl)
         logger.debug(f"Position closed: {symbol} ({strategy_name}) pnl={pnl:.2f} daily_loss={self._daily_loss:.2f}")

@@ -82,3 +82,6 @@ class TelegramNotifier:
             "Bot is running normally.",
         ]
         self._send('\n'.join(lines))
+
+    def notify_operational_alert(self, message: str):
+        self._send(f"\u26a0\ufe0f <b>Trading bot operational alert</b>\n{message}")

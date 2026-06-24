@@ -1,5 +1,6 @@
 import logging
 import re
+import time
 from datetime import datetime, timedelta, timezone
 from math import floor
 
@@ -29,8 +30,20 @@ class MT5Execution(BaseExecution):
         to only return positions belonging to this bot.
         """
         self._magic_numbers = magic_numbers or {}
+        if len(set(self._magic_numbers.values())) != len(self._magic_numbers):
+            raise ValueError("MT5 magic numbers must be unique per strategy")
         self._known_magic: set[int] = set(self._magic_numbers.values())
+        self._strategy_by_magic = {
+            magic: strategy_name
+            for strategy_name, magic in self._magic_numbers.items()
+        }
         self._last_order_details: dict | None = None
+        self._last_order_error: dict | None = None
+        self._last_cancel_error: dict | None = None
+
+    def strategy_name_for_magic(self, magic: int, broker_comment: str = '') -> str:
+        """Resolve canonical strategy identity from the non-truncated magic tag."""
+        return self._strategy_by_magic.get(magic, broker_comment)
 
     @staticmethod
     def _round_to_step(value: float, step: float) -> float:
@@ -87,9 +100,16 @@ class MT5Execution(BaseExecution):
         tp_locked: bool = False,              # informational — MT5 uses the tp price directly
         signal_time=None,                     # informational — not used by MT5 execution
     ) -> int:
+        self._last_order_details = None
+        self._last_order_error = None
         info = mt5.symbol_info(symbol)
         if info is None:
             logger.error(f"Could not get symbol info for {symbol}")
+            self._last_order_error = {
+                'stage': 'symbol_info',
+                'symbol': symbol,
+                'last_error': self._last_error_text(),
+            }
             return 0
         if not getattr(info, 'visible', True):
             mt5.symbol_select(symbol, True)
@@ -97,6 +117,11 @@ class MT5Execution(BaseExecution):
         tick = mt5.symbol_info_tick(symbol)
         if tick is None:
             logger.error(f"Could not get tick for {symbol}")
+            self._last_order_error = {
+                'stage': 'symbol_info_tick',
+                'symbol': symbol,
+                'last_error': self._last_error_text(),
+            }
             return 0
         spread_pips = None
         info_point = config_pip_size = None
@@ -141,16 +166,69 @@ class MT5Execution(BaseExecution):
         }
         request = self._normalize_request_prices(symbol, request)
 
+        check_result = None
+        if hasattr(mt5, 'order_check'):
+            try:
+                check_result = mt5.order_check(request)
+            except Exception as exc:
+                logger.warning(f"MT5 order_check failed for {symbol}: {exc}")
+
         result = mt5.order_send(request)
         success_codes = {mt5.TRADE_RETCODE_DONE}
         if order_type != 'MARKET' and hasattr(mt5, 'TRADE_RETCODE_PLACED'):
             success_codes.add(mt5.TRADE_RETCODE_PLACED)
+
+        invalid_fill = getattr(mt5, 'TRADE_RETCODE_INVALID_FILL', None)
+        if result is not None and result.retcode == invalid_fill:
+            filling_modes = [
+                getattr(mt5, 'ORDER_FILLING_FOK', None),
+                getattr(mt5, 'ORDER_FILLING_RETURN', None),
+            ]
+            for filling_mode in filling_modes:
+                if filling_mode is None or filling_mode == request['type_filling']:
+                    continue
+                retry_request = dict(request, type_filling=filling_mode)
+                retry_result = mt5.order_send(retry_request)
+                if retry_result is not None:
+                    result = retry_result
+                    request = retry_request
+                if result is not None and result.retcode in success_codes:
+                    break
+                if result is None or result.retcode != invalid_fill:
+                    break
+
         if result is None or result.retcode not in success_codes:
             code = result.retcode if result else 'None'
             comment = result.comment if result else ''
+            self._last_order_error = {
+                'stage': 'order_send',
+                'symbol': symbol,
+                'strategy_name': strategy_name,
+                'retcode': code,
+                'broker_comment': comment,
+                'last_error': self._last_error_text(),
+                'request': {
+                    'action': request.get('action'),
+                    'type': request.get('type'),
+                    'type_filling': request.get('type_filling'),
+                    'volume': request.get('volume'),
+                    'price': request.get('price'),
+                    'sl': request.get('sl'),
+                    'tp': request.get('tp'),
+                    'magic': request.get('magic'),
+                },
+                'bid': getattr(tick, 'bid', None),
+                'ask': getattr(tick, 'ask', None),
+                'trade_stops_level': getattr(info, 'trade_stops_level', None),
+                'trade_freeze_level': getattr(info, 'trade_freeze_level', None),
+                'symbol_filling_mode': getattr(info, 'filling_mode', None),
+                'order_check_retcode': getattr(check_result, 'retcode', None),
+                'order_check_comment': getattr(check_result, 'comment', ''),
+            }
             logger.error(
                 f"Order failed for {symbol}: retcode={code} {comment} "
-                f"last_error={self._last_error_text()}"
+                f"last_error={self._last_error_text()} "
+                f"request={self._last_order_error['request']}"
             )
             return 0
 
@@ -170,9 +248,28 @@ class MT5Execution(BaseExecution):
     def get_last_order_details(self) -> dict | None:
         return self._last_order_details
 
+    def get_last_order_error(self) -> dict | None:
+        return self._last_order_error
+
+    def get_last_cancel_error(self) -> dict | None:
+        return self._last_cancel_error
+
     def close_order(self, ticket_id: int) -> bool:
+        self._last_cancel_error = None
         # Cancel a pending order if it exists
         orders = mt5.orders_get(ticket=ticket_id)
+        if orders is None:
+            self._last_cancel_error = {
+                'ticket': ticket_id,
+                'retcode': '',
+                'broker_comment': 'orders_get failed before cancellation',
+                'last_error': self._last_error_text(),
+            }
+            logger.error(
+                f"Could not inspect pending order ticket={ticket_id}: "
+                f"last_error={self._last_error_text()}"
+            )
+            return False
         if orders:
             request = {
                 'action': mt5.TRADE_ACTION_REMOVE,
@@ -182,13 +279,31 @@ class MT5Execution(BaseExecution):
             if result is None or result.retcode != mt5.TRADE_RETCODE_DONE:
                 code = result.retcode if result else 'None'
                 comment = result.comment if result else ''
+                self._last_cancel_error = {
+                    'ticket': ticket_id,
+                    'retcode': code,
+                    'broker_comment': comment,
+                    'last_error': self._last_error_text(),
+                }
                 logger.error(
                     f"Cancel pending order failed for ticket {ticket_id}: "
                     f"retcode={code} {comment} last_error={self._last_error_text()}"
                 )
                 return False
-            logger.info(f"Pending order cancelled: ticket={ticket_id}")
-            return True
+            for _ in range(8):
+                remaining = mt5.orders_get(ticket=ticket_id)
+                if remaining is not None and not remaining:
+                    logger.info(f"Pending order cancelled: ticket={ticket_id}")
+                    return True
+                time.sleep(0.25)
+            self._last_cancel_error = {
+                'ticket': ticket_id,
+                'retcode': getattr(result, 'retcode', ''),
+                'broker_comment': 'broker did not confirm order removal',
+                'last_error': self._last_error_text(),
+            }
+            logger.error(f"Cancellation not confirmed by broker for ticket={ticket_id}")
+            return False
 
         # Otherwise close a filled position
         positions = mt5.positions_get(ticket=ticket_id)
@@ -236,7 +351,8 @@ class MT5Execution(BaseExecution):
                     'swap':          p.swap,
                     'magic':         p.magic,
                     'comment':       p.comment,
-                    'strategy_name': p.comment,
+                    'broker_comment': p.comment,
+                    'strategy_name': self.strategy_name_for_magic(p.magic, p.comment),
                     'position_id':   getattr(p, 'identifier', p.ticket),
                     'state':         'OPEN',
                     'open_time':     datetime.fromtimestamp(p.time, tz=timezone.utc),
@@ -263,7 +379,8 @@ class MT5Execution(BaseExecution):
                     'swap':          0.0,
                     'magic':         o.magic,
                     'comment':       o.comment,
-                    'strategy_name': o.comment,
+                    'broker_comment': o.comment,
+                    'strategy_name': self.strategy_name_for_magic(o.magic, o.comment),
                     'position_id':   getattr(o, 'position_id', 0),
                     'state':         'PENDING',
                     # No open_time key — _handle_cancel uses open_time is None to

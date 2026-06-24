@@ -167,22 +167,56 @@ class EventEngine:
                         strategy=enriched.strategy_name,
                     )
             elif self.trade_journal:
-                self.trade_journal.log_rejected(signal, 'execution_order_failed', context)
+                failure_context = dict(context or {})
+                if hasattr(self.execution, 'get_last_order_error'):
+                    failure_context['execution_error'] = self.execution.get_last_order_error()
+                self.trade_journal.log_rejected(
+                    signal,
+                    'execution_order_failed',
+                    failure_context,
+                )
 
     def _handle_cancel(self, signal):
         """Cancel pending orders matching the signal's symbol and strategy."""
+        matched = False
         for pos in self.execution.get_open_positions():
             if (pos['symbol'] == signal.symbol
                     and pos['strategy_name'] == signal.strategy_name
                     and pos.get('open_time') is None):
-                self.execution.close_order(pos['ticket'])
-                self.portfolio.record_close(signal.symbol, 0.0, signal.strategy_name)
-                if self.trade_journal:
-                    self.trade_journal.log_order_cancelled(pos, reason='strategy_cancel')
-                logger.info(
-                    f"Cancelled pending order: {signal.symbol} "
-                    f"ticket={pos['ticket']} ({signal.strategy_name})"
-                )
+                matched = True
+                if self.execution.close_order(pos['ticket']):
+                    self.portfolio.record_close(signal.symbol, 0.0, signal.strategy_name)
+                    if self.trade_journal:
+                        self.trade_journal.log_order_cancelled(pos, reason='strategy_cancel')
+                    logger.info(
+                        f"Cancelled pending order: {signal.symbol} "
+                        f"ticket={pos['ticket']} ({signal.strategy_name})"
+                    )
+                else:
+                    details = None
+                    if hasattr(self.execution, 'get_last_cancel_error'):
+                        details = self.execution.get_last_cancel_error()
+                    if self.trade_journal:
+                        self.trade_journal.log_cancel_failed(
+                            pos,
+                            reason='broker_cancel_failed',
+                            details=details,
+                        )
+                    logger.error(
+                        f"Failed to cancel pending order: {signal.symbol} "
+                        f"ticket={pos['ticket']} ({signal.strategy_name}) "
+                        f"details={details}"
+                    )
+                    if self.notifier and hasattr(self.notifier, 'notify_operational_alert'):
+                        self.notifier.notify_operational_alert(
+                            f"Failed to cancel {signal.symbol} ticket={pos['ticket']} "
+                            f"for {signal.strategy_name}. Check MT5 immediately."
+                        )
+        if not matched:
+            logger.info(
+                f"No matching pending order to cancel: {signal.symbol} "
+                f"({signal.strategy_name})"
+            )
 
     def notify_trade_closed(self, trade: dict):
         """Notify the originating strategy that a trade closed (for filters like cooldown)."""

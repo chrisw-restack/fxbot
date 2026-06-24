@@ -6,6 +6,7 @@ import unittest
 from datetime import datetime, timezone
 
 from data.historical_loader import load_and_merge
+from engine import EventEngine
 from execution.simulated_execution import SimulatedExecution
 from models import BarEvent, Signal
 from portfolio.portfolio_manager import PortfolioManager
@@ -30,6 +31,16 @@ class PortfolioManagerTests(unittest.TestCase):
         self.assertFalse(portfolio.approve(_enriched_signal('EURUSD', 'A')))
         self.assertFalse(portfolio.approve(_enriched_signal('EURUSD', 'B')))
         self.assertTrue(portfolio.approve(_enriched_signal('GBPUSD', 'A')))
+
+    def test_sync_existing_counts_duplicate_broker_slots_toward_global_limit(self):
+        portfolio = PortfolioManager(max_open_trades=3, max_daily_loss_pct=None)
+        portfolio.sync_existing([
+            {'ticket': 101, 'symbol': 'EURUSD', 'strategy_name': 'A'},
+            {'ticket': 102, 'symbol': 'EURUSD', 'strategy_name': 'A'},
+            {'ticket': 202, 'symbol': 'USDJPY', 'strategy_name': 'B'},
+        ])
+
+        self.assertFalse(portfolio.approve(_enriched_signal('GBPUSD', 'C')))
 
 
 class RiskManagerTests(unittest.TestCase):
@@ -167,6 +178,209 @@ class SimulatedExecutionTests(unittest.TestCase):
 
 
 class MT5ExecutionTests(unittest.TestCase):
+    def test_order_failure_captures_broker_request_diagnostics(self):
+        old_mt5 = sys.modules.get('MetaTrader5')
+        old_module = sys.modules.pop('execution.mt5_execution', None)
+        info = types.SimpleNamespace(
+            visible=True,
+            volume_step=0.01,
+            volume_min=0.01,
+            volume_max=100.0,
+            trade_tick_size=0.00001,
+            point=0.00001,
+            digits=5,
+            trade_stops_level=10,
+            trade_freeze_level=0,
+            filling_mode=1,
+        )
+        tick = types.SimpleNamespace(bid=1.1000, ask=1.1001)
+        failure = types.SimpleNamespace(retcode=10016, comment='invalid stops')
+        fake_mt5 = types.SimpleNamespace(
+            TIMEFRAME_M5=1,
+            TIMEFRAME_M15=2,
+            TIMEFRAME_H1=3,
+            TIMEFRAME_H4=4,
+            TIMEFRAME_D1=5,
+            TRADE_ACTION_DEAL=1,
+            TRADE_ACTION_PENDING=5,
+            TRADE_RETCODE_DONE=10009,
+            TRADE_RETCODE_PLACED=10008,
+            TRADE_RETCODE_INVALID_FILL=10030,
+            ORDER_TYPE_BUY=0,
+            ORDER_TYPE_SELL=1,
+            ORDER_TYPE_BUY_LIMIT=2,
+            ORDER_TYPE_SELL_LIMIT=3,
+            ORDER_TYPE_BUY_STOP=4,
+            ORDER_TYPE_SELL_STOP=5,
+            ORDER_TIME_GTC=0,
+            ORDER_FILLING_FOK=0,
+            ORDER_FILLING_IOC=1,
+            ORDER_FILLING_RETURN=2,
+            symbol_info=lambda symbol: info,
+            symbol_info_tick=lambda symbol: tick,
+            order_check=lambda request: failure,
+            order_send=lambda request: failure,
+            last_error=lambda: (1, 'test error'),
+        )
+        sys.modules['MetaTrader5'] = fake_mt5
+
+        def cleanup():
+            sys.modules.pop('execution.mt5_execution', None)
+            if old_module is not None:
+                sys.modules['execution.mt5_execution'] = old_module
+            if old_mt5 is not None:
+                sys.modules['MetaTrader5'] = old_mt5
+            else:
+                sys.modules.pop('MetaTrader5', None)
+
+        self.addCleanup(cleanup)
+
+        from execution.mt5_execution import MT5Execution
+
+        execution = MT5Execution(magic_numbers={'TestStrategy': 1001})
+        ticket = execution.place_order(
+            symbol='EURUSD',
+            direction='BUY',
+            order_type='MARKET',
+            entry_price=1.1001,
+            lot_size=0.1,
+            sl=1.0990,
+            tp=1.1020,
+            strategy_name='TestStrategy',
+        )
+        error = execution.get_last_order_error()
+
+        self.assertEqual(ticket, 0)
+        self.assertEqual(error['retcode'], 10016)
+        self.assertEqual(error['broker_comment'], 'invalid stops')
+        self.assertEqual(error['request']['magic'], 1001)
+        self.assertEqual(error['trade_stops_level'], 10)
+        self.assertEqual(error['bid'], 1.1000)
+        self.assertEqual(error['ask'], 1.1001)
+
+    def test_pending_cancellation_requires_broker_removal_confirmation(self):
+        old_mt5 = sys.modules.get('MetaTrader5')
+        old_module = sys.modules.pop('execution.mt5_execution', None)
+        calls = {'orders_get': 0}
+
+        def orders_get(ticket):
+            calls['orders_get'] += 1
+            if calls['orders_get'] == 1:
+                return [types.SimpleNamespace(ticket=ticket)]
+            return ()
+
+        fake_mt5 = types.SimpleNamespace(
+            TIMEFRAME_M5=1,
+            TIMEFRAME_M15=2,
+            TIMEFRAME_H1=3,
+            TIMEFRAME_H4=4,
+            TIMEFRAME_D1=5,
+            TRADE_ACTION_REMOVE=8,
+            TRADE_RETCODE_DONE=10009,
+            orders_get=orders_get,
+            order_send=lambda request: types.SimpleNamespace(
+                retcode=10009,
+                comment='done',
+            ),
+            last_error=lambda: (0, ''),
+        )
+        sys.modules['MetaTrader5'] = fake_mt5
+
+        def cleanup():
+            sys.modules.pop('execution.mt5_execution', None)
+            if old_module is not None:
+                sys.modules['execution.mt5_execution'] = old_module
+            if old_mt5 is not None:
+                sys.modules['MetaTrader5'] = old_mt5
+            else:
+                sys.modules.pop('MetaTrader5', None)
+
+        self.addCleanup(cleanup)
+
+        from execution.mt5_execution import MT5Execution
+
+        execution = MT5Execution(magic_numbers={'TestStrategy': 1001})
+
+        self.assertTrue(execution.close_order(123))
+        self.assertEqual(calls['orders_get'], 2)
+
+    def test_open_orders_resolve_canonical_strategy_from_magic(self):
+        old_mt5 = sys.modules.get('MetaTrader5')
+        old_module = sys.modules.pop('execution.mt5_execution', None)
+
+        fake_mt5 = types.SimpleNamespace(
+            TIMEFRAME_M5=1,
+            TIMEFRAME_M15=2,
+            TIMEFRAME_H1=3,
+            TIMEFRAME_H4=4,
+            TIMEFRAME_D1=5,
+            ORDER_TYPE_BUY_LIMIT=2,
+            ORDER_TYPE_BUY_STOP=4,
+            positions_get=lambda: (),
+            orders_get=lambda: [
+                types.SimpleNamespace(
+                    ticket=123,
+                    symbol='EURUSD',
+                    type=2,
+                    volume_current=1.0,
+                    price_open=1.1,
+                    sl=1.09,
+                    tp=1.2,
+                    magic=1001,
+                    comment='EmaFibRetracemen',
+                    position_id=0,
+                ),
+            ],
+        )
+        sys.modules['MetaTrader5'] = fake_mt5
+
+        def cleanup():
+            sys.modules.pop('execution.mt5_execution', None)
+            if old_module is not None:
+                sys.modules['execution.mt5_execution'] = old_module
+            if old_mt5 is not None:
+                sys.modules['MetaTrader5'] = old_mt5
+            else:
+                sys.modules.pop('MetaTrader5', None)
+
+        self.addCleanup(cleanup)
+
+        from execution.mt5_execution import MT5Execution
+
+        execution = MT5Execution(magic_numbers={'EmaFibRetracement': 1001})
+        order = execution.get_open_positions()[0]
+
+        self.assertEqual(order['strategy_name'], 'EmaFibRetracement')
+        self.assertEqual(order['broker_comment'], 'EmaFibRetracemen')
+
+    def test_duplicate_magic_numbers_are_rejected(self):
+        old_mt5 = sys.modules.get('MetaTrader5')
+        old_module = sys.modules.pop('execution.mt5_execution', None)
+        fake_mt5 = types.SimpleNamespace(
+            TIMEFRAME_M5=1,
+            TIMEFRAME_M15=2,
+            TIMEFRAME_H1=3,
+            TIMEFRAME_H4=4,
+            TIMEFRAME_D1=5,
+        )
+        sys.modules['MetaTrader5'] = fake_mt5
+
+        def cleanup():
+            sys.modules.pop('execution.mt5_execution', None)
+            if old_module is not None:
+                sys.modules['execution.mt5_execution'] = old_module
+            if old_mt5 is not None:
+                sys.modules['MetaTrader5'] = old_mt5
+            else:
+                sys.modules.pop('MetaTrader5', None)
+
+        self.addCleanup(cleanup)
+
+        from execution.mt5_execution import MT5Execution
+
+        with self.assertRaises(ValueError):
+            MT5Execution(magic_numbers={'A': 1001, 'B': 1001})
+
     def test_closed_trade_lookup_matches_exit_deal_with_sl_comment(self):
         old_mt5 = sys.modules.get('MetaTrader5')
         old_module = sys.modules.pop('execution.mt5_execution', None)
@@ -536,6 +750,71 @@ class MT5ExecutionTests(unittest.TestCase):
         self.assertEqual(closed['result'], 'LOSS')
         self.assertAlmostEqual(closed['pnl'], -107.0)
         self.assertAlmostEqual(closed['r_multiple'], -1.0)
+
+
+class EventEngineCancellationTests(unittest.TestCase):
+    def test_cancel_removes_all_matching_orders_and_only_logs_confirmed_success(self):
+        positions = [
+            {
+                'ticket': 1, 'symbol': 'EURUSD',
+                'strategy_name': 'EmaFibRetracement', 'open_time': None,
+            },
+            {
+                'ticket': 2, 'symbol': 'EURUSD',
+                'strategy_name': 'EmaFibRetracement', 'open_time': None,
+            },
+        ]
+
+        class Execution:
+            def get_open_positions(self):
+                return positions
+
+            def close_order(self, ticket):
+                return ticket == 1
+
+            def get_last_cancel_error(self):
+                return {'retcode': 10030}
+
+        class Journal:
+            def __init__(self):
+                self.cancelled = []
+                self.failed = []
+
+            def log_order_cancelled(self, pos, reason=''):
+                self.cancelled.append((pos['ticket'], reason))
+
+            def log_cancel_failed(self, pos, reason, details=None):
+                self.failed.append((pos['ticket'], reason, details))
+
+        class Notifier:
+            def __init__(self):
+                self.alerts = []
+
+            def notify_operational_alert(self, message):
+                self.alerts.append(message)
+
+        portfolio = PortfolioManager(max_daily_loss_pct=None)
+        portfolio.sync_existing(positions)
+        journal = Journal()
+        notifier = Notifier()
+        engine = EventEngine(
+            risk_manager=None,
+            portfolio_manager=portfolio,
+            execution=Execution(),
+            trade_logger=None,
+            notifier=notifier,
+            trade_journal=journal,
+        )
+        signal = types.SimpleNamespace(
+            symbol='EURUSD',
+            strategy_name='EmaFibRetracement',
+        )
+
+        engine._handle_cancel(signal)
+
+        self.assertEqual(journal.cancelled, [(1, 'strategy_cancel')])
+        self.assertEqual(journal.failed, [(2, 'broker_cancel_failed', {'retcode': 10030})])
+        self.assertEqual(len(notifier.alerts), 1)
 
 
 class HistoricalLoaderTests(unittest.TestCase):

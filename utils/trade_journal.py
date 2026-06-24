@@ -163,6 +163,37 @@ class TradeJournal:
             'reason': reason,
         })
 
+    def log_cancel_failed(self, pos: dict, reason: str, details: dict | None = None):
+        self._write({
+            'journal_time_utc': _utc_now_iso(),
+            'event': 'CANCEL_FAILED',
+            'ticket': pos.get('ticket', ''),
+            'symbol': pos.get('symbol', ''),
+            'strategy_name': pos.get('strategy_name') or pos.get('comment', ''),
+            'direction': pos.get('direction', ''),
+            'entry_price_actual': _round(pos.get('open_price')),
+            'stop_loss': _round(pos.get('sl')),
+            'take_profit': _round(pos.get('tp')),
+            'lot_size': pos.get('volume', ''),
+            'reason': reason,
+            'context_json': json.dumps(_json_safe(details), sort_keys=True) if details else '',
+        })
+
+    def log_close_pending(self, pos: dict, reason: str = 'broker_history_pending'):
+        self._write({
+            'journal_time_utc': _utc_now_iso(),
+            'event': 'CLOSE_PENDING_RECONCILIATION',
+            'ticket': pos.get('ticket', ''),
+            'symbol': pos.get('symbol', ''),
+            'strategy_name': pos.get('strategy_name') or pos.get('comment', ''),
+            'direction': pos.get('direction', ''),
+            'entry_price_actual': _round(pos.get('open_price')),
+            'stop_loss': _round(pos.get('sl')),
+            'take_profit': _round(pos.get('tp')),
+            'lot_size': pos.get('volume', ''),
+            'reason': reason,
+        })
+
     def log_close(self, trade: dict):
         self._write({
             'journal_time_utc': _utc_now_iso(),

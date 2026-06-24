@@ -52,6 +52,7 @@ logger = logging.getLogger(__name__)
 
 POLL_INTERVAL_SECONDS = 5
 CLOSE_HISTORY_GRACE_SECONDS = 30
+CLOSE_HISTORY_ALERT_SECONDS = 120
 TF_RANK = {'M1': 0, 'M5': 1, 'M15': 2, 'M30': 3, 'H1': 4, 'H4': 5, 'D1': 6}
 
 
@@ -72,6 +73,20 @@ def _reconcile_portfolio(portfolio: PortfolioManager, execution: MT5Execution) -
     current_positions = execution.get_open_positions()
     portfolio.sync_existing(current_positions)
     return {p['ticket']: p for p in current_positions}
+
+def _duplicate_live_slots(positions: list[dict]) -> list[tuple[str, str, list[int]]]:
+    slots: dict[tuple[str, str], list[int]] = {}
+    for pos in positions:
+        key = (
+            pos.get('symbol', ''),
+            pos.get('strategy_name') or pos.get('comment') or '',
+        )
+        slots.setdefault(key, []).append(pos.get('ticket'))
+    return [
+        (symbol, strategy_name, tickets)
+        for (symbol, strategy_name), tickets in slots.items()
+        if symbol and strategy_name and len(tickets) > 1
+    ]
 
 
 def main():
@@ -110,6 +125,15 @@ def main():
 
         strategy_specs = create_live_strategy_specs()
         strategies = [strategy for strategy, _ in strategy_specs]
+        missing_magic = sorted({
+            strategy.NAME
+            for strategy in strategies
+            if strategy.NAME not in config.MAGIC_NUMBERS
+        })
+        if missing_magic:
+            raise RuntimeError(
+                f"Live strategies missing MT5 magic numbers: {missing_magic}"
+            )
         for strategy, symbols in strategy_specs:
             event_engine.register(strategy, symbols)
 
@@ -142,7 +166,16 @@ def main():
 
         tracked_tickets = _reconcile_portfolio(portfolio, execution)
         missing_close_since: dict[int, datetime] = {}
+        close_pending_journaled: set[int] = set()
+        close_pending_alerted: set[int] = set()
+        last_duplicate_slots: list[tuple[str, str, list[int]]] = []
         logger.info(f"Reconciled {len(tracked_tickets)} existing MT5 positions/orders")
+        duplicate_slots = _duplicate_live_slots(list(tracked_tickets.values()))
+        if duplicate_slots:
+            message = f"Duplicate broker strategy slots detected: {duplicate_slots}"
+            logger.critical(message)
+            notifier.notify_operational_alert(message)
+        last_duplicate_slots = duplicate_slots
 
         logger.info(f"Live trading started — watching {len(subscribed_pairs)} symbol/timeframe pairs")
         notifier.notify_started(live_symbols(), [s.NAME for s in strategies])
@@ -177,6 +210,9 @@ def main():
                             now_utc = datetime.now(timezone.utc)
                             first_missing = missing_close_since.setdefault(ticket, now_utc)
                             wait_seconds = (now_utc - first_missing).total_seconds()
+                            if ticket not in close_pending_journaled:
+                                trade_journal.log_close_pending(pos)
+                                close_pending_journaled.add(ticket)
                             if wait_seconds < CLOSE_HISTORY_GRACE_SECONDS:
                                 if wait_seconds < POLL_INTERVAL_SECONDS:
                                     logger.info(
@@ -185,9 +221,11 @@ def main():
                                     )
                                 continue
 
-                        del tracked_tickets[ticket]
-                        missing_close_since.pop(ticket, None)
                         if closed is None and pos.get('state') == 'PENDING':
+                            del tracked_tickets[ticket]
+                            missing_close_since.pop(ticket, None)
+                            close_pending_journaled.discard(ticket)
+                            close_pending_alerted.discard(ticket)
                             strategy_name = pos.get('strategy_name') or pos.get('comment') or ''
                             portfolio.record_close(pos['symbol'], 0.0, strategy_name)
                             trade_journal.log_order_cancelled(pos, reason='pending_missing_from_broker')
@@ -197,22 +235,24 @@ def main():
                             )
                             continue
                         if closed is None:
-                            pnl = pos.get('profit', 0.0)
-                            result = 'WIN' if pnl > 0 else ('BE' if pnl == 0 else 'LOSS')
-                            strategy_name = pos.get('strategy_name') or pos.get('comment', 'unknown')
-                            closed = {
-                                'ticket': ticket,
-                                'symbol': pos['symbol'], 'direction': pos['direction'],
-                                'result': result, 'pnl': pnl, 'r_multiple': None,
-                                'strategy_name': strategy_name,
-                                'entry_price': pos.get('open_price', ''),
-                                'sl': pos.get('sl', ''),
-                                'tp': pos.get('tp', ''),
-                                'lot_size': pos.get('volume', ''),
-                                'close_time': datetime.now(timezone.utc),
-                                'close_reason': 'closed_history_missing',
-                            }
-                            logger.warning(f"Closed deal history not found for ticket={ticket}; using last cached PnL")
+                            if (
+                                wait_seconds >= CLOSE_HISTORY_ALERT_SECONDS
+                                and ticket not in close_pending_alerted
+                            ):
+                                message = (
+                                    f"MT5 close history unavailable for {pos['symbol']} "
+                                    f"ticket={ticket} after {int(wait_seconds)} seconds. "
+                                    "The close remains pending reconciliation; cached P/L was not used."
+                                )
+                                logger.error(message)
+                                notifier.notify_operational_alert(message)
+                                close_pending_alerted.add(ticket)
+                            continue
+
+                        del tracked_tickets[ticket]
+                        missing_close_since.pop(ticket, None)
+                        close_pending_journaled.discard(ticket)
+                        close_pending_alerted.discard(ticket)
                         strategy_name = closed['strategy_name']
                         logger.info(
                             f"Trade closed by broker: {closed['symbol']} {closed['direction']} "
@@ -238,8 +278,17 @@ def main():
                 # Update tracked positions with latest profit values
                 for p in current_positions:
                     missing_close_since.pop(p['ticket'], None)
+                    close_pending_journaled.discard(p['ticket'])
+                    close_pending_alerted.discard(p['ticket'])
                     tracked_tickets[p['ticket']] = p
                 portfolio.sync_existing(current_positions)
+                duplicate_slots = _duplicate_live_slots(current_positions)
+                if duplicate_slots and duplicate_slots != last_duplicate_slots:
+                    logger.critical(f"Duplicate broker strategy slots detected: {duplicate_slots}")
+                    notifier.notify_operational_alert(
+                        f"Duplicate broker strategy slots detected: {duplicate_slots}"
+                    )
+                last_duplicate_slots = duplicate_slots
 
                 for symbol, timeframe in subscribed_pairs:
                     bar = get_latest_completed_bar(symbol, timeframe)
@@ -281,6 +330,12 @@ def main():
                         logger.error("Reconnect failed — shutting down")
                         return
                     tracked_tickets = _reconcile_portfolio(portfolio, execution)
+                    missing_close_since.clear()
+                    close_pending_journaled.clear()
+                    close_pending_alerted.clear()
+                    last_duplicate_slots = _duplicate_live_slots(
+                        list(tracked_tickets.values())
+                    )
                     consecutive_failures = 0
 
             time.sleep(POLL_INTERVAL_SECONDS)
