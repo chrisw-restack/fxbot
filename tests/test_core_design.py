@@ -178,6 +178,96 @@ class SimulatedExecutionTests(unittest.TestCase):
 
 
 class MT5ExecutionTests(unittest.TestCase):
+    def test_order_comment_is_trimmed_to_mt5_safe_length(self):
+        old_mt5 = sys.modules.get('MetaTrader5')
+        old_module = sys.modules.pop('execution.mt5_execution', None)
+        captured = {}
+        info = types.SimpleNamespace(
+            visible=True,
+            volume_step=0.01,
+            volume_min=0.01,
+            volume_max=100.0,
+            trade_tick_size=0.00001,
+            point=0.00001,
+            digits=5,
+            trade_stops_level=0,
+            trade_freeze_level=0,
+            filling_mode=1,
+        )
+        tick = types.SimpleNamespace(bid=1.1000, ask=1.1001)
+
+        def order_send(request):
+            captured['request'] = request
+            return types.SimpleNamespace(
+                retcode=10009,
+                comment='done',
+                order=12345,
+                deal=67890,
+                price=request['price'],
+            )
+
+        fake_mt5 = types.SimpleNamespace(
+            TIMEFRAME_M5=1,
+            TIMEFRAME_M15=2,
+            TIMEFRAME_H1=3,
+            TIMEFRAME_H4=4,
+            TIMEFRAME_D1=5,
+            TRADE_ACTION_DEAL=1,
+            TRADE_ACTION_PENDING=5,
+            TRADE_RETCODE_DONE=10009,
+            TRADE_RETCODE_PLACED=10008,
+            TRADE_RETCODE_INVALID_FILL=10030,
+            ORDER_TYPE_BUY=0,
+            ORDER_TYPE_SELL=1,
+            ORDER_TYPE_BUY_LIMIT=2,
+            ORDER_TYPE_SELL_LIMIT=3,
+            ORDER_TYPE_BUY_STOP=4,
+            ORDER_TYPE_SELL_STOP=5,
+            ORDER_TIME_GTC=0,
+            ORDER_FILLING_FOK=0,
+            ORDER_FILLING_IOC=1,
+            ORDER_FILLING_RETURN=2,
+            symbol_info=lambda symbol: info,
+            symbol_info_tick=lambda symbol: tick,
+            order_send=order_send,
+            last_error=lambda: (0, ''),
+        )
+        sys.modules['MetaTrader5'] = fake_mt5
+
+        def cleanup():
+            sys.modules.pop('execution.mt5_execution', None)
+            if old_module is not None:
+                sys.modules['execution.mt5_execution'] = old_module
+            if old_mt5 is not None:
+                sys.modules['MetaTrader5'] = old_mt5
+            else:
+                sys.modules.pop('MetaTrader5', None)
+
+        self.addCleanup(cleanup)
+
+        from execution.mt5_execution import MT5Execution, MT5_ORDER_COMMENT_MAX_CHARS
+
+        strategy_name = 'CandleConfirmation_USDJPY_H1_M5'
+        execution = MT5Execution(magic_numbers={strategy_name: 1009})
+        ticket = execution.place_order(
+            symbol='EURUSD',
+            direction='BUY',
+            order_type='MARKET',
+            entry_price=1.1001,
+            lot_size=0.1,
+            sl=1.0990,
+            tp=1.1020,
+            strategy_name=strategy_name,
+        )
+
+        self.assertEqual(ticket, 12345)
+        self.assertEqual(len(strategy_name), MT5_ORDER_COMMENT_MAX_CHARS + 1)
+        self.assertEqual(
+            captured['request']['comment'],
+            strategy_name[:MT5_ORDER_COMMENT_MAX_CHARS],
+        )
+        self.assertEqual(captured['request']['magic'], 1009)
+
     def test_order_failure_captures_broker_request_diagnostics(self):
         old_mt5 = sys.modules.get('MetaTrader5')
         old_module = sys.modules.pop('execution.mt5_execution', None)

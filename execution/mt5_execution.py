@@ -11,6 +11,7 @@ from execution.base_execution import BaseExecution
 logger = logging.getLogger(__name__)
 
 _SL_COMMENT_RE = re.compile(r'\[sl\s+([0-9]+(?:\.[0-9]+)?)\]', re.IGNORECASE)
+MT5_ORDER_COMMENT_MAX_CHARS = 30
 
 MT5_TIMEFRAME_MAP = {
     'M5':  mt5.TIMEFRAME_M5,
@@ -57,6 +58,16 @@ class MT5Execution(BaseExecution):
             return str(mt5.last_error())
         except Exception as exc:
             return f"last_error unavailable: {exc}"
+
+    @staticmethod
+    def _broker_order_comment(strategy_name: str) -> str:
+        """Return an MT5-safe diagnostic comment; magic remains canonical identity."""
+        sanitized = ''.join(
+            ch if 32 <= ord(ch) < 127 else '_'
+            for ch in (strategy_name or '')
+        )
+        sanitized = sanitized.strip() or 'fxbot'
+        return sanitized[:MT5_ORDER_COMMENT_MAX_CHARS]
 
     def _normalize_volume(self, symbol: str, volume: float) -> float:
         info = mt5.symbol_info(symbol)
@@ -160,7 +171,7 @@ class MT5Execution(BaseExecution):
             'sl':           sl,
             'tp':           tp,
             'magic':        magic,
-            'comment':      strategy_name,
+            'comment':      self._broker_order_comment(strategy_name),
             'type_time':    mt5.ORDER_TIME_GTC,
             'type_filling': mt5.ORDER_FILLING_IOC,
         }
@@ -216,6 +227,7 @@ class MT5Execution(BaseExecution):
                     'sl': request.get('sl'),
                     'tp': request.get('tp'),
                     'magic': request.get('magic'),
+                    'comment': request.get('comment'),
                 },
                 'bid': getattr(tick, 'bid', None),
                 'ask': getattr(tick, 'ask', None),
