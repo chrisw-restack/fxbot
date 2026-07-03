@@ -405,7 +405,9 @@ class MT5ExecutionTests(unittest.TestCase):
             TIMEFRAME_H4=4,
             TIMEFRAME_D1=5,
             ORDER_TYPE_BUY_LIMIT=2,
+            ORDER_TYPE_SELL_LIMIT=3,
             ORDER_TYPE_BUY_STOP=4,
+            ORDER_TYPE_SELL_STOP=5,
             positions_get=lambda: (),
             orders_get=lambda: [
                 types.SimpleNamespace(
@@ -442,6 +444,72 @@ class MT5ExecutionTests(unittest.TestCase):
 
         self.assertEqual(order['strategy_name'], 'EmaFibRetracement')
         self.assertEqual(order['broker_comment'], 'EmaFibRetracemen')
+
+    def test_broker_close_orders_are_not_tracked_as_pending_strategy_slots(self):
+        old_mt5 = sys.modules.get('MetaTrader5')
+        old_module = sys.modules.pop('execution.mt5_execution', None)
+
+        fake_mt5 = types.SimpleNamespace(
+            TIMEFRAME_M5=1,
+            TIMEFRAME_M15=2,
+            TIMEFRAME_H1=3,
+            TIMEFRAME_H4=4,
+            TIMEFRAME_D1=5,
+            ORDER_TYPE_BUY=0,
+            ORDER_TYPE_SELL=1,
+            ORDER_TYPE_BUY_LIMIT=2,
+            ORDER_TYPE_SELL_LIMIT=3,
+            ORDER_TYPE_BUY_STOP=4,
+            ORDER_TYPE_SELL_STOP=5,
+            positions_get=lambda: (),
+            orders_get=lambda: [
+                types.SimpleNamespace(
+                    ticket=1787029276,
+                    symbol='EURUSD',
+                    type=0,
+                    volume_current=2.52,
+                    price_open=1.14149,
+                    sl=0.0,
+                    tp=0.0,
+                    magic=1004,
+                    comment='[sl 1.14149]',
+                    position_id=1786982540,
+                ),
+                types.SimpleNamespace(
+                    ticket=123,
+                    symbol='EURUSD',
+                    type=3,
+                    volume_current=1.0,
+                    price_open=1.14090,
+                    sl=1.14149,
+                    tp=1.13944,
+                    magic=1004,
+                    comment='IMS_H4_M15',
+                    position_id=0,
+                ),
+            ],
+        )
+        sys.modules['MetaTrader5'] = fake_mt5
+
+        def cleanup():
+            sys.modules.pop('execution.mt5_execution', None)
+            if old_module is not None:
+                sys.modules['execution.mt5_execution'] = old_module
+            if old_mt5 is not None:
+                sys.modules['MetaTrader5'] = old_mt5
+            else:
+                sys.modules.pop('MetaTrader5', None)
+
+        self.addCleanup(cleanup)
+
+        from execution.mt5_execution import MT5Execution
+
+        execution = MT5Execution(magic_numbers={'IMS_H4_M15': 1004})
+        orders = execution.get_open_positions()
+
+        self.assertEqual([order['ticket'] for order in orders], [123])
+        self.assertEqual(orders[0]['strategy_name'], 'IMS_H4_M15')
+        self.assertEqual(orders[0]['direction'], 'SELL')
 
     def test_duplicate_magic_numbers_are_rejected(self):
         old_mt5 = sys.modules.get('MetaTrader5')

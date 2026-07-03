@@ -373,16 +373,25 @@ class MT5Execution(BaseExecution):
                 if not self._known_magic or p.magic in self._known_magic
             ])
 
-        # Pending (unfilled) orders — included so _handle_cancel can find and delete them
+        # Pending entry orders — included so _handle_cancel can find and delete them.
+        # Broker-generated close orders, such as temporary SL/TP market orders, are
+        # not strategy slots and must not be tracked as separate positions.
         orders = mt5.orders_get()
         if orders:
+            buy_pending_types = {
+                mt5.ORDER_TYPE_BUY_LIMIT,
+                mt5.ORDER_TYPE_BUY_STOP,
+            }
+            sell_pending_types = {
+                mt5.ORDER_TYPE_SELL_LIMIT,
+                mt5.ORDER_TYPE_SELL_STOP,
+            }
+            pending_order_types = buy_pending_types | sell_pending_types
             result.extend([
                 {
                     'ticket':        o.ticket,
                     'symbol':        o.symbol,
-                    'direction':     'BUY' if o.type in (
-                        mt5.ORDER_TYPE_BUY_LIMIT, mt5.ORDER_TYPE_BUY_STOP,
-                    ) else 'SELL',
+                    'direction':     'BUY' if o.type in buy_pending_types else 'SELL',
                     'volume':        o.volume_current,
                     'open_price':    o.price_open,
                     'sl':            o.sl,
@@ -399,7 +408,8 @@ class MT5Execution(BaseExecution):
                     # identify pending orders
                 }
                 for o in orders
-                if not self._known_magic or o.magic in self._known_magic
+                if o.type in pending_order_types
+                and (not self._known_magic or o.magic in self._known_magic)
             ])
 
         return result
