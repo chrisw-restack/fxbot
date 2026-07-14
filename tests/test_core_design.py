@@ -1,4 +1,5 @@
 import os
+import logging
 import sys
 import tempfile
 import types
@@ -14,9 +15,12 @@ from risk.risk_manager import RiskManager
 from strategies.candle_confirmation import CandleConfirmationStrategy
 from strategies.ema_fib_retracement import EmaFibRetracementStrategy
 from strategies.ema_fib_running import EmaFibRunningStrategy
+from strategies.failed2 import Failed2Strategy
 from strategies.ny_index_opening_drive import NyIndexOpeningDriveStrategy
 from strategies.three_line_strike import ThreeLineStrikeStrategy
 from utils.telegram_notifier import TelegramNotifier
+from utils.trade_journal import TradeJournal
+from utils.live_reconciliation import recover_offline_journal_orders
 import config
 
 
@@ -261,7 +265,7 @@ class MT5ExecutionTests(unittest.TestCase):
         )
 
         self.assertEqual(ticket, 12345)
-        self.assertEqual(len(strategy_name), MT5_ORDER_COMMENT_MAX_CHARS + 1)
+        self.assertGreater(len(strategy_name), MT5_ORDER_COMMENT_MAX_CHARS)
         self.assertEqual(
             captured['request']['comment'],
             strategy_name[:MT5_ORDER_COMMENT_MAX_CHARS],
@@ -621,6 +625,10 @@ class MT5ExecutionTests(unittest.TestCase):
         self.assertEqual(closed['close_reason'], '[sl 1.0990]')
         self.assertAlmostEqual(closed['pnl'], -107.0)
         self.assertAlmostEqual(closed['r_multiple'], -1.0)
+        self.assertEqual(
+            closed['close_time'],
+            datetime(2026, 6, 9, 9, tzinfo=timezone.utc),
+        )
 
     def test_closed_trade_uses_sl_exit_for_r_when_tracked_sl_missing(self):
         old_mt5 = sys.modules.get('MetaTrader5')
@@ -973,6 +981,155 @@ class EventEngineCancellationTests(unittest.TestCase):
         self.assertEqual(journal.cancelled, [(1, 'strategy_cancel')])
         self.assertEqual(journal.failed, [(2, 'broker_cancel_failed', {'retcode': 10030})])
         self.assertEqual(len(notifier.alerts), 1)
+
+
+class LiveRecoveryTests(unittest.TestCase):
+    def test_journal_returns_only_orders_without_terminal_events(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, 'trade_journal.csv')
+            journal = TradeJournal(path)
+            journal._write({
+                'event': 'ORDER_PLACED',
+                'ticket': 101,
+                'symbol': 'XAUUSD',
+                'strategy_name': 'IMSRev_H4_M15',
+                'direction': 'SELL',
+                'order_type': 'PENDING',
+                'entry_price_actual': 4179.29,
+                'stop_loss': 4186.36,
+                'take_profit': 4077.835,
+                'lot_size': 0.21,
+            })
+            journal._write({'event': 'ORDER_PLACED', 'ticket': 202})
+            journal.log_order_cancelled({'ticket': 202}, reason='strategy_cancel')
+
+            unresolved = journal.get_unresolved_orders()
+
+            self.assertEqual([row['ticket'] for row in unresolved], [101])
+            self.assertEqual(unresolved[0]['position_id'], 101)
+            self.assertEqual(unresolved[0]['state'], 'PENDING')
+            self.assertFalse(journal.has_terminal_event(101))
+            self.assertTrue(journal.has_terminal_event(202))
+
+    def test_journal_recovery_window_excludes_stale_legacy_orders(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            journal = TradeJournal(os.path.join(tmp, 'trade_journal.csv'))
+            journal._write({
+                'journal_time_utc': '2026-05-01T12:00:00+00:00',
+                'event': 'ORDER_PLACED', 'ticket': 101,
+            })
+            journal._write({
+                'journal_time_utc': '2026-07-03T12:00:00+00:00',
+                'event': 'ORDER_PLACED', 'ticket': 202,
+            })
+
+            unresolved = journal.get_unresolved_orders(
+                max_age_days=30,
+                now=datetime(2026, 7, 14, tzinfo=timezone.utc),
+            )
+
+            self.assertEqual([row['ticket'] for row in unresolved], [202])
+
+    def test_offline_close_recovery_is_idempotent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            journal = TradeJournal(os.path.join(tmp, 'trade_journal.csv'))
+            journal._write({
+                'event': 'ORDER_PLACED',
+                'ticket': 1789534572,
+                'symbol': 'XAUUSD',
+                'strategy_name': 'IMSRev_H4_M15',
+                'direction': 'SELL',
+                'order_type': 'PENDING',
+                'entry_price_actual': 4179.29,
+                'stop_loss': 4186.36,
+                'take_profit': 4077.835,
+                'lot_size': 0.21,
+            })
+
+            class Execution:
+                def __init__(self):
+                    self.calls = 0
+
+                def get_recent_closed_trade(self, pos, lookback_days=14):
+                    self.calls += 1
+                    self.assert_pos = pos
+                    self.lookback_days = lookback_days
+                    return {
+                        'ticket': pos['ticket'], 'symbol': pos['symbol'],
+                        'strategy_name': pos['strategy_name'], 'direction': pos['direction'],
+                        'result': 'LOSS', 'pnl': -155.83, 'r_multiple': -1.01,
+                        'entry_price': 4179.02, 'sl': 4186.36, 'tp': 4077.835,
+                        'lot_size': 0.21,
+                        'close_time': datetime(2026, 7, 5, 22, 32, 48, tzinfo=timezone.utc),
+                        'close_reason': '[sl 4186.36]',
+                    }
+
+            class Notifier:
+                def __init__(self):
+                    self.closed = []
+
+                def notify_order_closed(self, **kwargs):
+                    self.closed.append(kwargs)
+
+            execution = Execution()
+            notifier = Notifier()
+            test_logger = logging.getLogger('test.offline_recovery')
+
+            first = recover_offline_journal_orders(
+                execution, journal, notifier, [], test_logger,
+            )
+            second = recover_offline_journal_orders(
+                execution, journal, notifier, [], test_logger,
+            )
+
+            self.assertEqual(first, (1, 0, []))
+            self.assertEqual(second, (0, 0, []))
+            self.assertEqual(execution.calls, 1)
+            self.assertEqual(execution.lookback_days, 30)
+            self.assertEqual(len(notifier.closed), 1)
+            self.assertTrue(journal.has_terminal_event(1789534572))
+            self.assertEqual(journal.get_unresolved_orders(), [])
+
+    def test_offline_pending_requires_broker_cancellation_confirmation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            journal = TradeJournal(os.path.join(tmp, 'trade_journal.csv'))
+            for ticket in (101, 202):
+                journal._write({
+                    'event': 'ORDER_PLACED', 'ticket': ticket,
+                    'symbol': 'EURUSD', 'strategy_name': 'TestStrategy',
+                    'direction': 'BUY', 'order_type': 'PENDING',
+                })
+
+            class Execution:
+                def get_recent_closed_trade(self, pos, lookback_days=14):
+                    return None
+
+                def get_historical_order_state(self, pos):
+                    return 'CANCELLED' if pos['ticket'] == 101 else None
+
+            class Notifier:
+                def notify_order_closed(self, **kwargs):
+                    raise AssertionError('No close notification expected')
+
+            result = recover_offline_journal_orders(
+                Execution(), journal, Notifier(), [], logging.getLogger('test.recovery'),
+            )
+
+            self.assertEqual(result, (0, 1, [202]))
+            self.assertTrue(journal.has_terminal_event(101))
+            self.assertFalse(journal.has_terminal_event(202))
+
+    def test_failed2_market_mode_does_not_emit_cancel_signal(self):
+        bar = BarEvent(
+            symbol='USTEC', timeframe='H4',
+            timestamp=datetime(2026, 7, 14, 8),
+            open=1.0, high=2.0, low=0.5, close=1.5, volume=1,
+        )
+
+        self.assertIsNone(Failed2Strategy(entry_mode='market')._cancel_signal('USTEC', bar))
+        pending_cancel = Failed2Strategy(entry_mode='fvg')._cancel_signal('USTEC', bar)
+        self.assertIsNotNone(pending_cancel)
+        self.assertEqual(pending_cancel.direction, 'CANCEL')
 
 
 class HistoricalLoaderTests(unittest.TestCase):

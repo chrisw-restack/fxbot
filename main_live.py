@@ -21,6 +21,7 @@ from portfolio.portfolio_manager import PortfolioManager
 from execution.mt5_execution import MT5Execution
 from utils.trade_logger import TradeLogger
 from utils.trade_journal import TradeJournal
+from utils.live_reconciliation import recover_offline_journal_orders
 from data.mt5_data import connect, disconnect, reconnect, get_latest_completed_bar, get_recent_bars
 from data.historical_loader import bar_close_time
 from live_config import create_live_strategy_specs, live_symbols, live_risk_pct_overrides
@@ -170,6 +171,25 @@ def main():
         close_pending_alerted: set[int] = set()
         last_duplicate_slots: list[tuple[str, str, list[int]]] = []
         logger.info(f"Reconciled {len(tracked_tickets)} existing MT5 positions/orders")
+        recovered_closes, recovered_cancellations, unresolved_open = recover_offline_journal_orders(
+            execution,
+            trade_journal,
+            notifier,
+            list(tracked_tickets.values()),
+            logger,
+        )
+        if recovered_closes or recovered_cancellations:
+            logger.info(
+                f"Startup journal recovery: closes={recovered_closes} "
+                f"cancellations={recovered_cancellations}"
+            )
+        if unresolved_open:
+            message = (
+                "Unable to reconcile previously placed tickets: "
+                f"{unresolved_open}. Check MT5 history immediately."
+            )
+            logger.error(message)
+            notifier.notify_operational_alert(message)
         duplicate_slots = _duplicate_live_slots(list(tracked_tickets.values()))
         if duplicate_slots:
             message = f"Duplicate broker strategy slots detected: {duplicate_slots}"
@@ -204,6 +224,17 @@ def main():
                             del tracked_tickets[ticket]
                             missing_close_since.pop(ticket, None)
                             continue
+                        if (
+                            pos.get('state') == 'PENDING'
+                            and trade_journal.has_terminal_event(ticket)
+                        ):
+                            del tracked_tickets[ticket]
+                            missing_close_since.pop(ticket, None)
+                            close_pending_journaled.discard(ticket)
+                            close_pending_alerted.discard(ticket)
+                            strategy_name = pos.get('strategy_name') or pos.get('comment') or ''
+                            portfolio.record_close(pos['symbol'], 0.0, strategy_name)
+                            continue
                         # Position closed (SL/TP hit on broker side)
                         closed = execution.get_recent_closed_trade(pos)
                         if closed is None:
@@ -221,7 +252,14 @@ def main():
                                     )
                                 continue
 
+                        order_history_state = None
                         if closed is None and pos.get('state') == 'PENDING':
+                            order_history_state = execution.get_historical_order_state(pos)
+                        if (
+                            closed is None
+                            and pos.get('state') == 'PENDING'
+                            and order_history_state == 'CANCELLED'
+                        ):
                             del tracked_tickets[ticket]
                             missing_close_since.pop(ticket, None)
                             close_pending_journaled.discard(ticket)

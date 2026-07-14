@@ -613,7 +613,9 @@ class Failed2Strategy:
     def _close_time(bar: BarEvent):
         return bar.timestamp + _TF_DURATION.get(bar.timeframe, timedelta(hours=1))
 
-    def _cancel_signal(self, symbol: str, bar: BarEvent) -> Signal:
+    def _cancel_signal(self, symbol: str, bar: BarEvent) -> Signal | None:
+        if self.ORDER_TYPE != 'PENDING':
+            return None
         return Signal(
             symbol=symbol,
             direction='CANCEL',

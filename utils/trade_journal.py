@@ -1,7 +1,7 @@
 import csv
 import json
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -42,6 +42,8 @@ JOURNAL_FIELDS = [
     'context_json',
 ]
 
+TERMINAL_EVENTS = {'CLOSE', 'ORDER_CANCELLED'}
+
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -55,6 +57,20 @@ def _iso(value: Any) -> str:
 
 def _round(value: Any, digits: int = 5) -> Any:
     return round(value, digits) if isinstance(value, (float, int)) else value
+
+
+def _ticket(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
 
 
 def _json_safe(value: Any) -> Any:
@@ -77,12 +93,87 @@ class TradeJournal:
             with self.path.open('w', newline='') as f:
                 writer = csv.DictWriter(f, fieldnames=JOURNAL_FIELDS)
                 writer.writeheader()
+        self._terminal_tickets = {
+            ticket
+            for row in self._read_rows()
+            if row.get('event') in TERMINAL_EVENTS
+            for ticket in [_ticket(row.get('ticket'))]
+            if ticket is not None
+        }
+
+    def _read_rows(self) -> list[dict[str, str]]:
+        if not self.path.exists() or self.path.stat().st_size == 0:
+            return []
+        with self.path.open(newline='') as f:
+            return list(csv.DictReader(f))
 
     def _write(self, row: dict[str, Any]):
         complete = {field: row.get(field, '') for field in JOURNAL_FIELDS}
         with self.path.open('a', newline='') as f:
             writer = csv.DictWriter(f, fieldnames=JOURNAL_FIELDS)
             writer.writerow(complete)
+        ticket = _ticket(complete.get('ticket'))
+        if ticket is not None and complete.get('event') in TERMINAL_EVENTS:
+            self._terminal_tickets.add(ticket)
+
+    def has_terminal_event(self, ticket: int) -> bool:
+        return int(ticket) in self._terminal_tickets
+
+    def get_unresolved_orders(
+        self,
+        max_age_days: int | None = None,
+        now: datetime | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return placed orders that have no journalled close or cancellation."""
+        unresolved: dict[int, dict[str, Any]] = {}
+        for row in self._read_rows():
+            ticket = _ticket(row.get('ticket'))
+            if ticket is None:
+                continue
+            if row.get('event') == 'ORDER_PLACED':
+                order_type = row.get('order_type', '')
+                unresolved[ticket] = {
+                    'ticket': ticket,
+                    'position_id': ticket,
+                    'symbol': row.get('symbol', ''),
+                    'strategy_name': row.get('strategy_name', ''),
+                    'direction': row.get('direction', ''),
+                    'state': 'PENDING' if order_type == 'PENDING' else 'OPEN',
+                    'open_price': _float(
+                        row.get('entry_price_actual') or row.get('entry_price_expected')
+                    ),
+                    'sl': _float(row.get('stop_loss')),
+                    'tp': _float(row.get('take_profit')),
+                    'volume': _float(row.get('lot_size')),
+                    '_journal_time_utc': row.get('journal_time_utc', ''),
+                }
+            elif row.get('event') in TERMINAL_EVENTS:
+                unresolved.pop(ticket, None)
+
+        if max_age_days is not None:
+            now = now or datetime.now(timezone.utc)
+            cutoff = now - timedelta(days=max_age_days)
+            unresolved = {
+                ticket: pos
+                for ticket, pos in unresolved.items()
+                if self._is_at_or_after(pos.get('_journal_time_utc'), cutoff)
+            }
+
+        for pos in unresolved.values():
+            pos.pop('_journal_time_utc', None)
+        return list(unresolved.values())
+
+    @staticmethod
+    def _is_at_or_after(value: str | None, cutoff: datetime) -> bool:
+        if not value:
+            return True
+        try:
+            timestamp = datetime.fromisoformat(value)
+        except ValueError:
+            return True
+        if timestamp.tzinfo is None:
+            timestamp = timestamp.replace(tzinfo=timezone.utc)
+        return timestamp >= cutoff
 
     def _base_from_signal(self, signal: Signal | EnrichedSignal, context: dict | None = None) -> dict[str, Any]:
         risk = abs(signal.entry_price - signal.stop_loss) if signal.stop_loss is not None else None

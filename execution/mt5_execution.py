@@ -6,12 +6,15 @@ from math import floor
 
 import MetaTrader5 as mt5
 
+from data.mt5_data import mt5_time_to_utc
 from execution.base_execution import BaseExecution
 
 logger = logging.getLogger(__name__)
 
 _SL_COMMENT_RE = re.compile(r'\[sl\s+([0-9]+(?:\.[0-9]+)?)\]', re.IGNORECASE)
-MT5_ORDER_COMMENT_MAX_CHARS = 30
+# IC Markets accepted 23-character comments but rejected 30-character comments.
+# Keep a little margin because MetaTrader limits can vary by terminal/broker build.
+MT5_ORDER_COMMENT_MAX_CHARS = 20
 
 MT5_TIMEFRAME_MAP = {
     'M5':  mt5.TIMEFRAME_M5,
@@ -68,6 +71,14 @@ class MT5Execution(BaseExecution):
         )
         sanitized = sanitized.strip() or 'fxbot'
         return sanitized[:MT5_ORDER_COMMENT_MAX_CHARS]
+
+    @staticmethod
+    def _mt5_timestamp_utc(timestamp: int | float) -> datetime:
+        """Convert IC Markets' server-wall-clock timestamp to aware UTC."""
+        converted = mt5_time_to_utc(timestamp)
+        if converted.tzinfo is None:
+            return converted.replace(tzinfo=timezone.utc)
+        return converted.astimezone(timezone.utc)
 
     def _normalize_volume(self, symbol: str, volume: float) -> float:
         info = mt5.symbol_info(symbol)
@@ -367,7 +378,7 @@ class MT5Execution(BaseExecution):
                     'strategy_name': self.strategy_name_for_magic(p.magic, p.comment),
                     'position_id':   getattr(p, 'identifier', p.ticket),
                     'state':         'OPEN',
-                    'open_time':     datetime.fromtimestamp(p.time, tz=timezone.utc),
+                    'open_time':     self._mt5_timestamp_utc(p.time),
                 }
                 for p in positions
                 if not self._known_magic or p.magic in self._known_magic
@@ -417,6 +428,40 @@ class MT5Execution(BaseExecution):
     def get_account_balance(self) -> float:
         info = mt5.account_info()
         return info.balance if info else 0.0
+
+    def get_historical_order_state(self, tracked_pos: dict) -> str | None:
+        """Return CANCELLED, FILLED, ACTIVE, or None for a broker-history order."""
+        ticket = tracked_pos.get('ticket')
+        if ticket in (None, 0, ''):
+            return None
+        try:
+            orders = mt5.history_orders_get(ticket=int(ticket))
+        except (AttributeError, TypeError, ValueError):
+            return None
+        if not orders:
+            return None
+
+        latest = max(
+            orders,
+            key=lambda order: getattr(
+                order, 'time_done_msc', getattr(order, 'time_done', 0)
+            ),
+        )
+        state = getattr(latest, 'state', None)
+        cancelled_states = {
+            getattr(mt5, 'ORDER_STATE_CANCELED', 2),
+            getattr(mt5, 'ORDER_STATE_REJECTED', 5),
+            getattr(mt5, 'ORDER_STATE_EXPIRED', 6),
+        }
+        filled_states = {
+            getattr(mt5, 'ORDER_STATE_PARTIAL', 3),
+            getattr(mt5, 'ORDER_STATE_FILLED', 4),
+        }
+        if state in cancelled_states:
+            return 'CANCELLED'
+        if state in filled_states:
+            return 'FILLED'
+        return 'ACTIVE'
 
     @staticmethod
     def _valid_price(value) -> float | None:
@@ -584,8 +629,9 @@ class MT5Execution(BaseExecution):
         latest = max(exit_deals, key=lambda d: getattr(d, 'time', 0))
         exit_price = float(getattr(latest, 'price', 0.0))
         entry_price = self._valid_price(tracked_pos.get('open_price'))
-        if entry_price is None:
-            entry_price = self._entry_price_from_deals(matching)
+        history_entry_price = self._entry_price_from_deals(matching)
+        if tracked_pos.get('state') == 'PENDING' or entry_price is None:
+            entry_price = history_entry_price or entry_price
 
         sl = self._valid_price(tracked_pos.get('sl'))
         tp = self._valid_price(tracked_pos.get('tp'))
@@ -624,7 +670,7 @@ class MT5Execution(BaseExecution):
             'strategy_name': strategy_name,
             'result': result,
             'pnl': round(pnl, 2),
-            'close_time': datetime.fromtimestamp(getattr(latest, 'time', 0), tz=timezone.utc),
+            'close_time': self._mt5_timestamp_utc(getattr(latest, 'time', 0)),
             'r_multiple': r_multiple,
             'r_source': r_source if r_multiple is not None else 'unavailable',
             'entry_price': entry_price or '',

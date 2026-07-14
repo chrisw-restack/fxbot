@@ -1,7 +1,7 @@
 import logging
 import os
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 
 import pandas as pd
 import MetaTrader5 as mt5
@@ -35,7 +35,7 @@ def mt5_time_to_utc(timestamp: int | float) -> datetime:
     the MetaTrader5 package. Treat the raw value as server wall-clock time,
     then convert it to UTC before strategies see it.
     """
-    server_time = datetime.utcfromtimestamp(timestamp)
+    server_time = datetime.fromtimestamp(timestamp, timezone.utc).replace(tzinfo=None)
     return _server_to_utc(server_time)
 
 
