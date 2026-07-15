@@ -36,7 +36,7 @@ def _parse_date(value: str) -> datetime:
 
 
 def _mt5_time_to_utc(timestamp: int | float) -> datetime:
-    server_time = datetime.utcfromtimestamp(timestamp)
+    server_time = datetime.fromtimestamp(timestamp, timezone.utc).replace(tzinfo=None)
     return _server_to_utc(server_time)
 
 

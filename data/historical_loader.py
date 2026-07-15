@@ -122,7 +122,7 @@ def load_csv(filepath: str) -> list[BarEvent]:
 DATA_SOURCE_DIRS = {
     'dukascopy': 'data/historical',
     'histdata': 'data/historical/histdata',
-    'mt5_icmarkets': 'data/historical/mt5_icmarkets_utc',
+    'mt5_icmarkets': 'data/historical/mt5_icmarkets',
     'mt5_icmarkets_utc': 'data/historical/mt5_icmarkets_utc',
 }
 

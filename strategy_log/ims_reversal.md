@@ -172,6 +172,74 @@ Operational fix made during the review: MT5 close-history matching now keys off 
 id instead of requiring the exit deal comment to match the strategy name. SL/TP exit deals usually carry
 comments like `[sl ...]`, which caused the journal to fall back to cached PnL and record `r_multiple=0.0`.
 
+### Forward Demo And Broker-Feed Review - 2026-07-14
+
+Dukascopy H4/M15 data was extended through the last completed market day, 2026-07-13. The updated
+backtest exactly reproduced the previous 2026-03-19 checkpoint before adding the new period, which
+confirms that the strategy configuration and earlier result have not drifted.
+
+| Scope | Trades | Win rate | Total R | PF | Expectancy | Max DD | Loss streak |
+|-------|-------:|---------:|--------:|---:|-----------:|-------:|------------:|
+| Dukascopy 2024-01-01 to 2026-03-19 checkpoint | 385 | 23.1% | +79.96R | 1.26 | +0.208R | 46.80R | 22 |
+| Dukascopy new data, 2026-03-20 onward | 46 | 23.9% | +5.71R | 1.16 | +0.124R | 8.09R | 8 |
+| Dukascopy full 2024-01-01 to 2026-07-13 | 431 | 23.2% | +85.67R | 1.25 | +0.199R | 46.80R | 22 |
+| Dukascopy since deployment, 2026-04-23 onward | 30 | 23.3% | +4.84R | 1.21 | +0.161R | 6.12R | 6 |
+| IC Markets 2025-01-01 to 2026-05-25 | 229 | 21.4% | +13.40R | 1.07 | +0.059R | 39.54R | 17 |
+| Dukascopy same 2025-01-01 to 2026-05-25 window | 230 | 20.9% | +23.50R | 1.13 | +0.102R | 46.80R | 22 |
+
+The MT5 report contains 23 filled IMSRev positions since deployment: 3 wins, 20 losses,
+approximately -9.44 price-based R, and -$1,704.36 after commission and swap. This is materially
+worse than the standalone Dukascopy replay. It is not evidence that different code is running:
+
+- A direct replay of the saved IC Markets candles through 2026-05-25 produced 7 trades, 1 win,
+  and -1.34R. The six comparable broker fills had 1 win and roughly -0.6R.
+- Several broker orders were reproduced exactly or very closely, including AUDJPY on 2026-05-12,
+  both XAUUSD trades on 2026-05-19/20, the 2026-06-08 cluster, both 2026-06-11 winners, and the
+  2026-07-13 XAUUSD loss.
+- Live portfolio constraints dropped six valid IMSRev signals, and an AUDJPY order on 2026-06-29
+  failed because MT5 reported no network connection. Bot downtime also removed opportunities.
+- Pending fills and H4/LTF structure are feed-sensitive. IC Markets remains profitable over its
+  available 229-trade common window, but its expectancy is thinner than Dukascopy.
+
+**Decision:** do not rework the core signal logic or change live parameters from this sample. Keep the
+strategy on demo only. Reassess at 50 broker fills, or sooner if an updated IC Markets replay turns
+negative over a meaningful sample. Any proposed symbol removal or filter must be tested one at a time
+and pass walk-forward before changing `live_config.py`. The next validation priority is broker-specific
+data coverage and portfolio-aware replay, not another unvalidated setup filter.
+
+### Completed IC Markets Replay - 2026-07-15
+
+Fresh IC Markets H4/M15 candles for all eight symbols were exported through 2026-07-14. The new
+M15 overlap matches the live bot's logged timestamps and OHLC values. The terminal revised part of
+the older AUDUSD overlap; the fresh export was treated as authoritative for overlapping bars.
+
+The parity review also identified a shared simulation mismatch for BUY pending orders. MT5 places
+the strategy's pending price directly and triggers a BUY from ask. `SimulatedExecution` currently
+tests the unadjusted bid range and then adds spread to the fill price. This produced a false AUDCAD
+winner on 2026-07-14: bid touched the pending price, but ask did not, so MT5 correctly left the order
+unfilled and the strategy cancelled it. A broker-accurate experimental replay tested ask-touch at the
+actual pending price without changing production backtest code.
+
+| Source / period | Trades | Win rate | Total R | PF | Expectancy | Max DD | Loss streak |
+|-----------------|-------:|---------:|--------:|---:|-----------:|-------:|------------:|
+| IC Markets corrected, 2025-01-01 to 2026-07-14 | 250 | 20.0% | -2.19R | 0.99 | -0.009R | 41.82R | 17 |
+| IC Markets corrected, deployment onward | 29 | 10.3% | -16.01R | 0.40 | -0.552R | 16.01R | 10 |
+| IC Markets corrected, fresh export from 2026-05-20 | 23 | 13.0% | -9.88R | 0.52 | -0.430R | 14.73R | 10 |
+| Actual demo, deployment onward | 23 | 13.0% | about -9.44R | n/a | -0.410R | n/a | 9 |
+| Dukascopy corrected, 2024-01-01 to 2026-07-13 | 431 | 23.2% | +92.43R | 1.27 | +0.214R | 46.38R | 22 |
+
+The actual demo did better than the standalone corrected broker replay because portfolio limits,
+downtime, and one network failure skipped several modeled losses. Signal direction, price levels,
+clusters, and outcomes otherwise align closely. The bot is executing the intended logic; the poor
+demo result is not an implementation fault.
+
+**Revised verdict:** the IMS Reversal concept remains profitable on Dukascopy, but no meaningful edge
+is present in the available common IC Markets sample. Do not rework parameters against this short
+broker window because that would invite overfitting. Recommend pausing/removing IMSRev from the IC
+Markets demo suite pending a broker-specific revalidation with longer history. Do not change
+`live_config.py` until the user approves. The shared pending-fill simulator correction must be handled
+as a separate cross-strategy change with revalidation of every affected pending strategy.
+
 ---
 
 ## Drawdown Reduction Analysis (2026-04-23)

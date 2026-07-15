@@ -189,9 +189,14 @@ parser.add_argument(
     help='Move SL to break-even once price reaches N×R in profit (e.g. 2.0, 3.0, 5.0). Default: off.',
 )
 parser.add_argument(
-    '--data-source', choices=['dukascopy', 'histdata'],
+    '--data-source',
+    choices=['dukascopy', 'histdata', 'mt5_icmarkets', 'mt5_icmarkets_utc'],
     default='dukascopy',
-    help='Historical data source. dukascopy uses data/historical; histdata uses data/historical/histdata.',
+    help=(
+        'Historical data source. dukascopy uses data/historical; '
+        'histdata uses data/historical/histdata; mt5_icmarkets uses the legacy '
+        'broker-time export; mt5_icmarkets_utc uses the current UTC-normalized export.'
+    ),
 )
 parser.add_argument(
     '--symbols', nargs='+', default=None,
