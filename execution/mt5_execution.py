@@ -277,9 +277,9 @@ class MT5Execution(BaseExecution):
     def get_last_cancel_error(self) -> dict | None:
         return self._last_cancel_error
 
-    def close_order(self, ticket_id: int) -> bool:
+    def cancel_pending_order(self, ticket_id: int) -> bool:
+        """Cancel only an active pending order; never close a filled position."""
         self._last_cancel_error = None
-        # Cancel a pending order if it exists
         orders = mt5.orders_get(ticket=ticket_id)
         if orders is None:
             self._last_cancel_error = {
@@ -293,40 +293,60 @@ class MT5Execution(BaseExecution):
                 f"last_error={self._last_error_text()}"
             )
             return False
-        if orders:
-            request = {
-                'action': mt5.TRADE_ACTION_REMOVE,
-                'order':  ticket_id,
-            }
-            result = mt5.order_send(request)
-            if result is None or result.retcode != mt5.TRADE_RETCODE_DONE:
-                code = result.retcode if result else 'None'
-                comment = result.comment if result else ''
-                self._last_cancel_error = {
-                    'ticket': ticket_id,
-                    'retcode': code,
-                    'broker_comment': comment,
-                    'last_error': self._last_error_text(),
-                }
-                logger.error(
-                    f"Cancel pending order failed for ticket {ticket_id}: "
-                    f"retcode={code} {comment} last_error={self._last_error_text()}"
-                )
-                return False
-            for _ in range(8):
-                remaining = mt5.orders_get(ticket=ticket_id)
-                if remaining is not None and not remaining:
-                    logger.info(f"Pending order cancelled: ticket={ticket_id}")
-                    return True
-                time.sleep(0.25)
+        if not orders:
             self._last_cancel_error = {
-                'ticket': ticket_id,
-                'retcode': getattr(result, 'retcode', ''),
-                'broker_comment': 'broker did not confirm order removal',
+                'ticket': ticket_id, 'retcode': '',
+                'broker_comment': 'pending order is no longer active',
                 'last_error': self._last_error_text(),
             }
-            logger.error(f"Cancellation not confirmed by broker for ticket={ticket_id}")
             return False
+
+        request = {
+            'action': mt5.TRADE_ACTION_REMOVE,
+            'order':  ticket_id,
+        }
+        result = mt5.order_send(request)
+        if result is None or result.retcode != mt5.TRADE_RETCODE_DONE:
+            code = result.retcode if result else 'None'
+            comment = result.comment if result else ''
+            self._last_cancel_error = {
+                'ticket': ticket_id,
+                'retcode': code,
+                'broker_comment': comment,
+                'last_error': self._last_error_text(),
+            }
+            logger.error(
+                f"Cancel pending order failed for ticket {ticket_id}: "
+                f"retcode={code} {comment} last_error={self._last_error_text()}"
+            )
+            return False
+        for _ in range(8):
+            remaining = mt5.orders_get(ticket=ticket_id)
+            if remaining is not None and not remaining:
+                logger.info(f"Pending order cancelled: ticket={ticket_id}")
+                return True
+            time.sleep(0.25)
+        self._last_cancel_error = {
+            'ticket': ticket_id,
+            'retcode': getattr(result, 'retcode', ''),
+            'broker_comment': 'broker did not confirm order removal',
+            'last_error': self._last_error_text(),
+        }
+        logger.error(f"Cancellation not confirmed by broker for ticket={ticket_id}")
+        return False
+
+    def close_order(self, ticket_id: int) -> bool:
+        # Preserve the general close API for explicit/manual use.
+        orders = mt5.orders_get(ticket=ticket_id)
+        if orders is None:
+            self._last_cancel_error = {
+                'ticket': ticket_id, 'retcode': '',
+                'broker_comment': 'orders_get failed before close',
+                'last_error': self._last_error_text(),
+            }
+            return False
+        if orders:
+            return self.cancel_pending_order(ticket_id)
 
         # Otherwise close a filled position
         positions = mt5.positions_get(ticket=ticket_id)

@@ -240,6 +240,116 @@ Markets demo suite pending a broker-specific revalidation with longer history. D
 `live_config.py` until the user approves. The shared pending-fill simulator correction must be handled
 as a separate cross-strategy change with revalidation of every affected pending strategy.
 
+### Extended IC Markets History - 2026-07-15
+
+Increasing the requested range with MT5 chart history already set to unlimited recovered ten years of
+broker-native H4/M15 data for five of the eight IMSRev symbols. AUDCAD, AUDJPY, and USDCAD remain
+limited to 2025-01-01 onward on the IC Markets server.
+
+| Symbols | Available period | Coverage note |
+|---------|------------------|---------------|
+| AUDUSD, GBPNZD, USDCHF | 2016-07-14 to 2026-07-14 | Continuous H4/M15 coverage |
+| US30, XAUUSD | 2016-07-14 to 2026-07-14 | M15 contains hourly-only timestamps until April 2017; use 2017-04 onward for clean M15 comparison |
+| AUDCAD, AUDJPY, USDCAD | 2025-01-01 to 2026-07-14 | Broker server returned no older bars |
+
+The CSV audit found no duplicate timestamps, missing OHLC values, invalid candles, or out-of-order
+rows. The broker-accurate BUY pending-order correction was promoted to `SimulatedExecution` after
+focused regression coverage and the full test suite passed.
+
+| Source / symbols / period | Trades | Win rate | Total R | PF | Expectancy | Max DD | Ending balance |
+|---------------------------|-------:|---------:|--------:|---:|-----------:|-------:|---------------:|
+| IC Markets, 5 complete symbols, 2016-07 to 2026-07 | 1,119 | 21.4% | +78.58R | 1.09 | +0.07R | 57.67R | $10,669.78 |
+| Dukascopy, same 5 symbols and dates | 1,110 | 24.1% | +312.76R | 1.36 | +0.28R | 52.94R | $22,247.69 |
+| IC Markets, 5 symbols, clean M15 period from 2017-04 | 1,072 | 21.3% | +64.00R | 1.07 | +0.06R | n/a | n/a |
+| Dukascopy, same 5 symbols from 2017-04 | 1,012 | 23.4% | +256.28R | 1.32 | +0.25R | n/a | n/a |
+| IC Markets, all 8 symbols, 2025-01 to 2026-07 | 251 | 20.3% | +0.59R | 1.00 | +0.00R | 39.04R | $9,114.93 |
+
+`Total R` is the price-move R multiple before commission; account PnL includes configured commission.
+The corrected five-symbol IC replay earns only 6.7% over ten years while suffering a 35.2% account
+drawdown. Trade counts are close between feeds, but IC has a lower win rate and much lower payout
+retention. This confirms outcome/fill sensitivity rather than a lack of historical signals.
+
+Per-symbol IC results over the full available ten-year window were AUDUSD -18.72R, GBPNZD +34.16R,
+US30 +25.91R, USDCHF +16.81R, and XAUUSD +20.42R. These are research observations, not evidence for
+removing AUDUSD or promoting a four-symbol subset; any broker-specific subset must pass IC Markets
+walk-forward validation and an untouched holdout after the shared pending-fill correction is made.
+
+**Updated verdict:** the longer direct broker history removes the need for a proxy feed for these five
+symbols, but it does not rescue the current IMSRev deployment. The IC edge is too thin to survive
+costs and the all-eight-symbol common period is flat before costs. Keep the recommendation to pause
+IMSRev on IC Markets. A future rework should be treated as a new IC-native strategy validation, not a
+minor retune of the Dukascopy configuration.
+
+### IC Markets Symbol Salvage Test - 2026-07-15
+
+Added ten-year IC Markets H4/M15 exports for EURUSD, GBPUSD, NZDUSD, USDJPY, USTEC, and US500.
+All files passed structural validation. USTEC and US500 have hourly-only timestamps in their nominal
+M15 history before April 2017, matching the old US30/XAUUSD limitation; all strict OOS folds begin in
+2020 and are unaffected.
+
+The established parameters were tested without tuning across the eleven long-history IC symbols.
+Each OOS fold resets strategy state and uses broker-accurate pending fills. Net R includes configured
+spread and broker-specific commission. The MT5 report confirmed that IC Markets index CFDs are
+spread-only, while FX and XAUUSD pay commission; the simulator was corrected accordingly. The folds
+are 2020-2021, 2022-2023, and 2024-2025.
+
+| Symbol | Fold 1 net R | Fold 2 net R | Fold 3 net R | Aggregate net R | Positive folds | Verdict |
+|--------|-------------:|-------------:|-------------:|----------------:|---------------:|---------|
+| AUDUSD | -15.80 | -23.32 | -1.76 | -40.88 | 0/3 | FAIL |
+| EURUSD | +13.80 | +4.39 | +13.95 | +32.14 | 3/3 | STRONG candidate |
+| GBPNZD | -2.93 | -2.71 | +17.43 | +11.79 | 1/3 | WEAK/regime-dependent |
+| GBPUSD | -14.72 | +21.55 | +24.25 | +31.08 | 2/3 | WEAK; one severe failed fold |
+| NZDUSD | +6.34 | -18.85 | -16.33 | -28.84 | 1/3 | FAIL |
+| US30 | +0.65 | -1.05 | +5.72 | +5.32 | 2/3 | Thin/flat |
+| US500 | -38.09 | +20.00 | -7.07 | -25.16 | 1/3 | FAIL |
+| USDCHF | +10.76 | -14.55 | +5.65 | +1.86 | 2/3 | Flat after costs |
+| USDJPY | -1.31 | +7.00 | +2.69 | +8.38 | 2/3 | Thin/WEAK |
+| USTEC | +6.86 | +22.11 | -1.29 | +27.68 | 2/3 | WEAK; failed latest fold |
+| XAUUSD | +21.93 | -1.64 | -17.01 | +3.28 | 1/3 | Decaying/FAIL |
+
+The short-history 2025-2026 symbols cannot be walk-forward validated. Their available net results are
+AUDCAD -5.15R (27 trades), AUDJPY +0.35R (36 trades), and USDCAD +5.51R (25 trades). USDCAD is worth
+monitoring but has insufficient history for promotion.
+
+A research subset selected from the strict folds by requiring positive aggregate OOS net R and at
+least two profitable folds was EURUSD, GBPUSD, US30, USDCHF, USDJPY, and USTEC. It was positive in each
+combined OOS fold through 2025 (+16.04R, +39.45R, and +50.97R net). An additional fresh-state replay
+over 2026-01-01 through 2026-07-14 produced 64 trades, 12 wins, -9.76R net, net PF 0.82, and -0.153R
+expectancy. GBPUSD (+4.62R) and US30 (+6.93R) were profitable; EURUSD (-7.57R), USDCHF (-2.91R),
+USDJPY (-6.46R), and USTEC (-4.37R) lost. This is a recent-period stress test rather than a pristine
+holdout because parts of 2026 had already appeared in the earlier broker review.
+
+**Decision:** symbol replacement does not currently salvage IMSRev as a robust IC Markets portfolio.
+EURUSD is the only convincing long-run individual candidate, but it opened the 2026 check with seven
+straight losses. GBPUSD is profitable in 2026 but failed the first OOS fold; adding it based on the
+latest period would be period-selection overfitting. USTEC improves after correcting index commission
+but failed the latest OOS fold and the 2026 check. Do not alter the live/demo suite from this search.
+Pause the current IC suite as previously recommended, or treat EURUSD-only/GBPUSD research as a
+separate future demo experiment with a genuinely new forward-validation checkpoint.
+
+### EURUSD-Only Forward Demo Decision - 2026-07-15
+
+The user approved pausing the deployed eight-symbol IMS Reversal suite and retaining EURUSD as a
+separate forward-demo research candidate. `live_config.py` now subscribes `IMSRev_H4_M15` only to
+EURUSD. Parameters, strategy name, magic number `1005`, and the global `0.5%` demo risk remain
+unchanged.
+
+The evidence cutoff is 2026-07-14. Bars and actual demo trades after that date are forward evidence
+and must not be used to tune parameters during the trial. An interim review can be made after 12
+months or 15-20 closed trades, but at least 30 trades are required before promotion is considered;
+50 trades are preferable. Promotion also requires positive net expectancy, PF above 1, acceptable
+drawdown, and close agreement between actual broker signals/fills and a frozen IC Markets replay.
+
+On the first restart, cancel any still-pending IMS Reversal orders on the removed symbols. Filled
+positions may remain to their broker SL/TP and will continue to be reconciled by magic number.
+
+Operational follow-up on 2026-07-16: before this configuration reached the VPS, XAUUSD pending ticket
+`1810114142` received a valid strategy cancellation during the broker's daily maintenance window.
+MT5 returned `Market closed`; the one-shot cancellation was not retried, and the order later filled.
+Shared cancellation handling now retries temporary failures without ever converting a pending-order
+cancellation into a position close. The resulting XAUUSD trade remains an old-suite trade and is
+excluded from the EURUSD forward sample.
+
 ---
 
 ## Drawdown Reduction Analysis (2026-04-23)

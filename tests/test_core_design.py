@@ -22,6 +22,7 @@ from utils.telegram_notifier import TelegramNotifier
 from utils.trade_journal import TradeJournal
 from utils.live_reconciliation import recover_offline_journal_orders
 import config
+import live_config
 
 
 class PortfolioManagerTests(unittest.TestCase):
@@ -69,6 +70,18 @@ class StrategyPipDefaultsTests(unittest.TestCase):
         self.assertEqual(ThreeLineStrikeStrategy()._pip_size('XAUUSD'), config.PIP_SIZE['XAUUSD'])
         self.assertEqual(EmaFibRetracementStrategy()._pip_size('XAUUSD'), config.PIP_SIZE['XAUUSD'])
         self.assertEqual(EmaFibRunningStrategy()._pip_size('XAUUSD'), config.PIP_SIZE['XAUUSD'])
+
+
+class LiveConfigTests(unittest.TestCase):
+    def test_ims_reversal_forward_demo_is_eurusd_only_at_global_risk(self):
+        specs = {
+            strategy.NAME: symbols
+            for strategy, symbols in live_config.create_live_strategy_specs()
+        }
+
+        self.assertEqual(specs['IMSRev_H4_M15'], ['EURUSD'])
+        self.assertNotIn('IMSRev_H4_M15', live_config.live_risk_pct_overrides())
+        self.assertEqual(config.RISK_PCT, 0.005)
 
 
 class SimulatedExecutionTests(unittest.TestCase):
@@ -179,6 +192,52 @@ class SimulatedExecutionTests(unittest.TestCase):
 
         self.assertEqual(not_closed, [])
         self.assertEqual(len(closed), 1)
+
+    def test_default_commission_schedule_treats_indices_as_spread_only(self):
+        execution = SimulatedExecution(10_000, spread_pips=0.0)
+        execution.place_order(
+            symbol='US30', direction='BUY', order_type='MARKET',
+            entry_price=100.0, lot_size=1.0, sl=90.0, tp=110.0,
+            strategy_name='Test', entry_timeframe='H1', tp_locked=True,
+        )
+
+        execution.check_fills(BarEvent(
+            symbol='US30', timeframe='H1', timestamp=datetime(2024, 1, 1, 10),
+            open=100.0, high=100.0, low=100.0, close=100.0, volume=1,
+        ))
+        closed = execution.check_fills(BarEvent(
+            symbol='US30', timeframe='H1', timestamp=datetime(2024, 1, 1, 11),
+            open=100.0, high=111.0, low=100.0, close=110.0, volume=1,
+        ))
+
+        self.assertEqual(len(closed), 1)
+        self.assertEqual(closed[0]['commission'], 0.0)
+        self.assertEqual(closed[0]['pnl'], 10.0)
+
+    def test_buy_pending_requires_ask_touch_and_fills_at_order_price(self):
+        execution = SimulatedExecution(
+            10_000, spread_pips=2.0, commission_per_lot=0.0,
+        )
+        execution.place_order(
+            symbol='EURUSD', direction='BUY', order_type='PENDING',
+            entry_price=1.1000, lot_size=1.0, sl=1.0990, tp=1.1020,
+            strategy_name='Test', entry_timeframe='M15', tp_locked=True,
+        )
+
+        execution.check_fills(BarEvent(
+            symbol='EURUSD', timeframe='M15', timestamp=datetime(2024, 1, 1, 10),
+            open=1.1000, high=1.1001, low=1.0999, close=1.1000, volume=1,
+        ))
+        self.assertEqual(len(execution.get_open_positions()), 1)
+        self.assertNotIn('open_time', execution.get_open_positions()[0])
+
+        execution.check_fills(BarEvent(
+            symbol='EURUSD', timeframe='M15', timestamp=datetime(2024, 1, 1, 10, 15),
+            open=1.0999, high=1.1000, low=1.0998, close=1.0999, volume=1,
+        ))
+        position = execution.get_open_positions()[0]
+        self.assertEqual(position['open_time'], datetime(2024, 1, 1, 10, 15))
+        self.assertEqual(position['entry_price'], 1.1000)
 
 
 class MT5ExecutionTests(unittest.TestCase):
@@ -395,8 +454,53 @@ class MT5ExecutionTests(unittest.TestCase):
 
         execution = MT5Execution(magic_numbers={'TestStrategy': 1001})
 
-        self.assertTrue(execution.close_order(123))
+        self.assertTrue(execution.cancel_pending_order(123))
         self.assertEqual(calls['orders_get'], 2)
+
+    def test_pending_only_cancellation_never_closes_a_filled_position(self):
+        old_mt5 = sys.modules.get('MetaTrader5')
+        old_module = sys.modules.pop('execution.mt5_execution', None)
+        calls = {'order_send': 0}
+
+        def order_send(request):
+            calls['order_send'] += 1
+            return types.SimpleNamespace(retcode=10009, comment='done')
+
+        fake_mt5 = types.SimpleNamespace(
+            TIMEFRAME_M5=1,
+            TIMEFRAME_M15=2,
+            TIMEFRAME_H1=3,
+            TIMEFRAME_H4=4,
+            TIMEFRAME_D1=5,
+            TRADE_ACTION_REMOVE=8,
+            TRADE_RETCODE_DONE=10009,
+            orders_get=lambda ticket: (),
+            order_send=order_send,
+            last_error=lambda: (0, ''),
+        )
+        sys.modules['MetaTrader5'] = fake_mt5
+
+        def cleanup():
+            sys.modules.pop('execution.mt5_execution', None)
+            if old_module is not None:
+                sys.modules['execution.mt5_execution'] = old_module
+            if old_mt5 is not None:
+                sys.modules['MetaTrader5'] = old_mt5
+            else:
+                sys.modules.pop('MetaTrader5', None)
+
+        self.addCleanup(cleanup)
+
+        from execution.mt5_execution import MT5Execution
+
+        execution = MT5Execution(magic_numbers={'TestStrategy': 1001})
+
+        self.assertFalse(execution.cancel_pending_order(123))
+        self.assertEqual(calls['order_send'], 0)
+        self.assertEqual(
+            execution.get_last_cancel_error()['broker_comment'],
+            'pending order is no longer active',
+        )
 
     def test_open_orders_resolve_canonical_strategy_from_magic(self):
         old_mt5 = sys.modules.get('MetaTrader5')
@@ -981,6 +1085,175 @@ class EventEngineCancellationTests(unittest.TestCase):
         self.assertEqual(journal.cancelled, [(1, 'strategy_cancel')])
         self.assertEqual(journal.failed, [(2, 'broker_cancel_failed', {'retcode': 10030})])
         self.assertEqual(len(notifier.alerts), 1)
+
+    def test_temporary_cancel_failure_is_retried_and_confirmed(self):
+        pos = {
+            'ticket': 1810114142, 'symbol': 'XAUUSD',
+            'strategy_name': 'IMSRev_H4_M15', 'open_time': None,
+        }
+
+        class Execution:
+            def __init__(self):
+                self.calls = 0
+                self.active = True
+
+            def get_open_positions(self):
+                return [pos] if self.active else []
+
+            def cancel_pending_order(self, ticket):
+                self.calls += 1
+                if self.calls == 1:
+                    return False
+                self.active = False
+                return True
+
+            def get_last_cancel_error(self):
+                return {'retcode': 10018, 'broker_comment': 'Market closed'}
+
+            def get_historical_order_state(self, tracked):
+                return 'ACTIVE'
+
+        class Journal:
+            def __init__(self):
+                self.cancelled = []
+                self.failed = []
+
+            def log_order_cancelled(self, item, reason=''):
+                self.cancelled.append((item['ticket'], reason))
+
+            def log_cancel_failed(self, item, reason, details=None):
+                self.failed.append((item['ticket'], reason))
+
+        class Notifier:
+            def __init__(self):
+                self.alerts = []
+
+            def notify_operational_alert(self, message):
+                self.alerts.append(message)
+
+        execution = Execution()
+        journal = Journal()
+        notifier = Notifier()
+        portfolio = PortfolioManager(max_daily_loss_pct=None)
+        portfolio.sync_existing([pos])
+        engine = EventEngine(
+            risk_manager=None, portfolio_manager=portfolio,
+            execution=execution, trade_logger=None,
+            notifier=notifier, trade_journal=journal,
+        )
+        signal = types.SimpleNamespace(
+            symbol='XAUUSD', strategy_name='IMSRev_H4_M15',
+        )
+
+        engine._handle_cancel(signal)
+        retry_at = engine._pending_cancel_retries[pos['ticket']]['next_attempt']
+        engine.retry_pending_cancellations(now_monotonic=retry_at - 1)
+        engine.retry_pending_cancellations(now_monotonic=retry_at)
+
+        self.assertEqual(execution.calls, 2)
+        self.assertEqual(journal.cancelled, [(1810114142, 'strategy_cancel_retry')])
+        self.assertEqual(journal.failed, [(1810114142, 'broker_cancel_failed')])
+        self.assertEqual(len(notifier.alerts), 1)
+        self.assertEqual(engine._pending_cancel_retries, {})
+
+    def test_retry_does_not_close_order_that_filled_after_cancel_signal(self):
+        pending = {
+            'ticket': 1810114142, 'symbol': 'XAUUSD',
+            'strategy_name': 'IMSRev_H4_M15', 'open_time': None,
+        }
+        filled = dict(pending, open_time=datetime(2026, 7, 16, 2, 42))
+
+        class Execution:
+            def __init__(self):
+                self.calls = 0
+                self.position = pending
+
+            def get_open_positions(self):
+                return [self.position]
+
+            def cancel_pending_order(self, ticket):
+                self.calls += 1
+                return False
+
+            def get_last_cancel_error(self):
+                return {'retcode': 10018, 'broker_comment': 'Market closed'}
+
+        class Journal:
+            def __init__(self):
+                self.failed = []
+
+            def log_cancel_failed(self, item, reason, details=None):
+                self.failed.append(reason)
+
+        class Notifier:
+            def __init__(self):
+                self.alerts = []
+
+            def notify_operational_alert(self, message):
+                self.alerts.append(message)
+
+        execution = Execution()
+        journal = Journal()
+        notifier = Notifier()
+        portfolio = PortfolioManager(max_daily_loss_pct=None)
+        portfolio.sync_existing([pending])
+        engine = EventEngine(
+            risk_manager=None, portfolio_manager=portfolio,
+            execution=execution, trade_logger=None,
+            notifier=notifier, trade_journal=journal,
+        )
+        signal = types.SimpleNamespace(
+            symbol='XAUUSD', strategy_name='IMSRev_H4_M15',
+        )
+
+        engine._handle_cancel(signal)
+        retry_at = engine._pending_cancel_retries[pending['ticket']]['next_attempt']
+        execution.position = filled
+        engine.retry_pending_cancellations(now_monotonic=retry_at)
+
+        self.assertEqual(execution.calls, 1)
+        self.assertEqual(
+            journal.failed,
+            ['broker_cancel_failed', 'order_filled_before_cancel_retry'],
+        )
+        self.assertEqual(len(notifier.alerts), 2)
+        self.assertIn('remains open with its broker SL/TP', notifier.alerts[-1])
+        self.assertEqual(engine._pending_cancel_retries, {})
+
+
+class EventEngineCloseCallbackTests(unittest.TestCase):
+    def test_removed_symbol_close_does_not_reenter_uninitialized_strategy_state(self):
+        class Strategy:
+            NAME = 'IMSRev_H4_M15'
+            TIMEFRAMES = ['H4', 'M15']
+
+            def __init__(self):
+                self.losses = []
+
+            def notify_loss(self, symbol):
+                self.losses.append(symbol)
+
+        strategy = Strategy()
+        engine = EventEngine(
+            risk_manager=None,
+            portfolio_manager=PortfolioManager(max_daily_loss_pct=None),
+            execution=None,
+            trade_logger=None,
+        )
+        engine.register(strategy, ['EURUSD'])
+
+        engine.notify_trade_closed({
+            'symbol': 'XAUUSD',
+            'strategy_name': 'IMSRev_H4_M15',
+            'result': 'LOSS',
+        })
+        engine.notify_trade_closed({
+            'symbol': 'EURUSD',
+            'strategy_name': 'IMSRev_H4_M15',
+            'result': 'LOSS',
+        })
+
+        self.assertEqual(strategy.losses, ['EURUSD'])
 
 
 class LiveRecoveryTests(unittest.TestCase):

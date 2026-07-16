@@ -119,6 +119,18 @@ BACKTEST_SPREAD_PIPS: dict[str, float] = {
 # Round-trip commission per 1.0 standard lot (ICMarkets Raw Spread: $7.00/lot).
 COMMISSION_PER_LOT = 7.0
 
+# IC Markets index CFDs are spread-only. The MT5 account report records zero
+# commission for US30/USTEC deals; broker aliases use the same cost model.
+BACKTEST_COMMISSION_PER_LOT: dict[str, float] = {
+    'USTEC': 0.0,
+    'US30': 0.0,
+    'US500': 0.0,
+    'DE40': 0.0,
+    'USA100': 0.0,
+    'USA30': 0.0,
+    'USA500': 0.0,
+}
+
 # ── Pip Values ────────────────────────────────────────────────────────────────
 # USD value of 1 pip per 1 standard lot (100,000 units)
 # For XXX/USD pairs this is fixed at $10.
@@ -193,6 +205,12 @@ def validate():
     for sym, spread in BACKTEST_SPREAD_PIPS.items():
         if spread < 0:
             errors.append(f"BACKTEST_SPREAD_PIPS['{sym}'] must be non-negative, got {spread}")
+
+    for sym, commission in BACKTEST_COMMISSION_PER_LOT.items():
+        if commission < 0:
+            errors.append(
+                f"BACKTEST_COMMISSION_PER_LOT['{sym}'] must be non-negative, got {commission}"
+            )
 
     for sym in SYMBOLS:
         if sym not in PIP_SIZE:

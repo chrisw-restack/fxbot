@@ -12,7 +12,8 @@ from strategies.ny_index_opening_drive import NyIndexOpeningDriveStrategy
 
 
 IMS_SYMBOLS = ['USDJPY', 'XAUUSD', 'EURAUD', 'CADJPY', 'USDCAD', 'AUDUSD', 'EURUSD', 'GBPCAD', 'GBPUSD']
-IMS_REV_SYMBOLS = ['GBPNZD', 'AUDUSD', 'US30', 'USDCHF', 'XAUUSD', 'AUDJPY', 'AUDCAD', 'USDCAD']
+# Forward-demo research candidate. Treat data after 2026-07-14 as unseen.
+IMS_REV_SYMBOLS = ['EURUSD']
 ENGULFING_SYMBOLS = ['EURUSD', 'AUDUSD']
 FAILED2_SYMBOLS = ['USTEC']
 FAILED2_NAME = 'Failed2_H4_H1_M5_market'

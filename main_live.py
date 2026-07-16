@@ -214,6 +214,8 @@ def main():
                 )
 
             try:
+                event_engine.retry_pending_cancellations()
+
                 # Detect closed trades by comparing tracked tickets to current positions
                 current_positions = execution.get_open_positions()
                 current_tickets = {p['ticket'] for p in current_positions}

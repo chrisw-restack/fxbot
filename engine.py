@@ -1,4 +1,5 @@
 import logging
+import time
 
 from models import BarEvent
 from risk.risk_manager import RiskManager
@@ -9,6 +10,9 @@ from utils.trade_journal import TradeJournal
 from data.news_filter import NewsFilter
 
 logger = logging.getLogger(__name__)
+
+CANCEL_RETRY_INTERVAL_SECONDS = 60
+CANCEL_MAX_ATTEMPTS = 5
 
 
 class EventEngine:
@@ -39,6 +43,9 @@ class EventEngine:
         self._subscriptions: dict[tuple[str, str], list] = {}
         # strategy NAME -> strategy instance (for trade-closed callbacks)
         self._strategies_by_name: dict[str, object] = {}
+        self._symbols_by_strategy_name: dict[str, set[str]] = {}
+        # ticket -> cancellation intent retained after a temporary broker failure
+        self._pending_cancel_retries: dict[int, dict] = {}
 
     def register(self, strategy, symbols: list[str]):
         """Subscribe a strategy to receive BarEvents for the given symbols."""
@@ -48,6 +55,7 @@ class EventEngine:
                 self._subscriptions.setdefault(key, []).append(strategy)
         # Index by NAME for trade-closed callbacks
         self._strategies_by_name[strategy.NAME] = strategy
+        self._symbols_by_strategy_name[strategy.NAME] = set(symbols)
         logger.info(
             f"Registered {strategy.__class__.__name__} "
             f"for {symbols} on {strategy.TIMEFRAMES}"
@@ -184,33 +192,22 @@ class EventEngine:
                     and pos['strategy_name'] == signal.strategy_name
                     and pos.get('open_time') is None):
                 matched = True
-                if self.execution.close_order(pos['ticket']):
-                    self.portfolio.record_close(signal.symbol, 0.0, signal.strategy_name)
-                    if self.trade_journal:
-                        self.trade_journal.log_order_cancelled(pos, reason='strategy_cancel')
-                    logger.info(
-                        f"Cancelled pending order: {signal.symbol} "
-                        f"ticket={pos['ticket']} ({signal.strategy_name})"
-                    )
+                if self._cancel_pending_order(pos['ticket']):
+                    self._record_cancelled(pos, reason='strategy_cancel')
                 else:
-                    details = None
-                    if hasattr(self.execution, 'get_last_cancel_error'):
-                        details = self.execution.get_last_cancel_error()
-                    if self.trade_journal:
-                        self.trade_journal.log_cancel_failed(
-                            pos,
-                            reason='broker_cancel_failed',
-                            details=details,
-                        )
-                    logger.error(
-                        f"Failed to cancel pending order: {signal.symbol} "
-                        f"ticket={pos['ticket']} ({signal.strategy_name}) "
-                        f"details={details}"
-                    )
+                    details = self._last_cancel_error()
+                    self._record_cancel_failed(pos, 'broker_cancel_failed', details)
+                    self._pending_cancel_retries[pos['ticket']] = {
+                        'pos': dict(pos),
+                        'attempts': 1,
+                        'next_attempt': time.monotonic() + CANCEL_RETRY_INTERVAL_SECONDS,
+                    }
                     if self.notifier and hasattr(self.notifier, 'notify_operational_alert'):
+                        broker_reason = (details or {}).get('broker_comment') or 'broker error'
                         self.notifier.notify_operational_alert(
-                            f"Failed to cancel {signal.symbol} ticket={pos['ticket']} "
-                            f"for {signal.strategy_name}. Check MT5 immediately."
+                            f"Cancellation delayed for {signal.symbol} ticket={pos['ticket']} "
+                            f"({signal.strategy_name}): {broker_reason}. "
+                            "The bot will retry automatically."
                         )
         if not matched:
             logger.info(
@@ -218,10 +215,108 @@ class EventEngine:
                 f"({signal.strategy_name})"
             )
 
+    def retry_pending_cancellations(self, now_monotonic: float | None = None):
+        """Retry temporary broker cancellation failures without closing fills."""
+        if not self._pending_cancel_retries:
+            return
+
+        now = time.monotonic() if now_monotonic is None else now_monotonic
+        due = {
+            ticket: retry
+            for ticket, retry in self._pending_cancel_retries.items()
+            if now >= retry['next_attempt']
+        }
+        if not due:
+            return
+
+        current_by_ticket = {
+            pos['ticket']: pos
+            for pos in self.execution.get_open_positions()
+        }
+        for ticket, retry in due.items():
+            original = retry['pos']
+            current = current_by_ticket.get(ticket)
+            if current is not None and current.get('open_time') is not None:
+                self._record_filled_before_cancel(original)
+                del self._pending_cancel_retries[ticket]
+                continue
+
+            history_state = None
+            if current is None and hasattr(self.execution, 'get_historical_order_state'):
+                history_state = self.execution.get_historical_order_state(original)
+            if history_state == 'FILLED':
+                self._record_filled_before_cancel(original)
+                del self._pending_cancel_retries[ticket]
+                continue
+            if history_state == 'CANCELLED':
+                self._record_cancelled(original, reason='strategy_cancel_confirmed_later')
+                del self._pending_cancel_retries[ticket]
+                continue
+
+            if self._cancel_pending_order(ticket):
+                self._record_cancelled(original, reason='strategy_cancel_retry')
+                del self._pending_cancel_retries[ticket]
+                continue
+
+            retry['attempts'] += 1
+            details = self._last_cancel_error()
+            self._record_cancel_failed(original, 'broker_cancel_retry_failed', details)
+            if retry['attempts'] >= CANCEL_MAX_ATTEMPTS:
+                del self._pending_cancel_retries[ticket]
+                if self.notifier and hasattr(self.notifier, 'notify_operational_alert'):
+                    self.notifier.notify_operational_alert(
+                        f"Failed to cancel {original['symbol']} ticket={ticket} "
+                        f"for {original['strategy_name']} after "
+                        f"{CANCEL_MAX_ATTEMPTS} attempts. Check MT5 immediately."
+                    )
+                continue
+            retry['next_attempt'] = now + CANCEL_RETRY_INTERVAL_SECONDS
+
+    def _cancel_pending_order(self, ticket: int) -> bool:
+        cancel = getattr(self.execution, 'cancel_pending_order', None)
+        if cancel is not None:
+            return cancel(ticket)
+        return self.execution.close_order(ticket)
+
+    def _last_cancel_error(self) -> dict | None:
+        if hasattr(self.execution, 'get_last_cancel_error'):
+            return self.execution.get_last_cancel_error()
+        return None
+
+    def _record_cancelled(self, pos: dict, reason: str):
+        self.portfolio.record_close(pos['symbol'], 0.0, pos['strategy_name'])
+        if self.trade_journal:
+            self.trade_journal.log_order_cancelled(pos, reason=reason)
+        logger.info(
+            f"Cancelled pending order: {pos['symbol']} "
+            f"ticket={pos['ticket']} ({pos['strategy_name']})"
+        )
+
+    def _record_cancel_failed(self, pos: dict, reason: str, details: dict | None):
+        if self.trade_journal:
+            self.trade_journal.log_cancel_failed(pos, reason=reason, details=details)
+        logger.error(
+            f"Failed to cancel pending order: {pos['symbol']} "
+            f"ticket={pos['ticket']} ({pos['strategy_name']}) details={details}"
+        )
+
+    def _record_filled_before_cancel(self, pos: dict):
+        details = {'broker_comment': 'order filled before cancellation retry'}
+        self._record_cancel_failed(pos, 'order_filled_before_cancel_retry', details)
+        if self.notifier and hasattr(self.notifier, 'notify_operational_alert'):
+            self.notifier.notify_operational_alert(
+                f"Pending {pos['symbol']} ticket={pos['ticket']} "
+                f"for {pos['strategy_name']} filled before cancellation could complete. "
+                "The position remains open with its broker SL/TP."
+            )
+
     def notify_trade_closed(self, trade: dict):
         """Notify the originating strategy that a trade closed (for filters like cooldown)."""
-        strategy = self._strategies_by_name.get(trade.get('strategy_name'))
+        strategy_name = trade.get('strategy_name')
+        strategy = self._strategies_by_name.get(strategy_name)
         if strategy is None:
+            return
+        if trade.get('symbol') not in self._symbols_by_strategy_name.get(strategy_name, set()):
             return
         if trade.get('result') == 'LOSS' and hasattr(strategy, 'notify_loss'):
             strategy.notify_loss(trade['symbol'])

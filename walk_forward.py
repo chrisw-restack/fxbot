@@ -196,6 +196,33 @@ STRATEGY_CONFIGS = {
         },
         'param_grid': {},
     },
+    'ims_reversal_ic': {
+        # Broker-native IC Markets candidate universe. Use --symbols for
+        # individual-symbol validation without adding one config per symbol.
+        'class': ImsReversalStrategy,
+        'timeframes': ['H4', 'M15'],
+        'symbols': [
+            'AUDUSD', 'EURUSD', 'GBPNZD', 'GBPUSD', 'NZDUSD', 'US30',
+            'US500', 'USDCHF', 'USDJPY', 'USTEC', 'XAUUSD',
+        ],
+        'fixed_params': {
+            'tf_htf': 'H4', 'tf_ltf': 'M15',
+            'entry_mode': 'pending',
+            'tp_mode': 'htf_pct',
+            'htf_tp_pct': 0.5,
+            'zone_pct': 0.5,
+            'blocked_hours': (*range(0, 12), *range(17, 24)),
+            'ema_fast': 20, 'ema_slow': 50, 'ema_sep': 0.001,
+            'cooldown_bars': 0,
+            'fractal_n': 1,
+            'ltf_fractal_n': 2,
+            'htf_lookback': 30,
+            'sl_buffer_pips': 0.0,
+            'max_losses_per_bias': 1,
+            'pip_sizes': dict(config.PIP_SIZE),
+        },
+        'param_grid': {},
+    },
     'ims_reversal_cb': {
         # Circuit breaker ≥8 losses → pause 10d — tests whether DD/streak reduction holds OOS
         'class': ImsReversalStrategy,
@@ -1624,9 +1651,17 @@ def main():
         help=f'Parallel worker processes for IS optimisation (default: {N_WORKERS})',
     )
     parser.add_argument(
-        '--data-source', choices=['dukascopy', 'histdata'],
+        '--data-source',
+        choices=['dukascopy', 'histdata', 'mt5_icmarkets', 'mt5_icmarkets_utc'],
         default='dukascopy',
-        help='Historical data source. dukascopy uses data/historical; histdata uses data/historical/histdata.',
+        help=(
+            'Historical data source. mt5_icmarkets_utc uses the current '
+            'broker-native UTC-normalized export.'
+        ),
+    )
+    parser.add_argument(
+        '--symbols', nargs='+', default=None,
+        help='Optional symbol override, for example --symbols EURUSD GBPUSD.',
     )
     args = parser.parse_args()
 
@@ -1635,7 +1670,11 @@ def main():
     param_grid = cfg['param_grid']
     fixed_params = cfg.get('fixed_params', {})
     timeframes = cfg['timeframes']
-    symbols = cfg.get('symbols', SYMBOLS)
+    symbols = (
+        [symbol.upper() for symbol in args.symbols]
+        if args.symbols
+        else cfg.get('symbols', SYMBOLS)
+    )
     min_trades = cfg.get('min_trades', args.min_trades)
 
     # ── Load all bar data once ───────────────────────────────────────────────

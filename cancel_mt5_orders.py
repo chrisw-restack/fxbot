@@ -74,7 +74,7 @@ def main() -> int:
                 print(f"{ticket}: dry run — no cancellation submitted")
                 continue
 
-            if execution.close_order(ticket):
+            if execution.cancel_pending_order(ticket):
                 print(f"{ticket}: cancellation confirmed")
             else:
                 print(

@@ -26,6 +26,10 @@ class BaseExecution(ABC):
         """Close an open order by ticket ID."""
         ...
 
+    def cancel_pending_order(self, ticket_id: int) -> bool:
+        """Cancel a pending entry without closing a filled position."""
+        return self.close_order(ticket_id)
+
     @abstractmethod
     def get_open_positions(self) -> list[dict]:
         """Return a list of open position dicts."""

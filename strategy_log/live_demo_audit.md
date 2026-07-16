@@ -1,8 +1,8 @@
 # Live/Demo Audit
 
-## Active Demo Suite Snapshot - 2026-06-03
+## Active Demo Suite Snapshot - 2026-07-15
 
-Source: `live_config.py` `create_live_strategy_specs()` on 2026-06-03.
+Source: `live_config.py` `create_live_strategy_specs()` on 2026-07-15.
 
 Current configured suite:
 
@@ -10,7 +10,7 @@ Current configured suite:
 - `EmaFibRunning` on `config.SYMBOLS`: EURUSD, GBPUSD, AUDUSD, NZDUSD, USDJPY, USDCAD, USDCHF.
 - `Engulfing` / `ThreeLineStrikeStrategy` on EURUSD and AUDUSD.
 - `IMS_H4_M15` on USDJPY, XAUUSD, EURAUD, CADJPY, USDCAD, AUDUSD, EURUSD, GBPCAD, GBPUSD.
-- `IMSRev_H4_M15` on GBPNZD, AUDUSD, US30, USDCHF, XAUUSD, AUDJPY, AUDCAD, USDCAD.
+- `IMSRev_H4_M15` on EURUSD only (forward-demo research trial from 2026-07-15).
 - `Failed2_H4_H1_M5_market` on USTEC.
 - `NYIndexOpeningDrive` on USTEC.
 - `CandleConfirmation_USDJPY_H1_M5` on USDJPY.
@@ -19,6 +19,44 @@ Current configured suite:
 `live_risk_pct_overrides()` currently returns `{'NYIndexOpeningDrive': 0.0025}`. All other live/demo strategies use the global `config.RISK_PCT` setting.
 
 Use `live_config.py` as the executable source of truth; update this audit when live/demo membership, symbols, risk, or promotion status changes.
+
+## IMS Reversal EURUSD Forward Trial - 2026-07-15
+
+Decision:
+
+- Removed GBPNZD, AUDUSD, US30, USDCHF, XAUUSD, AUDJPY, AUDCAD, and USDCAD from the configured IMS Reversal demo scope.
+- Retained `IMSRev_H4_M15` on EURUSD only, with its validated parameters frozen.
+- Kept the existing magic number `1005` and global demo risk of `0.5%` per trade.
+- Treat IC Markets bars and demo trades after 2026-07-14 as new forward evidence. Do not tune against them during the trial.
+
+Review checkpoints:
+
+- Review after 12 months or 15-20 closed trades as an interim health check only.
+- Require at least 30 closed trades before considering promotion; 50 is preferable.
+- Compare demo signals, pending fills/cancellations, and realized outcomes against a frozen IC Markets replay before any promotion decision.
+
+One-time restart check:
+
+- Existing filled IMS Reversal trades on removed symbols remain broker-managed by their SL/TP and are still reconciled by magic number.
+- Cancel any still-pending `IMSRev_H4_M15` orders on removed symbols before or immediately after restarting `main_live.py`; removed symbols no longer receive strategy cancellation signals.
+
+## Pending Cancellation Retry - 2026-07-16
+
+At 22:00 UTC on 2026-07-15, IMS Reversal invalidated XAUUSD pending ticket `1810114142`.
+IC Markets rejected the cancellation with retcode `10018` (`Market closed`) during the daily gold
+maintenance window. The bot alerted correctly but did not retain the cancellation intent. The order
+remained active and filled at 02:42:56 UTC at `4025.95` with broker SL `4017.41` and TP `4052.28`.
+
+Correction:
+
+- Failed pending cancellations are retained and retried once per minute, up to five total attempts.
+- The first Telegram notice says automatic retry is scheduled. A manual-action alert is sent only if all attempts fail.
+- Retry uses a pending-only execution operation. It cannot close a position if the order fills between inspection and cancellation.
+- If a fill wins the race, the bot reports that the protected position remains open with its broker SL/TP.
+- Close callbacks are skipped for symbols removed from a strategy's current subscription, while broker reconciliation, journaling, and close Telegram reporting continue.
+
+The XAUUSD trade was created by the old eight-symbol configuration at VPS commit `bea6018`. It is not
+part of the EURUSD-only forward trial and should remain broker-managed to SL/TP.
 
 ## NY Index Opening Drive Demo Addition - 2026-06-11
 

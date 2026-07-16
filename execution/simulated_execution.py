@@ -20,7 +20,8 @@ class SimulatedExecution(BaseExecution):
 
     Fill rules:
     - MARKET orders: filled at the open of the next bar after the signal.
-    - PENDING orders: triggered when the bar's range (high/low) touches entry_price.
+    - PENDING orders: BUY triggers from the ask range, SELL from the bid range;
+      both fill at the submitted order price.
     - SL/TP: checked on every subsequent bar using high/low. If both SL and TP are
       touched in the same bar, SL is assumed hit first (conservative assumption).
     - Newly opened positions are not checked for SL/TP on their opening bar.
@@ -29,7 +30,7 @@ class SimulatedExecution(BaseExecution):
     def __init__(self, initial_balance: float, spread_pips: dict[str, float] | float = 0.1,
                  breakeven_at_r: float | None = None,
                  rr_ratio: float = config.DEFAULT_RR_RATIO,
-                 commission_per_lot: float = config.COMMISSION_PER_LOT):
+                 commission_per_lot: dict[str, float] | float = config.BACKTEST_COMMISSION_PER_LOT):
         self._balance = initial_balance
         self._spread_pips = spread_pips
         self._breakeven_at_r = breakeven_at_r
@@ -120,8 +121,12 @@ class SimulatedExecution(BaseExecution):
             entry_tf = pos.get('entry_timeframe')
             if entry_tf is not None and bar.timeframe != entry_tf:
                 continue
-            if bar.low <= pos['entry_price'] <= bar.high:
-                pos['entry_price'] = self._entry_price(pos['entry_price'], pos['symbol'], pos['direction'])
+            spread = self._spread_price(pos['symbol'])
+            if pos['direction'] == 'BUY':
+                touched = bar.low + spread <= pos['entry_price'] <= bar.high + spread
+            else:
+                touched = bar.low <= pos['entry_price'] <= bar.high
+            if touched:
                 pos['open_time'] = bar.timestamp
                 self._positions[ticket] = self._pending.pop(ticket)
                 just_opened.add(ticket)
@@ -204,7 +209,12 @@ class SimulatedExecution(BaseExecution):
         else:
             pips = (pos['entry_price'] - exit_price) / pip_size
 
-        commission = self._commission_per_lot * pos['lot_size']
+        commission_per_lot = (
+            self._commission_per_lot.get(pos['symbol'], config.COMMISSION_PER_LOT)
+            if isinstance(self._commission_per_lot, dict)
+            else self._commission_per_lot
+        )
+        commission = commission_per_lot * pos['lot_size']
         pnl = pips * pip_value * pos['lot_size'] - commission
         original_sl = pos.get('_original_sl', pos['sl'])
         sl_pips = abs(pos['entry_price'] - original_sl) / pip_size
@@ -266,6 +276,12 @@ class SimulatedExecution(BaseExecution):
             del self._pending[ticket_id]
             return True
         return False
+
+    def cancel_pending_order(self, ticket_id: int) -> bool:
+        if ticket_id not in self._pending:
+            return False
+        del self._pending[ticket_id]
+        return True
 
     def get_open_positions(self) -> list[dict]:
         return list(self._positions.values()) + list(self._pending.values())
