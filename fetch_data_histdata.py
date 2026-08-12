@@ -40,16 +40,18 @@ DEFAULT_SYMBOLS = [
     'EURUSD', 'GBPUSD', 'AUDUSD', 'NZDUSD', 'USDJPY', 'USDCAD', 'USDCHF',
     'AUDCAD', 'AUDJPY', 'AUDNZD', 'CADJPY', 'EURAUD', 'EURCAD', 'EURCHF',
     'EURGBP', 'EURJPY', 'GBPAUD', 'GBPCAD', 'GBPJPY', 'GBPNZD', 'NZDJPY',
-    'XAUUSD',
+    'XAUUSD', 'USA100', 'USA500',
 ]
 DEFAULT_TIMEFRAMES = ['M5', 'M15', 'H1', 'H4', 'D1']
 
-# Project symbol -> HistData symbol. US30 is intentionally absent: HistData's
-# closest comparable index is SPXUSD/NSXUSD, not Dow/US30.
+# Project symbol -> HistData symbol. USA30/US30 is intentionally absent because
+# HistData has no Dow feed; do not substitute a different index.
 HISTDATA_SYMBOLS = {symbol: symbol for symbol in DEFAULT_SYMBOLS}
 HISTDATA_SYMBOLS.update({
     'USA100': 'NSXUSD',
     'USTEC': 'NSXUSD',
+    'USA500': 'SPXUSD',
+    'US500': 'SPXUSD',
 })
 
 RESAMPLE_RULES = {
@@ -162,7 +164,7 @@ def read_histdata_zip(path: Path) -> pd.DataFrame:
 def round_prices(df: pd.DataFrame, symbol: str) -> pd.DataFrame:
     if symbol == 'XAUUSD':
         decimals = 2
-    elif symbol in {'USA100', 'USTEC'}:
+    elif symbol in {'USA100', 'USTEC', 'USA500', 'US500'}:
         decimals = 2
     elif 'JPY' in symbol:
         decimals = 3
@@ -200,7 +202,9 @@ def save_timeframe(df_m1: pd.DataFrame, symbol: str, timeframe: str, output_dir:
     start = df['time'].iloc[0].strftime('%Y%m%d')
     end = df['time'].iloc[-1].strftime('%Y%m%d')
     path = output_dir / f'{symbol}_{timeframe}_{start}-{end}.csv'
-    df.to_csv(path, index=False)
+    temp_path = path.with_suffix('.csv.part')
+    df.to_csv(temp_path, index=False)
+    temp_path.replace(path)
     print(f'  saved {path} ({len(df):,} rows)')
 
 
@@ -209,7 +213,7 @@ def parse_args():
     parser.add_argument('--symbols', nargs='+', default=DEFAULT_SYMBOLS)
     parser.add_argument('--timeframes', nargs='+', default=DEFAULT_TIMEFRAMES, choices=RESAMPLE_RULES.keys())
     parser.add_argument('--start-year', type=int, default=2016)
-    parser.add_argument('--end-date', type=lambda s: datetime.strptime(s, '%Y-%m-%d'), default=datetime(2026, 3, 20))
+    parser.add_argument('--end-date', type=lambda s: datetime.strptime(s, '%Y-%m-%d'), default=datetime(2026, 8, 1))
     parser.add_argument('--raw-dir', type=Path, default=RAW_DIR)
     parser.add_argument('--output-dir', type=Path, default=OUTPUT_DIR)
     parser.add_argument('--from-zip-dir', type=Path, default=None, help='Convert existing HistData ZIPs instead of downloading.')

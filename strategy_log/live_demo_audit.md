@@ -1,5 +1,51 @@
 # Live/Demo Audit
 
+## IC Markets Current-Suite Replay - 2026-08-12
+
+Imported a fresh UTC-normalized IC Markets export for the current live/demo suite: 40 CSV files and
+6,346,863 bars. Structural validation found no duplicate timestamps, out-of-order rows, missing OHLC,
+invalid candles, or negative volume. Most history begins in January 2016; CADJPY M15/H4 and USDCAD
+M15/H1/H4/D1 are limited to 2025 onward by broker availability.
+
+The audit corrected the D1 loader so genuine IC Markets Monday sessions, stamped Sunday evening after
+UTC normalization, are retained. All 42 repository unit tests pass after the change.
+
+Frozen current-strategy standalone replay results, net of configured commission:
+
+| Strategy | Trades | Net R | Net expectancy | Net PF | Max DD R |
+|---|---:|---:|---:|---:|---:|
+| EmaFibRetracement | 301 | +134.26 | +0.446 | 1.46 | 34.43 |
+| EmaFibRunning | 196 | +52.64 | +0.269 | 1.36 | 23.26 |
+| Engulfing | 35 | -6.49 | -0.186 | 0.77 | 19.48 |
+| IMS H4/M15 | 367 | +9.32 | +0.025 | 1.03 | 27.24 |
+| IMS Reversal EURUSD | 187 | +26.74 | +0.143 | 1.18 | 22.40 |
+| Failed2 USTEC | 247 | +77.73 | +0.315 | 1.43 | 13.24 |
+| NY Index Opening Drive | 68 | +49.85 | +0.733 | 2.31 | 4.00 |
+| Candle Confirmation USDJPY | 672 | +0.05 | +0.000 | 1.00 | 30.59 |
+| Candle Confirmation GBPUSD | 432 | +14.96 | +0.035 | 1.05 | 22.25 |
+
+IMS XAUUSD is the clearest broker-specific failure: 56 trades, -33.66 net R, negative in every tested
+period. IMS excluding XAUUSD produces +42.98 net R over 311 trades (+0.138R expectancy). Candle
+Confirmation's raw price edge is almost entirely consumed by commission, and Engulfing reverses from
+positive proxy validation to negative on IC Markets.
+
+The portfolio-aware current suite remains positive from 2025-04-01 (+69.67 net R over 313 trades,
+PF 1.31, max DD 16.84R), driven mainly by EmaFibRetracement, Failed2, and NY Index Opening Drive.
+The untouched current-config period from 2026-07-16 is nine straight modeled losses (-9.62 net R).
+The MT5 report independently shows nine actual trades and nine losses after the reset; eight trades
+match the replay by strategy, symbol, direction, and approximate time. This supports intended-logic
+execution and a genuinely adverse IC Markets sequence rather than a different-code diagnosis.
+
+The MT5 report's 70 closed positions total approximately -$2,500 net. The old eight-symbol IMS
+Reversal deployment accounts for -$2,014, so it remains the dominant realized loss source. Current
+OHLC replay does not model dynamic spread or slippage; actual EURAUD IMS and EURUSD IMS Reversal losses
+show that these can materially worsen individual fills/stops.
+
+Decision: no automatic `live_config.py` change. Keep this account demo-only. Discuss pausing Engulfing
+and both Candle Confirmation variants; broker-revalidate IMS with XAUUSD removed as the first isolated
+change; keep the EURUSD-only IMS Reversal forward trial frozen and unpromoted. Full report and replay
+artifacts are under `output/icmarkets_replay_report.md` and `output/icmarkets_replay_*`.
+
 ## Active Demo Suite Snapshot - 2026-07-15
 
 Source: `live_config.py` `create_live_strategy_specs()` on 2026-07-15.

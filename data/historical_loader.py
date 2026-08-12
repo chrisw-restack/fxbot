@@ -29,7 +29,11 @@ def _server_to_utc(dt: datetime) -> datetime:
     return dt - timedelta(hours=offset)
 
 
-def load_csv(filepath: str) -> list[BarEvent]:
+def load_csv(
+    filepath: str,
+    start: datetime | None = None,
+    end: datetime | None = None,
+) -> list[BarEvent]:
     """
     Load a historical CSV and return a list of BarEvents sorted by timestamp.
 
@@ -91,15 +95,24 @@ def load_csv(filepath: str) -> list[BarEvent]:
         logger.info(f"CSV {filename} appears to be server time — converting to UTC")
         df['time'] = df['time'].apply(lambda t: _server_to_utc(t.to_pydatetime()))
 
-    # Filter out weekend D1 bars from Dukascopy data.
+    # Filter out weekend D1 bars from non-MT5 data.
     # Dukascopy generates D1 bars for Saturdays/Sundays with minimal volume.
-    # These don't exist on MT5/ICMarkets and distort EMA calculations.
-    if timeframe == 'D1':
+    # UTC-normalized IC Markets D1 candles are different: the broker's Monday
+    # midnight candle converts to Sunday 21:00/22:00 UTC, so dropping Sunday
+    # timestamps would remove a genuine trading day from every week.
+    if timeframe == 'D1' and not is_utc_normalized_mt5:
         weekend_mask = df['time'].dt.dayofweek >= 5  # Saturday=5, Sunday=6
         n_weekend = weekend_mask.sum()
         if n_weekend > 0:
             logger.info(f"CSV {filename}: dropping {n_weekend} weekend D1 bars")
             df = df[~weekend_mask].reset_index(drop=True)
+
+    # Apply date bounds before constructing BarEvent objects. This keeps a
+    # focused replay from materialising years of unused M5/M15 history.
+    if start is not None:
+        df = df[df['time'] >= start]
+    if end is not None:
+        df = df[df['time'] < end]
 
     events = [
         BarEvent(
@@ -183,7 +196,11 @@ def bar_close_time(bar: BarEvent) -> datetime:
     return bar.timestamp + _TF_DURATION.get(bar.timeframe, timedelta(hours=1))
 
 
-def load_and_merge(csv_paths: list[str]) -> list[BarEvent]:
+def load_and_merge(
+    csv_paths: list[str],
+    start: datetime | None = None,
+    end: datetime | None = None,
+) -> list[BarEvent]:
     """
     Load multiple CSV files and return all BarEvents merged and sorted by
     close time. This prevents look-ahead bias: a higher-timeframe bar
@@ -197,7 +214,7 @@ def load_and_merge(csv_paths: list[str]) -> list[BarEvent]:
     """
     all_events: list[BarEvent] = []
     for path in csv_paths:
-        all_events.extend(load_csv(path))
+        all_events.extend(load_csv(path, start=start, end=end))
 
     # Deduplicate: same symbol + timeframe + timestamp = duplicate bar
     seen: set[tuple[str, str, datetime]] = set()

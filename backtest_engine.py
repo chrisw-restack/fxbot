@@ -26,7 +26,7 @@ from portfolio.portfolio_manager import PortfolioManager
 from execution.simulated_execution import SimulatedExecution
 from utils.trade_logger import TradeLogger
 from datetime import datetime
-from data.historical_loader import load_csv, load_and_merge, filter_bars
+from data.historical_loader import load_csv, load_and_merge
 from data.news_filter import NewsFilter
 
 logger = logging.getLogger(__name__)
@@ -84,12 +84,9 @@ class BacktestEngine:
         start_date / end_date: optional date range filter [start, end).
         """
         if isinstance(csv_paths, str):
-            bars = load_csv(csv_paths)
+            bars = load_csv(csv_paths, start=start_date, end=end_date)
         else:
-            bars = load_and_merge(csv_paths)
-
-        if start_date or end_date:
-            bars = filter_bars(bars, start=start_date, end=end_date)
+            bars = load_and_merge(csv_paths, start=start_date, end=end_date)
 
         logger.info(f"Backtest starting — {len(bars)} bars total")
 
