@@ -1,13 +1,13 @@
 # IMS (ICT Market Structure)
 
-**Status:** DEMO. Walk-forward MODERATE. The 2026-08-12 IC Markets replay was close to flat, with XAUUSD the main failure. Removing XAUUSD and broker-revalidating the remaining set is the next proposed change, not yet applied. Not approved for real-money live trading.
+**Status:** DEMO. Walk-forward MODERATE for the original nine-symbol proxy-data portfolio. XAUUSD failed the 2026-08-31 broker revalidation and was removed from the IMS demo scope with user approval. The remaining parameters are frozen. Not approved for real-money live trading.
 **File:** `strategies/ims.py`
 **Timeframes:** H4 (HTF) + M15 (LTF)
 **Order type:** PENDING
 
 ---
 
-## Final demo config as of 2026-04-15
+## Current demo config as of 2026-08-31
 
 ```python
 ImsStrategy(
@@ -27,7 +27,7 @@ ImsStrategy(
 )
 ```
 
-**Symbols:** USDJPY, XAUUSD, EURAUD, CADJPY, USDCAD, AUDUSD, EURUSD, GBPCAD, GBPUSD
+**Symbols:** USDJPY, EURAUD, CADJPY, USDCAD, AUDUSD, EURUSD, GBPCAD, GBPUSD
 
 ---
 
@@ -43,6 +43,43 @@ ImsStrategy(
 | **Agg** | | **208** | **+34.4R** | **+0.165R** | | | **64%** |
 
 **Verdict: MODERATE** — all 3 folds positive OOS. Folds 1 and 3 strong (76% retention). Fold 2 (2021–2023) weak but still positive. Consistent IS edge ~+0.19–0.32R across all folds.
+
+---
+
+## XAUUSD broker revalidation - 2026-08-31
+
+Frozen the current production parameters and replayed XAUUSD alone on three independent data sources. IC Markets is the controlling source for this demo deployment. Its history runs through 2026-08-11; Dukascopy runs through 2026-07-31 and HistData through 2026-07-24. Results include configured spread and commission.
+
+| Source | Trades | Win rate | Net R | Expectancy | PF | Max DD | Worst loss streak |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| IC Markets | 56 | 12.5% | -33.66 | -0.601R | 0.34 | 33.66R | 20 |
+| Dukascopy | 70 | 30.0% | +0.58 | +0.008R | 1.01 | 9.71R | 7 |
+| HistData | 67 | 28.4% | -3.67 | -0.055R | 0.93 | 13.47R | 9 |
+
+IC Markets is negative in every non-overlapping test block:
+
+| Period | Trades | Wins | Net R | Expectancy | PF |
+|---|---:|---:|---:|---:|---:|
+| 2016-2018 | 6 | 1 | -2.83 | -0.472R | 0.47 |
+| 2018-2020 | 14 | 3 | -4.58 | -0.327R | 0.61 |
+| 2020-2022 | 6 | 0 | -6.13 | -1.022R | 0.00 |
+| 2022-2024 | 15 | 2 | -8.39 | -0.560R | 0.37 |
+| 2024-2026 | 15 | 1 | -11.72 | -0.781R | 0.18 |
+
+The deterioration is persistent rather than one recent unlucky cluster. From 2025-04-01, the broker replay has seven trades, no wins, and -7.05R. From 2026-01-01, it has four trades, no wins, and -4.03R. The full IC Markets result is also -32.29R before commission, so trading costs do not explain the failure.
+
+Focused robustness checks did not find a defensible parameter repair. On full IC Markets history, moving the entry from 50% to 61.8% reduced activity to 31 trades but remained negative at -7.76R; 78.6% produced only eight trades and -1.83R. Since 2024, those variants had zero wins. Disabling LTF-origin expiry had no effect. This agrees with the earlier walk-forward result that selected the current 50% entry and LTF-origin expiry in every fold.
+
+The portfolio-aware replay from 2025-04-01 improved when only IMS XAUUSD was removed:
+
+| Suite | Trades | Net R | Expectancy | PF | Max DD | Worst loss streak |
+|---|---:|---:|---:|---:|---:|---:|
+| Current, with IMS XAUUSD | 313 | +69.67 | +0.223R | 1.31 | 16.84R | 13 |
+| Without IMS XAUUSD | 306 | +76.73 | +0.251R | 1.36 | 15.37R | 12 |
+
+The other 306 trades are unchanged. The difference is exactly the seven XAUUSD losses, so removal does not rely on a favorable portfolio-capacity side effect.
+
+**Verdict: FAIL for XAUUSD on IC Markets.** XAUUSD was removed from the IMS demo symbol list on 2026-08-31 with user approval. Keep all remaining IMS parameters frozen and do not retune gold on this sample. Full summaries and trade/event exports are under `output/ims_xauusd_revalidation_20260831/`.
 
 ---
 

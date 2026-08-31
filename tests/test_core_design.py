@@ -73,6 +73,17 @@ class StrategyPipDefaultsTests(unittest.TestCase):
 
 
 class LiveConfigTests(unittest.TestCase):
+    def test_ims_demo_excludes_failed_xauusd_symbol(self):
+        specs = {
+            strategy.NAME: symbols
+            for strategy, symbols in live_config.create_live_strategy_specs()
+        }
+
+        self.assertEqual(
+            specs['IMS_H4_M15'],
+            ['USDJPY', 'EURAUD', 'CADJPY', 'USDCAD', 'AUDUSD', 'EURUSD', 'GBPCAD', 'GBPUSD'],
+        )
+
     def test_ims_reversal_forward_demo_is_eurusd_only_at_global_risk(self):
         specs = {
             strategy.NAME: symbols

@@ -15,7 +15,7 @@ from strategies.candle_confirmation import CandleConfirmationStrategy
 from strategies.ny_index_opening_drive import NyIndexOpeningDriveStrategy
 
 
-IMS_SYMBOLS = ['USDJPY', 'XAUUSD', 'EURAUD', 'CADJPY', 'USDCAD', 'AUDUSD', 'EURUSD', 'GBPCAD', 'GBPUSD']
+IMS_SYMBOLS = ['USDJPY', 'EURAUD', 'CADJPY', 'USDCAD', 'AUDUSD', 'EURUSD', 'GBPCAD', 'GBPUSD']
 # Forward-demo research candidate. Treat data after 2026-07-14 as unseen.
 IMS_REV_SYMBOLS = ['EURUSD']
 ENGULFING_SYMBOLS = ['EURUSD', 'AUDUSD']

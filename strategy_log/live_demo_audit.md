@@ -2,6 +2,18 @@
 
 This file audits the IC Markets demo account. No entry in this file authorizes real-money trading. Older dated sections may use `live` to refer to the MT5 runner or `live_config.py`; current deployment status is DEMO.
 
+## IMS XAUUSD Broker Revalidation - 2026-08-31
+
+Frozen current IMS parameters were replayed on XAUUSD using IC Markets, Dukascopy, and HistData bars. The broker-native IC Markets result is a decisive fail: 56 trades, 12.5% wins, -33.66 net R, -0.601R expectancy, PF 0.34, and 33.66R max drawdown. Every non-overlapping IC Markets period from 2016 onward is negative, including -11.72R over 15 trades from 2024 and -7.05R over seven trades from 2025-04-01. The strategy lost -32.29R before commission, so costs are not the cause.
+
+Dukascopy is flat at +0.58R over 70 trades and HistData is negative at -3.67R over 67 trades. Deeper 61.8% and 78.6% entries reduced IC Markets trade count but stayed negative; the recent variants had no wins. Disabling LTF-origin expiry produced no change.
+
+The portfolio-aware IC Markets replay from 2025-04-01 improves from +69.67R, PF 1.31, and 16.84R max drawdown with XAUUSD to +76.73R, PF 1.36, and 15.37R max drawdown without it. All 306 non-XAUUSD trades are unchanged; the removed trades are seven XAUUSD losses totaling -7.05R.
+
+Decision: XAUUSD fails broker revalidation. The user approved its removal from the IMS demo scope on 2026-08-31, and `live_config.py` now contains the eight remaining IMS symbols. Keep their parameters frozen and do not tune a gold-specific rescue on this sample. Artifacts are under `output/ims_xauusd_revalidation_20260831/`, with the detailed conclusion in `strategy_log/ims.md`.
+
+Deployment note: sync this change to the Windows demo PC and restart `main_live.py`. The copied journal through 2026-08-28 shows the latest XAUUSD IMS order closed on 2026-08-26, with no later XAUUSD IMS order recorded. Check MT5 before restarting because the remote account may have newer activity. Cancel any active XAUUSD pending order with IMS magic `1004`; removing the symbol stops new signals and future strategy cancellation signals. Leave any filled position protected by its broker SL and TP to close normally.
+
 ## IC Markets Current-Suite Replay - 2026-08-12
 
 Imported a fresh UTC-normalized IC Markets export for the current demo suite: 40 CSV files and
@@ -57,7 +69,7 @@ Current configured suite:
 - `EmaFibRetracement` on `config.SYMBOLS`: EURUSD, GBPUSD, AUDUSD, NZDUSD, USDJPY, USDCAD, USDCHF.
 - `EmaFibRunning` on `config.SYMBOLS`: EURUSD, GBPUSD, AUDUSD, NZDUSD, USDJPY, USDCAD, USDCHF.
 - `Engulfing` / `ThreeLineStrikeStrategy` on EURUSD and AUDUSD.
-- `IMS_H4_M15` on USDJPY, XAUUSD, EURAUD, CADJPY, USDCAD, AUDUSD, EURUSD, GBPCAD, GBPUSD.
+- `IMS_H4_M15` on USDJPY, EURAUD, CADJPY, USDCAD, AUDUSD, EURUSD, GBPCAD, GBPUSD.
 - `IMSRev_H4_M15` on EURUSD only (forward-demo research trial from 2026-07-15).
 - `Failed2_H4_H1_M5_market` on USTEC.
 - `NYIndexOpeningDrive` on USTEC.
