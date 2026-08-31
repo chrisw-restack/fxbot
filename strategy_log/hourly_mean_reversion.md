@@ -1,5 +1,7 @@
 # HourlyMeanReversion — Strategy Log
 
+**Status:** RESEARCH ONLY. XAUUSD M5 walk-forward was MODERATE but too sparse for demo deployment. XAUUSD M1, FX, and USA100 variants are shelved. Not approved for real-money live trading.
+
 ## Concept
 ICT Power-of-3 / Institutional Candle Mean-Reversion (inspired by @itstomtrades).
 - H1 candle runs cleanly in one direction for the first 20–40 minutes.
@@ -170,5 +172,5 @@ python3 param_sweep_hmr_m1.py     # M1
 python3 walk_forward.py hmr           # M5 MODERATE
 python3 walk_forward.py hmr_m1        # M1 WEAK/FAIL — shelved
 python3 walk_forward.py hmr_fx        # FAIL — do not use
-python3 walk_forward.py hmr_usa100    # MODERATE/WEAK — not live-eligible
+python3 walk_forward.py hmr_usa100    # MODERATE/WEAK; not eligible for demo
 ```

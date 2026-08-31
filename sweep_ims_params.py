@@ -34,7 +34,7 @@ sys.stdout.reconfigure(line_buffering=True)
 
 SYMBOLS         = ['USDJPY', 'XAUUSD', 'EURAUD', 'CADJPY', 'USDCAD', 'AUDUSD', 'EURUSD', 'GBPCAD', 'GBPUSD']
 INITIAL_BALANCE = 10_000.0
-N_WORKERS       = 2   # increase if you have spare CPU cores
+N_WORKERS       = 1   # keep at 1; higher parallelism has hung this PC
 
 # ── Session options (hours to BLOCK) ─────────────────────────────────────────
 # Signals fired during blocked hours are suppressed in _on_ltf_bar.

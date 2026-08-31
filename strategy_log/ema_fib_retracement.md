@@ -1,6 +1,6 @@
 # EmaFibRetracement
 
-**Status:** LIVE (demo)
+**Status:** DEMO. Walk-forward MODERATE. Not approved for real-money live trading.
 **File:** `strategies/ema_fib_retracement.py`
 **Timeframes:** D1 (bias), H1 (entry)
 **Order type:** PENDING
@@ -101,7 +101,7 @@ Note: XAUUSD is included in run_backtest.py SYMBOLS. For WF and param sweep, XAU
 
 ### Live-suite pending expiry tests (2026-05-08)
 
-Question tested: standalone pending-age tests may miss portfolio effects because EmaFib pendings consume global `MAX_OPEN_TRADES` slots in the live suite. A full live-suite replay was run with `MAX_OPEN_TRADES=8` and `MAX_DAILY_LOSS_PCT=2%`, varying only EmaFibRetracement pending invalidation.
+Question tested: standalone pending-age tests may miss portfolio effects because EmaFib pendings consume global `MAX_OPEN_TRADES` slots in the demo suite. A full suite replay was run with `MAX_OPEN_TRADES=8` and `MAX_DAILY_LOSS_PCT=2%`, varying only EmaFibRetracement pending invalidation.
 
 | Scenario | Trades | Win% | Total R | PF | Exp | Max DD | Max-open blocks |
 |----------|--------|------|---------|----|-----|--------|-----------------|
@@ -156,9 +156,9 @@ Grid: 2592 combos. Same axes as Sweep 3 but with `swing_max_age` fixed at 100 (p
 | 0.786 | 2.0 | 3 | 10 | 0.001 | 0 | N | N | 0 | 328 | 18.0% | +208.4 | 1.77 | +0.635 | 18.0 | 18 |
 | 0.786 | 2.5 | 3 | 10 | 0.001 | 10 | Y | N | 0 | 321 | 14.3% | +201.4 | 1.73 | +0.628 | 22.0 | 22 |
 
-**Live config baseline = sweep optimum** at +0.718R expectancy / +228.3R / 318 trades / PF 1.82 / MaxDD 22R. No grid combination beats it.
+**Demo config baseline = sweep optimum** at +0.718R expectancy / +228.3R / 318 trades / PF 1.82 / MaxDD 22R. No grid combination beats it.
 
-**New-filter ablation on the live config:**
+**New-filter ablation on the demo config:**
 
 | align | pend_age | trades | WR% | Total R | PF | Expectancy |
 |-------|----------|--------|-----|---------|-----|-----------|
@@ -203,7 +203,7 @@ Grid: same as Sweep 2 (2592 combos). `blocked_hours=(20-23, 0-8)` now correctly 
 - `invalidate_swing_on_loss` has minimal IS effect at these settings, but WF chose True in all 3 folds.
 - `ema_sep_pct=0.001` is required for top performance.
 - `fractal_n=3` slightly better than 2 on quality (expectancy); fractal_n=2 wins on total R.
-- Old "current live config" (fib_entry=0.618, fib_tp=2.0): +0.281R expectancy — far below best.
+- Old demo config (fib_entry=0.618, fib_tp=2.0): +0.281R expectancy, far below best.
 
 ---
 

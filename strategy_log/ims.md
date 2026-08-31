@@ -1,13 +1,13 @@
 # IMS (ICT Market Structure)
 
-**Status:** VALIDATED MODERATE — LIVE (demo)
+**Status:** DEMO. Walk-forward MODERATE. The 2026-08-12 IC Markets replay was close to flat, with XAUUSD the main failure. Removing XAUUSD and broker-revalidating the remaining set is the next proposed change, not yet applied. Not approved for real-money live trading.
 **File:** `strategies/ims.py`
 **Timeframes:** H4 (HTF) + M15 (LTF)
 **Order type:** PENDING
 
 ---
 
-## Final Live Config (as of 2026-04-15)
+## Final demo config as of 2026-04-15
 
 ```python
 ImsStrategy(
@@ -129,7 +129,7 @@ Live-code analysis flagged 2 hypotheses to test:
 1. `ltf_origin_expiry=False` — let HTF close decide bias breach (filter M15 wicks during news)
 2. `ltf_entry_fib=0.618 / 0.786` — deeper LTF entry retracement for better R:R
 
-WF (6 combos × 3 folds) picked **the current live config** (`origin_expiry=True, entry_fib=0.5`) **in every single fold**. Aggregate OOS essentially matched prior baseline. Both hypotheses rejected:
+WF (6 combos × 3 folds) picked **the current demo config** (`origin_expiry=True, entry_fib=0.5`) **in every single fold**. Aggregate OOS essentially matched prior baseline. Both hypotheses rejected:
 - LTF wick origin breach (sweep) is a genuine invalidation signal — ICT philosophy holds.
 - Deeper entry fib reduces fill rate; with only ~25-30 trades/yr/fold, sparsity hurts edge.
 
@@ -137,4 +137,4 @@ WF (6 combos × 3 folds) picked **the current live config** (`origin_expiry=True
 
 ### Code changes (kept, no behavior change at default params)
 - `notify_win` method added — eliminates state-leak after winning trades; no impact on WF results.
-- New params `ltf_origin_expiry: bool = True` and `ltf_entry_fib: float = 0.5` — defaults match prior behavior, live config unchanged.
+- New params `ltf_origin_expiry: bool = True` and `ltf_entry_fib: float = 0.5` — defaults match prior behavior, demo config unchanged.

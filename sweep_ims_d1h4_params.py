@@ -35,7 +35,7 @@ sys.stdout.reconfigure(line_buffering=True)
 
 SYMBOLS         = ['EURUSD', 'GBPUSD', 'AUDUSD', 'NZDUSD', 'USDJPY', 'USDCAD', 'USDCHF', 'XAUUSD', 'USA100']
 INITIAL_BALANCE = 10_000.0
-N_WORKERS       = 2
+N_WORKERS       = 1
 
 # ── Session options (hours to BLOCK on H4 LTF) ───────────────────────────────
 SESSIONS = {

@@ -1,6 +1,6 @@
 # Engulfing
 
-**Status:** VALIDATED — walk-forward STRONG (all 3 folds OOS positive, consistent params). Running in demo alongside EmaFibRetracement + EmaFibRunning.
+**Status:** DEMO on EURUSD and AUDUSD. Proxy-data walk-forward was STRONG, but the 2026-08-12 IC Markets replay was negative. Pausing the strategy is under review. Not approved for real-money live trading.
 **File:** `strategies/three_line_strike.py` (class `ThreeLineStrikeStrategy`, NAME=`'Engulfing'`)
 **Timeframes:** M5
 **Order type:** MARKET
@@ -22,7 +22,7 @@ ThreeLineStrikeStrategy(
 # RR ratio: 2.5 (set on RiskManager — strategy does not set take_profit)
 ```
 
-Symbols: EURUSD, AUDUSD, USDCAD (3 pairs)
+Symbols: EURUSD and AUDUSD. USDCAD was removed on 2026-05-06 after failing the corrected bid/ask retest on both data sources.
 Risk: 0.5% per trade (default).
 
 **Removed 2026-04-15:**
@@ -112,7 +112,7 @@ Fixed: `fractal_n=3, allowed_hours=NY, sma_sep_pips=5.0`. Grid: `min_prev_body_p
 | 2 | 2022–2024 | body=3, ratio=1.5, sl=20, **rr=2.0** | +0.227R | +0.132R | 58% |
 | 3 | 2024–2026 | body=3, ratio=1.5, sl=15, **rr=2.5** | +0.441R | +0.400R | **91%** |
 
-**Verdict: STRONG** — all 3 folds OOS positive. `min_body=3, engulf_ratio=1.5` unanimous across all folds. Fold 3 (most recent, 2020–2024 training) chose rr=2.5 and produced the strongest OOS (+0.400R, 91% retention). Live config updated to rr=2.5.
+**Verdict: STRONG** — all 3 folds OOS positive. `min_body=3, engulf_ratio=1.5` unanimous across all folds. Fold 3 (most recent, 2020–2024 training) chose rr=2.5 and produced the strongest OOS (+0.400R, 91% retention). Demo config updated to rr=2.5.
 
 **Caveat:** 93 total OOS trades across 10 years is sparse (~9–10 trades/yr per fold). STRONG verdict reflects param robustness, not high statistical confidence. Monitor demo carefully.
 
@@ -368,4 +368,4 @@ USDCHF  Dukascopy  17      23.5%  -3.10R    0.76  -0.18R  9.58R / 5.2%   REJECT
 USDCHF  HistData   19      26.3%  -1.61R    0.89  -0.08R  7.57R / 4.2%   REJECT
 ```
 
-Decision: no additional majors added. Keep Engulfing live symbols at EURUSD and AUDUSD.
+Decision: no additional majors added. Keep Engulfing demo symbols at EURUSD and AUDUSD.

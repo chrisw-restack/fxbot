@@ -2,7 +2,7 @@
 
 ## Status
 
-Unvalidated. Initial implementation added for H4 > H1 > M5 testing.
+DEMO on USTEC as `Failed2_H4_H1_M5_market`. The USA100 candidate family passed STRONG walk-forward validation on Dukascopy and HistData in May 2026. The configured session is 13:00-16:00 UTC. Not approved for real-money live trading.
 
 ## Rules
 
@@ -454,7 +454,7 @@ Decision:
 
 ## Demo Registration - 2026-05-11
 
-Registered `failed2_usa100_candidate` for demo/live runner as `Failed2_H4_H1_M5_market`.
+Registered `failed2_usa100_candidate` for the demo runner as `Failed2_H4_H1_M5_market`.
 
 Live/demo config:
 
@@ -468,7 +468,7 @@ Live/demo config:
 Readiness checks completed locally:
 
 - `config.validate()` passes.
-- Failed2 live config instantiates successfully.
+- Failed2 demo config instantiates successfully.
 - Strategy name matches magic key: `Failed2_H4_H1_M5_market`.
 - Strategy subscribes to `['D1', 'H4', 'H1', 'M5']`.
 - Strategy sets its own TP on the signal, so the live runner's default 2.5R risk-manager setting does not override the 4R candidate TP.

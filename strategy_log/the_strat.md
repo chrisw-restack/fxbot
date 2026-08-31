@@ -7,7 +7,7 @@
 
 ---
 
-## Current Config (in run_backtest.py — not in live suite)
+## Current config in run_backtest.py, not in the demo suite
 
 ```python
 # D1/H4/H1 stack

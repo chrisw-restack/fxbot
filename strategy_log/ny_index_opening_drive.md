@@ -1,6 +1,6 @@
 # NY Index Opening Drive
 
-**Status:** RESEARCH — fixed-UTC walk-forward was MODERATE; NY-time-aware variant needs WF rerun. Not in demo/live.
+**Status:** DEMO on USTEC. The NY-time-aware version passed STRONG walk-forward validation on Dukascopy and HistData on 2026-06-11. It uses a temporary 0.25% risk override because it overlaps Failed2 Nasdaq exposure. Not approved for real-money live trading.
 **File:** `strategies/ny_index_opening_drive.py`
 
 ## Concept
@@ -291,7 +291,7 @@ Yearly notes:
 Decision:
 
 - Fixed body30 candidate passed sanity check.
-- Registered in `live_config.py` for demo/live runner on `USTEC`.
+- Registered in `live_config.py` for the demo runner on `USTEC`.
 - Added config magic number `NYIndexOpeningDrive=1011`.
 - Added temporary risk override `0.0025` (`0.25%`) because this overlaps Nasdaq exposure with `Failed2_H4_H1_M5_market`.
 - Do not promote to real-money live without reviewing forward demo behavior, spread/slippage, and trade overlap with Failed2.

@@ -68,7 +68,7 @@ Best IS combo: swing_length=3, zone_atr_mult=1.5, zone_leg_atr=1.5 → +0.318R e
 
 **Why shelved:**
 - Only 107 trades over 10 years = ~11/year. Walk-forward (4yr train / 2yr test) would yield ~20 OOS trades per fold — too sparse to distinguish edge from luck (same problem as EBP, IMS).
-- IS expectancy of +0.318R is below live suite (+0.427–0.547R).
+- IS expectancy of +0.318R is below the then-current demo suite (+0.427–0.547R).
 - The WR ceiling across all configs appears to be ~40–44%. Filters improve it marginally but can't break through substantially.
 - The fundamental issue: zone-based entries depend on price returning to and holding a level, which happens reliably ~40% of the time regardless of zone detection method.
 

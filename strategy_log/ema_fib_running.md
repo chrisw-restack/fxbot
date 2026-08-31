@@ -1,6 +1,6 @@
 # EmaFibRunning
 
-**Status:** VALIDATED — walk-forward STRONG (2026-04-30 targeted TP WF; 83% avg OOS retention, all 3 folds positive)
+**Status:** DEMO. Walk-forward STRONG as of 2026-04-30, with 83% average OOS retention and all three folds positive. Not approved for real-money live trading.
 **File:** `strategies/ema_fib_running.py`
 **Timeframes:** D1 (bias), H1 (entry)
 **Order type:** PENDING
@@ -38,7 +38,7 @@ Original sweep had `fib_tp` fixed at 2.0, which masked that 0.786 outperforms 0.
 - Fix #5 (recent-swing alignment) — direction logic is already encoded in the anchor (fractal_low for BUY, fractal_high for SELL); the alignment concept doesn't translate.
 - Fix #6 (pending max-age) — already mitigated by the running-extreme cancel/replace logic at lines 288-294.
 
-**IS impact at live config: zero.** 223 trades / +81.7R / +0.366R both pre- and post-fix. The fixes are correctness improvements that don't bite the live config but prevent latent bugs surfacing under different params.
+**IS impact at demo config: zero.** 223 trades / +81.7R / +0.366R both pre- and post-fix. The fixes are correctness improvements that don't bite the demo config but prevent latent bugs surfacing under different params.
 
 ---
 
@@ -115,7 +115,7 @@ Same grid as WF2. Fixes #1 (anchor-fractal snapshot), #2 (D1 bias-flip cancel), 
 | 3 | 2024–2026 | fib=0.786, tp=3.0, fn=3, sep=0.001 | +54.7 | -12.0 | +0.926 | -1.000 | 0.0% | 0.00 | -108% |
 | **Agg** | | | | **+42.5R** | | **+0.370R** | | | **32%** |
 
-**Effectively identical to WF2** (Δ: -0.6R, -0.005R/trade). The fix changes (more accurate fractal invalidation; D1-flip cancellations) made no meaningful difference at the chosen params — confirming the live config is robust to the fixes.
+**Effectively identical to WF2** (Δ: -0.6R, -0.005R/trade). The fix changes (more accurate fractal invalidation; D1-flip cancellations) made no meaningful difference at the chosen params, confirming the demo config is robust to the fixes.
 
 Same caveat as WF2: WEAK verdict label is dragged down by the 12-trade fold-3 sample. The aggregate +0.370R OOS expectancy is positive overall, and folds 1 & 2 retention averages ~100%.
 
@@ -167,7 +167,7 @@ Fixed: sw=30, cooldown=0, invalidate=True, blocked=(20-23, 0-8). Note: each row 
 Key findings:
 - **Fib 3.0** has the best raw expectancy (+0.341R) but worst drawdown (23.2R) and showed complete OOS failure in the wider WF (0/12 wins fold 3). Not safe to use.
 - **R:R 2.0** has the best risk-adjusted profile (+0.299R, DD only 8.2R, streak 6) and highest trade count, but the targeted WF confirms fib 2.5 beats it IS in all 3 folds.
-- **Fib 2.5** (live config): confirmed sweet spot — competitive expectancy, lower drawdown than fib 3.0, wins every IS fold in WF4.
+- **Fib 2.5** (demo config): confirmed sweet spot with competitive expectancy, lower drawdown than fib 3.0, and wins in every IS fold in WF4.
 - **fib_entry=0.618** with fractal_n=3 dominates Total R tables (1000+ trades, +130-150R) due to trade volume but at inferior expectancy (~+0.135-0.147R vs +0.267-0.341R for 0.786).
 
 ---
@@ -285,7 +285,7 @@ Note: USDCAD and USDCHF have 0% WR on very small samples (10 and 3 trades) — n
 - **Concern:** 2024-2026 remains the weak OOS period (fold 3 nearly breakeven across multiple WF runs), but is positive in the targeted WF (47 trades, +0.039R). Not a collapse — likely a lower-volatility regime.
 - **No case to switch to R:R 2.0** despite its lower drawdown profile — fib 2.5 wins IS consistently and the targeted WF confirms robustness.
 
-**Verdict: STRONG** — WF4 (targeted fib 2.5 vs R:R 2.0) shows 83% avg OOS retention, all 3 folds positive, 151 OOS trades. The current live config (fib_tp=2.5, fib_e=0.786, fn=2, sep=0.0) is validated. Fold 3 (+0.039R) is the ongoing watch item.
+**Verdict: STRONG** — WF4 (targeted fib 2.5 vs R:R 2.0) shows 83% avg OOS retention, all 3 folds positive, 151 OOS trades. The current demo config (fib_tp=2.5, fib_e=0.786, fn=2, sep=0.0) is validated. Fold 3 (+0.039R) is the ongoing watch item.
 
 ---
 

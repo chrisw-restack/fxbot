@@ -1,6 +1,8 @@
 # IMS Reversal Strategy Log
 
-## Status: VALIDATED STRONG
+## Status: FORWARD-DEMO RESEARCH, EURUSD ONLY
+
+The old eight-symbol proxy-data configuration validated STRONG but failed to transfer cleanly to IC Markets. Since 2026-07-15, `live_config.py` has run a frozen EURUSD-only forward trial. Do not tune against data after the 2026-07-14 cutoff. The strategy is not approved for real-money live trading.
 
 ## Concept
 
@@ -63,8 +65,8 @@ Kept (all ≥ +0.166R IS expectancy):
 
 Note: AUDCAD (+0.077R) is retained — removing it costs another 13R with no DD improvement.
 Loss streaks are regime-driven across all symbols, not USD-correlated; slow bleeds over
-1–3 losses/day across 9–17 days. Portfolio manager MAX_OPEN_TRADES=6 cap does not help
-(typically only 1–2 positions close per day during a streak).
+1–3 losses/day across 9–17 days. The then-current `MAX_OPEN_TRADES=6` cap did not help
+(typically only 1–2 positions close per day during a streak). The current limit is 8.
 
 ---
 

@@ -1,8 +1,10 @@
 # Live/Demo Audit
 
+This file audits the IC Markets demo account. No entry in this file authorizes real-money trading. Older dated sections may use `live` to refer to the MT5 runner or `live_config.py`; current deployment status is DEMO.
+
 ## IC Markets Current-Suite Replay - 2026-08-12
 
-Imported a fresh UTC-normalized IC Markets export for the current live/demo suite: 40 CSV files and
+Imported a fresh UTC-normalized IC Markets export for the current demo suite: 40 CSV files and
 6,346,863 bars. Structural validation found no duplicate timestamps, out-of-order rows, missing OHLC,
 invalid candles, or negative volume. Most history begins in January 2016; CADJPY M15/H4 and USDCAD
 M15/H1/H4/D1 are limited to 2025 onward by broker availability.
@@ -46,9 +48,9 @@ and both Candle Confirmation variants; broker-revalidate IMS with XAUUSD removed
 change; keep the EURUSD-only IMS Reversal forward trial frozen and unpromoted. Full report and replay
 artifacts are under `output/icmarkets_replay_report.md` and `output/icmarkets_replay_*`.
 
-## Active Demo Suite Snapshot - 2026-07-15
+## Active demo suite snapshot, verified 2026-08-31
 
-Source: `live_config.py` `create_live_strategy_specs()` on 2026-07-15.
+Source: `live_config.py` `create_live_strategy_specs()`. Membership has not changed since the EURUSD-only IMS Reversal update on 2026-07-15.
 
 Current configured suite:
 
@@ -62,9 +64,9 @@ Current configured suite:
 - `CandleConfirmation_USDJPY_H1_M5` on USDJPY.
 - `CandleConfirmation_GBPUSD_H1_M5` on GBPUSD.
 
-`live_risk_pct_overrides()` currently returns `{'NYIndexOpeningDrive': 0.0025}`. All other live/demo strategies use the global `config.RISK_PCT` setting.
+`live_risk_pct_overrides()` currently returns `{'NYIndexOpeningDrive': 0.0025}`. All other demo strategies use the global `config.RISK_PCT` setting.
 
-Use `live_config.py` as the executable source of truth; update this audit when live/demo membership, symbols, risk, or promotion status changes.
+Use `live_config.py` as the executable source of truth. Update this audit when demo membership, symbols, risk, or promotion status changes.
 
 ## IMS Reversal EURUSD Forward Trial - 2026-07-15
 
@@ -108,7 +110,7 @@ part of the EURUSD-only forward trial and should remain broker-managed to SL/TP.
 
 Decision:
 
-- Added `NYIndexOpeningDrive` to the demo/live runner on `USTEC`.
+- Added `NYIndexOpeningDrive` to the demo runner on `USTEC`.
 - Added magic number `1011`.
 - Added temporary per-strategy risk override of `0.25%`.
 - Reason: NY-time-aware walk-forward passed STRONG on both Dukascopy and HistData, and fixed `body30` sanity check remained positive across all 2020-2026 OOS periods on both sources.
@@ -206,10 +208,8 @@ Corrections:
 - Added `cancel_mt5_orders.py`, which is read-only by default and can cancel
   explicitly supplied bot-owned pending tickets with `--execute`.
 
-One-time broker cleanup required on the Windows/VPS terminal:
-
-`python cancel_mt5_orders.py 1688987862 1688988392 1689159224 1713091357 1713091656 1715439958 --execute`
-
-These six orders had already received EmaFibRetracement cancellation signals.
-Do not cancel the open NZDUSD EmaFibRetracement position or CADJPY IMS pending
-order as part of this cleanup.
+Cleanup status: COMPLETED on the Windows/VPS terminal and confirmed on 2026-08-31. The six stale
+EmaFibRetracement pending orders identified in this review were removed. The
+old ticket command has been deleted from this log to prevent accidental reuse.
+The open NZDUSD EmaFibRetracement position and CADJPY IMS pending order were
+excluded from that cleanup.

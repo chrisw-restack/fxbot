@@ -2,14 +2,14 @@
 
 ## Overview
 
-A **modular, event-driven Python trading bot** for FX and metals markets using **MetaTrader 5 (MT5)** for live execution. Designed for both live trading and backtesting, with full support for multiple strategies, symbols, timeframes, and risk configurations.
+A modular, event-driven Python trading bot for FX, metals, and index CFDs using MetaTrader 5. The configured strategies currently run only on an IC Markets demo account. No strategy is approved for real-money live trading.
 
 Key design principles:
 
 - **Separation of responsibilities**: strategy, risk, execution, data, portfolio, and backtest layers are fully decoupled.
 - **Event-driven, synchronous**: strategies respond to bar-close events via direct method calls (no asyncio, no queue overhead).
-- **Reproducible backtesting**: historical data is stored locally as CSV and replayed bar-by-bar with next-bar fills — no look-ahead bias.
-- **Walk-forward validated**: all strategies are tested via rolling train/test windows before going live.
+- **Reproducible backtesting**: historical data is stored locally as CSV and replayed bar by bar. Market orders fill on the next matching-timeframe open, while pending orders fill when their submitted level is touched.
+- **Walk-forward validation**: strategies must pass rolling train/test validation before demo deployment. Real-money promotion requires a separate forward-demo review and explicit approval.
 
 
 ## Directory Layout
@@ -19,7 +19,7 @@ fxbot/
 │
 ├── .env                          # MT5 + Telegram credentials (gitignored)
 ├── config.py                     # Global parameters (symbols, risk, lot size, etc.)
-├── main_live.py                  # Live trading engine entry point
+├── main_live.py                  # MT5 demo runner; filename retained for compatibility
 ├── backtest_engine.py            # Backtesting engine
 ├── run_backtest.py               # Run a single backtest by strategy name
 ├── param_sweep.py                # Grid search over strategy parameters
@@ -36,10 +36,14 @@ fxbot/
 │   └── historical/               # CSVs: <SYMBOL>_<TF>_<YYYYMMDD>-<YYYYMMDD>.csv
 │
 ├── strategies/
-│   ├── ema_fib_retracement.py    # LIVE: D1/H1 EMA trend + fib entry
-│   ├── ema_fib_running.py        # LIVE: D1/H1 EMA trend + fib entry (running variant)
-│   ├── three_line_strike.py      # LIVE: M5 engulfing, NY session, 5 FX pairs
-│   ├── ims.py                    # LIVE: H4/M15 ICT market structure (IMS), 9 pairs
+│   ├── ema_fib_retracement.py    # DEMO: D1/H1 EMA trend + fib entry
+│   ├── ema_fib_running.py        # DEMO: D1/H1 EMA trend + fib entry, running variant
+│   ├── three_line_strike.py      # DEMO: M5 engulfing, NY session, 2 FX pairs
+│   ├── ims.py                    # DEMO: H4/M15 ICT market structure, 9 symbols
+│   ├── ims_reversal.py           # FORWARD DEMO: EURUSD-only frozen research trial
+│   ├── failed2.py                # DEMO: USTEC H4/H1/M5 reversal
+│   ├── ny_index_opening_drive.py # DEMO: USTEC NY opening drive
+│   ├── candle_confirmation.py    # DEMO: separate USDJPY and GBPUSD instances
 │   ├── hourly_mean_reversion.py  # MODERATE (M5/XAUUSD): ICT power-of-3 mean-reversion
 │   ├── ebp.py                    # INCONCLUSIVE: H1/M15 EBP structure
 │   └── ...                       # Shelved strategies — see strategy_log/
@@ -57,7 +61,7 @@ fxbot/
 │
 ├── utils/
 │   ├── trade_logger.py           # Trade log + metrics + equity/monthly charts
-│   └── telegram_notifier.py      # Telegram alerts for live trading
+│   └── telegram_notifier.py      # Telegram alerts for MT5 demo execution
 │
 └── strategy_log/                 # One .md per strategy: params, sweep, WF history
 ```
@@ -70,7 +74,7 @@ fxbot/
 | **Data** | Fetch live or historical OHLC bars per symbol/timeframe. Store locally as CSV for reproducible backtests. Auto-detects MT5 vs Dukascopy format and converts to UTC. |
 | **Strategy** | Generate `BUY`/`SELL` signals from bar events. Fully isolated — never touches execution, risk, portfolio, or data layers. |
 | **Risk** | Validates the signal has a stop-loss, computes lot size (dynamic or fixed), and sets take-profit. |
-| **Execution** | Places orders via MT5 (live) or simulates fills at next-bar open (backtest). Both implement the same `BaseExecution` interface. |
+| **Execution** | Places demo or live orders through MT5. Backtests fill market orders on the next matching-timeframe open and pending orders when the submitted level is touched. Both implementations use the same `BaseExecution` interface. |
 | **Portfolio** | Tracks open positions per (symbol, strategy) pair. Enforces conflict blocking, max open trades, and max daily loss. |
 | **Backtest** | Replays CSVs bar-by-bar through the full pipeline. Produces trade log, performance summary, and equity/monthly charts. |
 
@@ -116,8 +120,8 @@ class Signal:
 | `DYNAMIC` | `(account balance × risk%) ÷ (SL distance pips × pip value)`. Default: 0.5% per trade. |
 | `FIXED` | Fixed lot size (e.g. `0.01`) regardless of SL or balance. |
 
-- **Commission**: $7.00 per lot round-trip (ICMarkets Raw Spread). Deducted from PnL at trade close.
-- **Spread**: 2.0 pips (conservative average; actual ICMarkets Raw spreads are 0.1–0.5 pips during London/NY).
+- **Commission**: $7.00 per lot round trip for FX and metals. Configured index CFDs are spread-only in the backtest model.
+- **Spread**: `config.BACKTEST_SPREAD_PIPS` stores a measured or estimated value for each symbol. The model is static per symbol and does not reproduce intrabar spread spikes.
 - **Minimum SL**: signals with SL < 5 pips are rejected.
 - **Minimum R:R**: signals below 1.0 R:R are rejected.
 - **Per-strategy overrides**: `risk_pct_overrides` dict in `RiskManager` (keyed by strategy NAME).
@@ -126,8 +130,8 @@ class Signal:
 ## Portfolio & Conflict Management
 
 - **One position per (symbol, strategy) pair**: multiple strategies may hold concurrent positions on the same symbol independently.
-- **Max open trades**: 8 total across all strategies (live). Disabled in backtesting (`max_open_trades=99`) to avoid ordering artifacts skewing multi-symbol evaluation.
-- **Max daily loss**: 2% of account balance (live). Disabled in backtesting (`max_daily_loss_pct=None`) for the same reason.
+- **Max open trades**: 8 total across all strategies in the demo runner and `live_suite` backtest. Single-strategy backtests use 99 to avoid unrelated portfolio-capacity effects.
+- **Max daily loss**: 2% of account balance in the demo runner and `live_suite` backtest. Single-strategy backtests disable it.
 
 
 ## Historical Data
@@ -136,8 +140,7 @@ class Signal:
 
 ```bash
 pip install dukascopy-python
-# Edit SYMBOLS, TIMEFRAMES, START_YEAR in fetch_data_dukascopy.py
-python fetch_data_dukascopy.py
+python fetch_data_dukascopy.py --symbols EURUSD GBPUSD --timeframes M5 H1 --start-date 2016-01-01 --end-date 2026-08-01
 ```
 
 ### Option B — MT5 (recent data only, Windows VPS required)
@@ -178,7 +181,7 @@ python run_backtest.py three_line_strike --start-date 2022-01-01
 python run_backtest.py ema_fib_retracement --news-filter high
 ```
 
-**Simulated execution**: fills at the open of the next bar (no look-ahead bias). Spread, commission, and lot sizing are applied identically to live trading.
+**Simulated execution**: market orders fill at the next matching-timeframe bar open. Pending orders fill at their submitted price when the matching bid or ask range touches the level. The simulator applies configured spread, commission, and lot sizing, but it does not model tick-level slippage or variable spread.
 
 ### Backtest Output
 
@@ -196,15 +199,15 @@ The primary defence against overfitting. Splits data into rolling train/test win
 
 ```bash
 python walk_forward.py ema_fib_retracement
-python walk_forward.py three_line_strike --train-years 4 --test-years 2
+python walk_forward.py engulfing --train-years 4 --test-years 2
 ```
 
 **Interpreting OOS retention** (OOS expectancy / IS expectancy):
 - ≥ 70% → **STRONG** (parameters generalize)
 - 40–70% → **MODERATE** (some overfitting, acceptable)
-- < 40% → **WEAK/FAIL** (curve-fit, do not trade live)
+- < 40% → **WEAK/FAIL** (curve-fit, do not deploy)
 
-No strategy goes live without passing walk-forward.
+Walk-forward is required before demo deployment. Real-money live promotion also requires satisfactory forward-demo evidence and explicit user approval.
 
 
 ## News Filter
@@ -226,7 +229,7 @@ Subscribe to multiple timeframes via `TIMEFRAMES = ['D1', 'H1']`. The strategy r
 
 ## Adding a New Strategy
 
-1. Create `strategies/<name>.py` using the template in `CLAUDE.md`.
+1. Create `strategies/<name>.py` using `strategies/ims.py` or `strategies/three_line_strike.py` as the pattern.
 
 **Required elements:**
 
@@ -242,19 +245,27 @@ Subscribe to multiple timeframes via `TIMEFRAMES = ['D1', 'H1']`. The strategy r
 
 2. Register in `run_backtest.py` `STRATEGIES` dict.
 3. Run backtest, then param sweep, then walk-forward.
-4. Register in `main_live.py` only after walk-forward passes.
+4. Register in `live_config.py` for demo only after walk-forward passes and the user approves it.
+5. Consider real-money live promotion only after a satisfactory forward-demo sample and a separate explicit decision.
 
 
-## Live Suite (current, demo)
+## Demo suite
 
-| Strategy | Timeframes | Order Type | Symbols | Walk-Forward |
-|----------|-----------|------------|---------|-------------|
-| EmaFibRetracement | D1, H1 | PENDING | 7 FX pairs | MODERATE (+0.427R OOS, 67% retention) |
-| EmaFibRunning | D1, H1 | PENDING | 7 FX pairs | MODERATE (+0.375R OOS agg, folds 1&2) |
-| Engulfing (ThreeLineStrike) | M5 | MARKET | EURUSD, AUDUSD | STRONG on Dukascopy and HistData after bid/ask spread retest |
-| IMS (ImsStrategy) | H4, M15 | PENDING | 9 pairs | MODERATE (+0.165R OOS, 64% retention, all 3 folds positive) |
+This is the configured IC Markets demo suite as of 2026-08-31. `live_config.py` is the executable source of truth.
 
-Run on Windows VPS: `python main_live.py`
+| Strategy | Timeframes | Type | Symbols | Current evidence |
+|----------|------------|------|---------|------------------|
+| EmaFibRetracement | D1, H1 | PENDING | 7 FX pairs | MODERATE walk-forward; positive IC Markets replay |
+| EmaFibRunning | D1, H1 | PENDING | 7 FX pairs | STRONG walk-forward; positive IC Markets replay |
+| Engulfing | M5 | MARKET | EURUSD, AUDUSD | Proxy walk-forward STRONG; IC Markets replay negative; pause under review |
+| IMS | H4, M15 | PENDING | 9 symbols | MODERATE walk-forward; IC Markets replay close to flat; XAUUSD removal proposed |
+| IMS Reversal | H4, M15 | PENDING | EURUSD | Frozen forward-demo research trial; not a promotion candidate yet |
+| Failed2 | D1, H4, H1, M5 | MARKET | USTEC | STRONG on Dukascopy and HistData; positive IC Markets replay |
+| NY Index Opening Drive | D1, H1, M5 | MARKET | USTEC | STRONG on Dukascopy and HistData; positive IC Markets replay; 0.25% risk |
+| Candle Confirmation USDJPY | D1, H1, M5 | MARKET | USDJPY | MODERATE validation; IC Markets net edge near zero; pause under review |
+| Candle Confirmation GBPUSD | D1, H1, M5 | MARKET | GBPUSD | Fixed candidate positive OOS; weak IC Markets net edge; pause under review |
+
+Run the demo account on the Windows VPS with `python main_live.py`.
 
 Features: MT5 polling every 5s, Telegram notifications (startup / order placed / order closed / 8am heartbeat), file logging to `logs/trading.log`, auto-reconnect on MT5 failures.
 
@@ -264,7 +275,9 @@ Features: MT5 polling every 5s, Telegram notifications (startup / order placed /
 ```python
 class BaseExecution(ABC):
     def place_order(self, symbol, direction, order_type, entry_price,
-                    lot_size, sl, tp, strategy_name) -> int: ...  # returns ticket ID
+                    lot_size, sl, tp, strategy_name,
+                    entry_timeframe=None, tp_locked=False,
+                    signal_time=None) -> int: ...
     def close_order(self, ticket_id) -> bool: ...
     def get_open_positions(self) -> list[dict]: ...
 ```

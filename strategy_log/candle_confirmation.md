@@ -2,7 +2,7 @@
 
 ## Status
 
-USDJPY and GBPUSD demo candidates. USDJPY walk-forward validation is MODERATE for the fixed conservative candidate. GBPUSD fixed D1 candidate is positive in all three OOS folds and added to demo/live config on 2026-05-15.
+DEMO on USDJPY and GBPUSD. USDJPY walk-forward validation is MODERATE for the fixed conservative candidate, and the GBPUSD fixed D1 candidate was positive in all three OOS folds. The 2026-08-12 IC Markets replay found little net edge after commission, so pausing both variants is under review. Neither variant is approved for real-money live trading.
 
 ## Concept
 
@@ -56,7 +56,7 @@ TP/SL sweep on the same USDJPY filter found a materially better in-sample pocket
 
 Walk-forward validation of the conservative USDJPY TP/SL pocket passed. The optimized conservative family scored MODERATE with `+46.7R` aggregate OOS, `+0.135R` OOS expectancy, and `69%` average retention. Fixed-parameter checks were also positive in every fold; the best fixed variant was `tp_range_pct=1.25`, `sl_rr_ratio=1.5`, `min_sl_pips=8`, with `+54.0R` aggregate OOS and `+0.144R` expectancy.
 
-Live/demo status: registered for `USDJPY` and `GBPUSD` only using fixed candidates. Do not add other pairs without separate walk-forward validation.
+Demo status: registered for `USDJPY` and `GBPUSD` only using fixed candidates. Do not add other pairs without separate walk-forward validation.
 
 ## Backtest History
 
@@ -668,7 +668,7 @@ Live/demo parameters:
 Verification:
 
 - `./venv/bin/python -m pytest tests/test_core_design.py -q` passed: 12 tests.
-- Live config smoke check passed: strategy name `CandleConfirmation_H1_M5`, symbols `['USDJPY']`, timeframes `['H1', 'M5', 'D1']`, magic number `1008`.
+- Demo config smoke check passed: strategy name `CandleConfirmation_H1_M5`, symbols `['USDJPY']`, timeframes `['H1', 'M5', 'D1']`, magic number `1008`.
 
 ### 2026-05-15 - Added GBPUSD candidate to live/demo config
 
@@ -714,7 +714,7 @@ USDJPY live/demo name update:
 Verification:
 
 - `./venv/bin/python -m pytest tests/test_core_design.py -q` passed: 12 tests.
-- Live config smoke check passed for both candle-confirmation variants:
+- Demo config smoke check passed for both candle-confirmation variants:
   - `CandleConfirmation_USDJPY_H1_M5`, symbols `['USDJPY']`, magic `1009`
   - `CandleConfirmation_GBPUSD_H1_M5`, symbols `['GBPUSD']`, magic `1010`
 

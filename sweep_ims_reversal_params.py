@@ -67,7 +67,7 @@ sys.stdout.reconfigure(line_buffering=True)
 
 SYMBOLS         = ['USDJPY', 'XAUUSD', 'EURAUD', 'CADJPY', 'USDCAD', 'AUDUSD', 'EURUSD', 'GBPCAD', 'GBPUSD']
 INITIAL_BALANCE = 10_000.0
-N_WORKERS       = 2
+N_WORKERS       = 1
 
 PIP_SIZES = {sym: config.PIP_SIZE[sym] for sym in SYMBOLS if sym in config.PIP_SIZE}
 

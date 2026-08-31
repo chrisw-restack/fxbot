@@ -7,9 +7,9 @@
   python3 --version
 
   2. Create and activate a virtual environment
-  cd /home/chris/Documents/claude_workspace/fxbot
-  python3 -m venv venv
-  source venv/bin/activate
+  cd /path/to/fxbot
+  python3 -m venv .venv
+  source .venv/bin/activate
 
   3. Install dependencies
   pip install -r requirements.txt
@@ -19,13 +19,8 @@
 
   Option A — Dukascopy (preferred — 10+ years, runs on Linux, no MT5 needed)
 
-  4. Edit fetch_data_dukascopy.py — set the symbols, timeframes, and start year:
-  SYMBOLS    = ['EURUSD', 'XAUUSD']
-  TIMEFRAMES = ['H1', 'M5']
-  START_YEAR = 2016
-
-  5. Run it:
-  python fetch_data_dukascopy.py
+  4. Run the downloader with explicit symbols, timeframes, and dates:
+  python fetch_data_dukascopy.py --symbols EURUSD XAUUSD --timeframes H1 M5 --start-date 2016-01-01 --end-date 2026-08-01
   You should see output like:
     ✓  data/historical/EURUSD_H1_20160103-20260319.csv
     ✓  data/historical/XAUUSD_M5_20160103-20260319.csv
@@ -94,19 +89,19 @@
     ...
 
   ---
-  Part 4 — Parameter sweep and walk-forward (before going live)
+  Part 4 — Parameter sweep and walk-forward before demo deployment
 
   9. Run a parameter sweep to find the best params:
   python param_sweep.py
 
   10. Validate with walk-forward (the key step — proves params generalise):
   python walk_forward.py ema_fib_retracement
-  python walk_forward.py three_line_strike --train-years 4 --test-years 2
+  python walk_forward.py engulfing --train-years 4 --test-years 2
 
   OOS retention guide:
-    >= 70%  → STRONG (parameters generalise — live-eligible)
-    40-70%  → MODERATE (some overfitting — acceptable with caution)
-    < 40%   → WEAK/FAIL (curve-fit — do not trade live)
+    >= 70%  → STRONG (parameters generalise; suitable for demo consideration)
+    40-70%  → MODERATE (some overfitting; demo only with caution and approval)
+    < 40%   → WEAK/FAIL (curve-fit; do not deploy)
 
   ---
   Troubleshooting

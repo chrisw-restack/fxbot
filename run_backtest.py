@@ -5,7 +5,7 @@ Usage:
     python run_backtest.py breakout
     python run_backtest.py ema_fib_retracement
     python run_backtest.py the_strat
-    python run_backtest.py live_suite          # current live/demo suite together
+    python run_backtest.py live_suite          # current demo suite together; CLI name is historical
     python run_backtest.py ema_fib_retracement --start-date 2023-01-01 --end-date 2024-06-30
 """
 
@@ -52,7 +52,7 @@ logging.basicConfig(
 # ── Settings — edit these ─────────────────────────────────────────────────────
 # ALL SYMBOLS         = ['AUDCAD','AUDJPY','AUDNZD','AUDUSD','CADJPY','EURAUD','EURCAD','EURCHF','EURGBP','EURJPY','EURUSD','GBPAUD','GBPCAD','GBPJPY','GBPNZD','GBPUSD','NZDJPY','NZDUSD','USA100','USA30','USA500','USDCAD','USDCHF','USDJPY','XAUUSD']
 
-# LIVE SYMBOLS:
+# DEMO SYMBOLS:
 # EmaFibRetracementStrategy for ['EURUSD', 'GBPUSD', 'AUDUSD', 'NZDUSD', 'USDJPY', 'USDCAD', 'USDCHF']
 # EmaFibRunningStrategy for ['EURUSD', 'GBPUSD', 'AUDUSD', 'NZDUSD', 'USDJPY', 'USDCAD', 'USDCHF']
 # ThreeLineStrikeStrategy for ['EURUSD', 'AUDUSD']

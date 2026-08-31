@@ -1,11 +1,12 @@
 """
-Live trading entry point.
+MT5 demo runner with capability reserved for future real-money use.
 
 Requires:
 - Windows environment with MetaTrader5 installed and running.
 - A .env file at the project root with MT5_LOGIN, MT5_PASSWORD, MT5_SERVER.
 
-To add or remove strategies, edit the 'strategies' list in main() below.
+Add or remove demo strategies through live_config.py. Real-money use requires
+separate user approval after forward-demo validation.
 """
 
 import os

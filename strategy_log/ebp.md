@@ -1,6 +1,6 @@
 # EBP (Engulfing Bar Play)
 
-**Status:** INCONCLUSIVE — real IS edge found, WF WEAK on both stacks (too few OOS trades for reliable verdict). Not in live suite.
+**Status:** INCONCLUSIVE. A real IS edge was found, but walk-forward was WEAK on both stacks and OOS trade counts were too small for a reliable verdict. Not in the demo suite.
 **File:** `strategies/ebp.py`
 **Timeframes:** H1 (bias), M15 (entry) — best stack after full sweep
 **Order type:** MARKET
@@ -183,7 +183,7 @@ OOS trades: 10 / 20 / 16 (total 46).
 ## Path Forward
 
 - **Run H1/M15 config on demo** — at 8-10 trades/year this gives 50+ trades in ~5 years, or maybe 1-2 years if signals cluster.
-- **Do NOT add to live suite yet.** WEAK WF on both stacks.
+- **Do NOT add to the demo suite yet.** WEAK WF on both stacks.
 - **Reassess after 50+ demo trades.** If OOS expectancy is positive, could promote to MODERATE.
 
 ## Next Steps

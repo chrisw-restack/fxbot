@@ -1,17 +1,23 @@
 # AGENTS.md
 
-Codex-facing project guide for this repo. Treat this file as authoritative for agent work. `CLAUDE.md` and `.claude/` are historical context only.
+Codex-facing project guide for this repo. Treat this file as authoritative for agent work.
+
+Terminology in current-status documentation is strict:
+
+- `DEMO` means the strategy runs on the IC Markets demo account.
+- `LIVE` means real-money trading. No strategy is live as of 2026-08-31.
+- Historical log entries may use older wording such as `live/demo`. Read the current status block at the top of the file first.
 
 ## Project Snapshot
 
-Python FX/CFD trading bot for CSV backtesting and MT5 live/demo execution. The system is synchronous and event driven: bars feed strategies, strategies emit signals, risk sizes trades and sets TP when needed, portfolio applies limits, execution places or simulates orders, and logging records results.
+Python FX/CFD trading bot for CSV backtesting and MT5 demo execution, with real-money live capability reserved for future approval. The system is synchronous and event driven: bars feed strategies, strategies emit signals, risk sizes trades and sets TP when needed, portfolio applies limits, execution places or simulates orders, and logging records results.
 
-Primary work is strategy development, data gathering, backtesting, parameter sweeps, walk-forward validation, and promoting validated strategies to demo/live.
+Primary work is strategy development, data gathering, backtesting, parameter sweeps, walk-forward validation, demo deployment, and eventual real-money promotion after forward validation.
 
 ## Runtime And Platform
 
-- Python 3.10+ for backtesting on Linux.
-- Live trading requires Windows with MetaTrader 5 and the `MetaTrader5` Python package.
+- Backtesting is cross-platform and requires Python 3.10+.
+- MT5 demo execution, and any future real-money execution, requires Windows with MetaTrader 5 and the `MetaTrader5` Python package.
 - Credentials live in a gitignored root `.env`: `MT5_LOGIN`, `MT5_PASSWORD`, `MT5_SERVER`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`.
 - All code and strategy logic should use UTC timestamps.
 - Keep sweep/walk-forward worker count at `1` by default; higher parallelism has previously hung the user's PC.
@@ -19,8 +25,8 @@ Primary work is strategy development, data gathering, backtesting, parameter swe
 ## Source Of Truth
 
 - `config.py` - global symbols, risk, pip sizes/values, spreads, commission, magic numbers.
-- `live_config.py` - current live/demo strategy suite, symbols, params, and risk overrides.
-- `main_live.py` - Windows/MT5 live trading entry point.
+- `live_config.py` - current demo strategy suite, symbols, params, and risk overrides. The filename is historical.
+- `main_live.py` - Windows/MT5 demo runner and potential future live entry point. The filename is historical.
 - `run_backtest.py` - single backtest entry point and strategy registry.
 - `walk_forward.py` - rolling train/test validation configs.
 - `backtest_engine.py` - CSV bar replay through the full pipeline.
@@ -30,20 +36,27 @@ Primary work is strategy development, data gathering, backtesting, parameter swe
 - `risk/risk_manager.py` - SL validation, lot sizing, TP calculation.
 - `portfolio/portfolio_manager.py` - per `(symbol, strategy_name)` position tracking and limits.
 - `strategies/*.py` - pure signal generators.
-- `strategy_log/*.md` - durable strategy status, sweep results, WF history, and decisions.
+- `strategy_log/*.md` - current strategy status followed by sweep results, WF history, and dated decisions.
 
-Before changing live status, live params, or risk, check `live_config.py`, the relevant `strategy_log/` file, `strategy_log/live_demo_audit.md`, and recent git diff.
+Use this source order when documents disagree:
+
+1. Executable configuration in `config.py` and `live_config.py`.
+2. The latest dated decision in `strategy_log/live_demo_audit.md`.
+3. The current status block and latest dated entry in the relevant strategy log.
+4. General guidance in this file.
+
+Before changing demo membership, parameters, symbols, or risk, check all four sources above and recent git diff. Never promote a strategy to real-money live trading without explicit user approval after a satisfactory forward-demo review.
 
 ## Core Design Rules
 
 - No asyncio. Keep the event flow synchronous unless the user explicitly agrees to an architecture change.
 - Strategies are pure signal generators. They should import `Signal`/`BarEvent` from `models` and must not import execution, risk, portfolio, data, or config modules.
 - Every non-`CANCEL` signal must set `stop_loss`; the risk manager rejects missing SL.
-- Never allow R:R below `1.0`; `1:1` is the minimum acceptable reward/risk.
+- Never submit a signal with R:R below `1.0`; `1:1` is the minimum acceptable reward/risk. The risk manager checks this against the signal price. For market orders with a strategy-locked TP, also review realized fill R:R because gaps or slippage can change it after submission.
 - Strategies may set `take_profit`; otherwise the risk manager sets TP from configured R:R.
 - Pending-order strategies may emit `direction='CANCEL'` to cancel unfilled orders. There is no `CLOSE` signal; filled trades run to SL or TP.
 - One open position per `(symbol, strategy_name)` is allowed. Multiple strategies may hold concurrent positions on the same symbol.
-- In backtests, fills occur at the next bar open. Avoid look-ahead bias; strategy rolling windows should normally evaluate against previous bars, then append the current bar.
+- In backtests, MARKET orders fill at the next matching-timeframe bar open. PENDING orders fill on a later matching-timeframe bar when their level is touched. Strategies may use the current completed bar when the setup calls for it, but must never use an incomplete bar or future data.
 - Backtest OHLC is treated as bid prices: BUY enters at ask and exits at bid; SELL enters at bid and exits/triggers SL/TP at ask.
 - Do not hardcode credentials or broker secrets.
 
@@ -56,13 +69,14 @@ Before changing live status, live params, or risk, check `live_config.py`, the r
 5. Backtest with `python run_backtest.py <strategy>`.
 6. Add or update sweep and walk-forward configs before treating params as validated.
 7. Update `strategy_log/<name>.md` with results and verdict.
-8. Register in `live_config.py` only after walk-forward is at least MODERATE and the user agrees.
+8. Register in `live_config.py` for demo only after walk-forward is at least MODERATE and the user agrees.
+9. Treat real-money live promotion as a separate decision after forward-demo evidence and explicit user approval.
 
 ## Validation Standards
 
 - Walk-forward validation is the primary defence against curve-fitting.
 - Default interpretation: `>=70%` OOS retention is STRONG, `40-70%` is MODERATE, `<40%` is WEAK/FAIL.
-- Any new live candidate or material parameter change should pass walk-forward before live/demo promotion.
+- Any new demo candidate or material parameter change should pass walk-forward before demo promotion.
 - When reporting strategy comparisons, include side-by-side metrics: trades, win rate, total R, profit factor, expectancy, max drawdown, and relevant streaks.
 - The user values total R/account growth over per-trade expectancy when both choices are profitable, but risk should remain conservative.
 - Test filters iteratively, one at a time, so the effect of each change is visible.
@@ -71,9 +85,7 @@ Before changing live status, live params, or risk, check `live_config.py`, the r
 
 - Break-even stops hurt EmaFib strategies and should not be reintroduced without new validation.
 - Pending order age was not useful as a quality filter for EmaFibRetracement.
-- Dynamic risk throttling after drawdown hurt low-win-rate, high-payout fib strategies.
-- News filters did not improve current strategies.
-- IMS Reversal drawdown-reduction attempts via ADX, efficiency ratio, circuit breaker, and tiered sizing were rejected; drawdown is managed through account sizing.
+- IMS Reversal drawdown-reduction attempts via ADX, efficiency ratio, circuit breaker, and tiered sizing were rejected. See `strategy_log/ims_reversal.md`. Manage its drawdown through conservative account sizing unless new validation supports a change.
 
 ## Data Notes
 
@@ -95,7 +107,6 @@ Before changing live status, live params, or risk, check `live_config.py`, the r
 ## Working Notes For Codex
 
 - Use `rg`/`rg --files` for search.
-- Do not delete or rewrite Claude artifacts unless the user explicitly asks.
 - Do not revert user changes in a dirty worktree.
 - Use focused edits and follow existing local patterns.
-- If inspecting demo/live logs, check for max-open-trade rejections, correlated USD drawdowns, IMS pending fill rate, daily loss limit events, and per-strategy trade counts versus expectation.
+- If inspecting MT5 demo logs, check for max-open-trade rejections, correlated USD drawdowns, IMS pending fill rate, daily loss limit events, and per-strategy trade counts versus expectation.

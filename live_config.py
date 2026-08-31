@@ -1,4 +1,8 @@
-"""Validated live/demo strategy suite configuration."""
+"""Validated IC Markets demo strategy suite configuration.
+
+The module and function names retain "live" for compatibility. Nothing in
+this file authorizes real-money trading.
+"""
 
 import config
 from strategies.ema_fib_retracement import EmaFibRetracementStrategy
@@ -23,7 +27,7 @@ CANDLE_CONFIRMATION_GBPUSD_SYMBOLS = ['GBPUSD']
 
 
 def create_live_strategy_specs():
-    """Return [(strategy_instance, symbols), ...] for the current live/demo suite."""
+    """Return strategy and symbol pairs for the current demo suite."""
     ema_fib = EmaFibRetracementStrategy(
         fib_entry=0.786,
         fib_tp=3.0,
