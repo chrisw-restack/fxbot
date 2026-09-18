@@ -628,3 +628,9 @@ class Failed2Strategy:
 
     def _pip_size(self, symbol: str) -> float:
         return self.pip_sizes.get(symbol, 0.0001)
+
+    def notify_signal_rejected(self, symbol: str):
+        """Release an unsubmitted proposal, retaining indicators and setup context."""
+        self._traded_setup_id[symbol] = None
+        self._pending_entry[symbol] = None
+        self._pending_setup_id[symbol] = None

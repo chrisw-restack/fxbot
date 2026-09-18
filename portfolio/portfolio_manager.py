@@ -18,19 +18,25 @@ class PortfolioManager:
         self._open_positions: dict[tuple[str, str], dict] = {}
         self._open_ticket_count = 0
         self._daily_loss: float = 0.0
-        self._current_date: date = date.today()
+        self._current_date: date | None = None
         self._max_open_trades = max_open_trades
         self._max_daily_loss_pct = max_daily_loss_pct  # None = disabled
 
     def set_current_date(self, d: date):
         """
         Advance the portfolio's view of the current date.
-        In live mode this is always date.today(); in backtest mode the engine
-        calls this with each bar's date so the daily loss counter resets correctly.
+        Demo uses the current UTC date; replay uses bar completion time. Ignore
+        older dates, including delayed broker closes and higher-timeframe opens.
         """
-        if d != self._current_date:
+        if self._current_date is None or d > self._current_date:
             self._daily_loss = 0.0
             self._current_date = d
+
+    def restore_daily_loss(self, d: date, loss: float):
+        """Replace today's loss with a confirmed broker-history total, idempotently."""
+        self.set_current_date(d)
+        if d == self._current_date:
+            self._daily_loss = max(0.0, loss)
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -80,12 +86,14 @@ class PortfolioManager:
                 continue
             self.record_existing(pos['symbol'], strategy_name, pos['ticket'])
 
-    def record_close(self, symbol: str, pnl: float, strategy_name: str = ''):
+    def record_close(self, symbol: str, pnl: float, strategy_name: str = '', close_time=None):
         """Call when a position is closed. pnl in account currency."""
         key = (symbol, strategy_name)
         if self._open_positions.pop(key, None) is not None:
             self._open_ticket_count = max(0, self._open_ticket_count - 1)
-        if pnl < 0:
+        if close_time is not None:
+            self.set_current_date(close_time.date())
+        if pnl < 0 and (close_time is None or close_time.date() == self._current_date):
             self._daily_loss += abs(pnl)
         logger.debug(f"Position closed: {symbol} ({strategy_name}) pnl={pnl:.2f} daily_loss={self._daily_loss:.2f}")
 

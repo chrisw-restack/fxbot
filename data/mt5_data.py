@@ -22,6 +22,18 @@ _TIMEFRAME_MAP = {
 # Stored credentials for reconnection
 _credentials: dict | None = None
 
+
+def validate_demo_account(info, expected_login: int, expected_server: str):
+    """The runner is authorized only for the configured DEMO hedging account."""
+    if info is None:
+        raise RuntimeError('MT5 account information unavailable')
+    if info.login != expected_login or info.server != expected_server:
+        raise RuntimeError('MT5 account does not match the configured account')
+    if info.trade_mode != mt5.ACCOUNT_TRADE_MODE_DEMO:
+        raise RuntimeError('Real-money trading is disabled; a DEMO account is required')
+    if info.margin_mode != mt5.ACCOUNT_MARGIN_MODE_RETAIL_HEDGING:
+        raise RuntimeError('This strategy suite requires a hedging account')
+
 MAX_RECONNECT_ATTEMPTS = 5
 RECONNECT_BASE_DELAY = 2  # seconds — doubles each attempt (exponential backoff)
 
@@ -47,6 +59,11 @@ def connect(login: int, password: str, server: str) -> bool:
         logger.error(f"MT5 initialize failed: {mt5.last_error()}")
         return False
     info = mt5.account_info()
+    try:
+        validate_demo_account(info, login, server)
+    except RuntimeError:
+        mt5.shutdown()
+        raise
     logger.info(f"Connected to MT5: server={info.server} account={info.login}")
     return True
 
@@ -65,6 +82,11 @@ def reconnect() -> bool:
         mt5.shutdown()
         if mt5.initialize(**_credentials):
             info = mt5.account_info()
+            try:
+                validate_demo_account(info, _credentials['login'], _credentials['server'])
+            except RuntimeError:
+                mt5.shutdown()
+                raise
             logger.info(f"MT5 reconnected: server={info.server} account={info.login}")
             return True
 
@@ -131,6 +153,25 @@ def get_recent_bars(symbol: str, timeframe: str, count: int) -> list[BarEvent]:
         )
         for b in bars
     ]
+
+
+def get_completed_bars_since(symbol: str, timeframe: str, since: datetime | None) -> list[BarEvent]:
+    """Backfill a missed interval, failing visibly if terminal history is incomplete."""
+    from data.historical_loader import _TF_DURATION
+    latest = get_latest_completed_bar(symbol, timeframe)
+    if latest is None:
+        raise RuntimeError(f'Completed bar unavailable: {symbol} {timeframe}')
+    if since is None:
+        return [latest]
+    if latest.timestamp <= since:
+        return []
+    count = int((latest.timestamp - since) / _TF_DURATION[timeframe]) + 2
+    if count > 10_000:
+        raise RuntimeError(f'Bar gap exceeds recovery limit for {symbol} {timeframe}; restart for full warm-up')
+    recent = get_recent_bars(symbol, timeframe, max(count, 2))
+    if not recent or recent[0].timestamp > since:
+        raise RuntimeError(f'Insufficient recovery history: {symbol} {timeframe}')
+    return sorted((b for b in recent if since < b.timestamp <= latest.timestamp), key=lambda b: b.timestamp)
 
 
 def fetch_historical(symbol: str, timeframe: str, start: datetime, end: datetime) -> pd.DataFrame:

@@ -138,12 +138,15 @@ def run_backtest(
         slippage_pips=slippage_pips,
     )
     portfolio = PortfolioManager(max_open_trades=99, max_daily_loss_pct=None)
-    risk = RiskManager(account_balance_fn=execution.get_account_balance, rr_ratio=rr)
+    risk = RiskManager(account_balance_fn=execution.get_account_balance, rr_ratio=rr, loss_per_lot_fn=execution.loss_per_lot)
 
     ticket_context = {}
     closed_with_context = []
 
+    from data.historical_loader import bar_close_time
+    execution.configure_timeframes(bars)
     for bar in bars:
+        portfolio.set_current_date(bar_close_time(bar).date())
         closed = execution.check_fills(bar)
         for trade in closed:
             portfolio.record_close(trade['symbol'], trade['pnl'], trade.get('strategy_name', ''))
@@ -155,7 +158,10 @@ def run_backtest(
             elif trade.get('result') == 'WIN':
                 strategy.notify_win(trade['symbol'])
 
-        portfolio.set_current_date(bar.timestamp.date())
+        for rejected in execution.take_rejected_orders():
+            portfolio.record_close(rejected['symbol'], 0., rejected['strategy_name'])
+            ticket_context.pop(rejected['ticket'], None)
+            strategy.notify_signal_rejected(rejected['symbol'])
         if bar.symbol != symbol or bar.timeframe not in strategy.TIMEFRAMES:
             continue
 
@@ -183,6 +189,7 @@ def run_backtest(
             entry_timeframe=enriched.entry_timeframe,
             tp_locked=enriched.tp_locked,
             signal_time=enriched.timestamp,
+            risk_budget=enriched.risk_budget,
         )
         if ticket:
             portfolio.record_open(enriched, ticket)
@@ -192,6 +199,8 @@ def run_backtest(
 
 
 def trade_net_r(trade):
+    if 'net_r' in trade:
+        return trade['net_r']
     pip_value = config.PIP_VALUE_USD.get(trade['symbol'], 10.0)
     risk_cash = trade['sl_pips'] * pip_value * trade['lot_size']
     return trade['pnl'] / risk_cash if risk_cash > 0 else 0.0

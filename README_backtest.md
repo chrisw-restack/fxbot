@@ -1,3 +1,15 @@
+# Backtest setup and interpretation
+
+The September 2026 pipeline corrections change historical fills and headline R. See [the implementation report and frozen comparison](strategy_log/codebase_improvements_20260907.md) before comparing new runs with older strategy logs.
+
+For the tested Python 3.14 environment, install `requirements-backtest.lock`. For other supported Python versions, use `requirements-backtest.txt`; the exact lock has only been tested locally on Python 3.14. Run `python -m unittest discover -s tests -v` to check the pipeline without connecting to MT5.
+
+CSV timestamps default to UTC. Raw broker-wall-clock files need `load_csv(..., time_basis='icmarkets')` or a sidecar named `<filename>.csv.meta.json` containing `{"time_basis": "icmarkets", "session_origin": "icmarkets"}`. Already converted broker data uses `{"time_basis": "utc", "session_origin": "icmarkets"}`. The named `mt5_icmarkets` and `mt5_icmarkets_utc` folders also identify those source contracts. The loader does not infer timezone from Sunday candles.
+
+Backtest `r_multiple` now means net R after configured commission. `gross_r` and `initial_risk` remain available on trade records. Replay uses the finest loaded execution candles for each symbol, includes entry-candle exits and adverse stop gaps, and assumes SL first when OHLC ordering is ambiguous. Supply fine-candle coverage throughout the test period. Open trades at the end remain open and are reported alongside ending equity and drawdown measured at candle closes.
+
+Keep sweep and walk-forward workers at one by default. To reproduce the code revision comparison, export baseline revision `0709948` with complete Python packages and run `python compare_engine_revisions.py --baseline-root <export-directory>`. This uses local Dukascopy data and a USA100 proxy for USTEC; it does not connect to the demo account.
+
   ---
   Steps to getting a Backtest Running
 
@@ -12,7 +24,7 @@
   source .venv/bin/activate
 
   3. Install dependencies
-  pip install -r requirements.txt
+  pip install -r requirements-backtest.txt
 
   ---
   Part 2 — Get historical data

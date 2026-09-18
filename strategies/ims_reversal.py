@@ -880,3 +880,10 @@ class ImsReversalStrategy:
         self._last_signal_entry[symbol] = entry_price
         self._last_signal_sl[symbol] = sl_price
         return new_signal
+
+    def notify_signal_rejected(self, symbol: str):
+        """Release an unsubmitted proposal, retaining indicators and setup context."""
+        self._ltf_signal_fired[symbol] = False
+        self._ltf_last_sl_ts[symbol] = None
+        self._last_signal_entry[symbol] = 0.0
+        self._last_signal_sl[symbol] = 0.0

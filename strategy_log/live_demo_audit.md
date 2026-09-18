@@ -2,6 +2,10 @@
 
 This file audits the IC Markets demo account. No entry in this file authorizes real-money trading. Older dated sections may use `live` to refer to the MT5 runner or `live_config.py`; current deployment status is DEMO.
 
+## Infrastructure corrections - 2026-09-07
+
+The approved code review corrections have been implemented locally. Demo membership, strategy parameters, and risk configuration are unchanged; no deployment or real-money promotion occurred. The simulator now accounts for entry-candle exits, adverse stop gaps, corrected SELL spread handling, and net R. Historical results below were produced with the earlier engine and require fresh runs before direct comparison. The local Dukascopy comparison and implementation details are in [Codebase improvements](codebase_improvements_20260907.md). Broker-native data is absent from this checkout, so that comparison does not replace the broker validation decisions below.
+
 ## IMS XAUUSD Broker Revalidation - 2026-08-31
 
 Frozen current IMS parameters were replayed on XAUUSD using IC Markets, Dukascopy, and HistData bars. The broker-native IC Markets result is a decisive fail: 56 trades, 12.5% wins, -33.66 net R, -0.601R expectancy, PF 0.34, and 33.66R max drawdown. Every non-overlapping IC Markets period from 2016 onward is negative, including -11.72R over 15 trades from 2024 and -7.05R over seven trades from 2025-04-01. The strategy lost -32.29R before commission, so costs are not the cause.

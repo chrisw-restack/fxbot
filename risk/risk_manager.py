@@ -3,99 +3,76 @@ from typing import Callable
 
 import config
 from models import Signal, EnrichedSignal
+from risk.validation import positive, valid_levels, floor_volume
 
 logger = logging.getLogger(__name__)
 
 
 class RiskManager:
-
-    def __init__(
-        self,
-        account_balance_fn: Callable[[], float],
-        rr_ratio: float | None = None,
-        risk_pct_overrides: dict[str, float] | None = None,
-    ):
-        """
-        account_balance_fn: callable that returns the current account balance.
-        rr_ratio: overrides config.DEFAULT_RR_RATIO when provided.
-        risk_pct_overrides: per-strategy risk % overrides keyed by strategy NAME.
-        """
+    def __init__(self, account_balance_fn: Callable[[], float], rr_ratio=None,
+                 risk_pct_overrides=None, entry_price_fn=None,
+                 loss_per_lot_fn=None, volume_limits_fn=None):
         self._get_balance = account_balance_fn
         self.rr_ratio = rr_ratio if rr_ratio is not None else config.DEFAULT_RR_RATIO
         self._risk_pct_overrides = risk_pct_overrides or {}
+        self._entry_price = entry_price_fn
+        self._loss_per_lot = loss_per_lot_fn
+        self._volume_limits = volume_limits_fn
 
     def process(self, signal: Signal) -> EnrichedSignal | None:
-        if signal.stop_loss is None:
-            logger.error(f"Signal from {signal.strategy_name} rejected: no stop_loss set")
+        if signal.order_type not in ('MARKET', 'PENDING') or not valid_levels(
+            signal.direction, signal.entry_price, signal.stop_loss,
+            signal.take_profit, config.MIN_RR_RATIO,
+        ):
+            logger.warning('Rejected invalid signal levels: %s %s', signal.strategy_name, signal.symbol)
             return None
-
         pip_size = config.PIP_SIZE.get(signal.symbol)
-        pip_value = config.PIP_VALUE_USD.get(signal.symbol)
-        if pip_size is None or pip_value is None:
-            logger.error(f"No pip config for {signal.symbol} — signal rejected")
+        if not positive(pip_size):
             return None
-
-        sl_distance = abs(signal.entry_price - signal.stop_loss)
-        sl_pips = sl_distance / pip_size
-
-        if sl_pips < config.MIN_SL_PIPS:
-            logger.warning(
-                f"Signal rejected | {signal.strategy_name} | {signal.symbol} {signal.direction:<4} | "
-                f"{signal.timestamp.strftime('%Y-%m-%d %H:%M')} | "
-                f"SL too small: {sl_pips:.1f} pips (minimum {config.MIN_SL_PIPS})"
-            )
+        entry = self._entry_price(signal) if self._entry_price else signal.entry_price
+        sl = signal.stop_loss
+        if not valid_levels(signal.direction, entry, sl):
             return None
-
-        # ── Lot size ──────────────────────────────────────────────────────────
-        if config.LOT_SIZE_MODE == 'FIXED':
-            lot_size = config.FIXED_LOT_SIZE
-        else:
-            balance = self._get_balance()
-            risk_pct = self._risk_pct_overrides.get(signal.strategy_name, config.RISK_PCT)
-            risk_amount = balance * risk_pct
-            lot_size = risk_amount / (sl_pips * pip_value)
-            lot_size = round(lot_size, 2)
-            if lot_size < 0.01:
-                logger.warning(
-                    f"Lot size clamped | {signal.strategy_name} | {signal.symbol} {signal.direction:<4} | "
-                    f"{signal.timestamp.strftime('%Y-%m-%d %H:%M')} | "
-                    f"Calculated {lot_size:.4f} lots, clamped to 0.01 "
-                    f"(actual risk {((0.01 * sl_pips * pip_value) / balance * 100):.2f}% vs target {risk_pct * 100:.1f}%)"
-                )
-                lot_size = 0.01
-
-        # ── Take-profit ───────────────────────────────────────────────────────
+        sl_pips = abs(entry - sl) / pip_size
+        if sl_pips + 1e-10 < config.MIN_SL_PIPS:
+            return None
         tp_locked = signal.take_profit is not None
-        if tp_locked:
-            take_profit = signal.take_profit
-        else:
-            tp_distance = sl_distance * self.rr_ratio
-            if signal.direction == 'BUY':
-                take_profit = signal.entry_price + tp_distance
-            else:
-                take_profit = signal.entry_price - tp_distance
-
-        # ── R:R guard ─────────────────────────────────────────────────────────
-        tp_distance = abs(take_profit - signal.entry_price)
-        actual_rr = tp_distance / sl_distance if sl_distance > 0 else 0.0
-        if actual_rr < config.MIN_RR_RATIO:
-            logger.warning(
-                f"Signal rejected | {signal.strategy_name} | {signal.symbol} {signal.direction:<4} | "
-                f"{signal.timestamp.strftime('%Y-%m-%d %H:%M')} | "
-                f"R:R too low: {actual_rr:.2f} (minimum {config.MIN_RR_RATIO})"
-            )
+        tp = signal.take_profit
+        if not tp_locked:
+            distance = abs(entry - sl) * self.rr_ratio
+            tp = entry + distance if signal.direction == 'BUY' else entry - distance
+        if not valid_levels(signal.direction, entry, sl, tp, config.MIN_RR_RATIO):
+            logger.warning('Rejected executable R:R: %s %s', signal.strategy_name, signal.symbol)
             return None
-
+        balance = self._get_balance()
+        if not positive(balance):
+            return None
+        risk_pct = self._risk_pct_overrides.get(signal.strategy_name, config.RISK_PCT)
+        if not positive(risk_pct) or risk_pct > 1:
+            return None
+        budget = balance * risk_pct if config.LOT_SIZE_MODE == 'DYNAMIC' else None
+        if budget is not None:
+            if self._loss_per_lot:
+                loss = self._loss_per_lot(signal.symbol, signal.direction, entry, sl)
+            else:
+                value = config.PIP_VALUE_USD.get(signal.symbol)
+                if not positive(value):
+                    return None
+                loss = sl_pips * value
+            if not positive(loss):
+                return None
+            volume = budget / loss
+        else:
+            volume = config.FIXED_LOT_SIZE
+        limits = self._volume_limits(signal.symbol) if self._volume_limits else {}
+        volume = floor_volume(volume, **limits)
+        if not volume:
+            logger.warning('Rejected volume below broker minimum within risk budget: %s', signal.symbol)
+            return None
         return EnrichedSignal(
-            symbol=signal.symbol,
-            direction=signal.direction,
-            order_type=signal.order_type,
-            entry_price=signal.entry_price,
-            stop_loss=signal.stop_loss,
-            take_profit=round(take_profit, 5),
-            lot_size=lot_size,
-            strategy_name=signal.strategy_name,
-            timestamp=signal.timestamp,
-            entry_timeframe=signal.entry_timeframe,
-            tp_locked=tp_locked,
+            symbol=signal.symbol, direction=signal.direction, order_type=signal.order_type,
+            entry_price=entry, stop_loss=sl, take_profit=tp, lot_size=volume,
+            strategy_name=signal.strategy_name, timestamp=signal.timestamp,
+            entry_timeframe=signal.entry_timeframe, tp_locked=tp_locked,
+            risk_budget=budget,
         )

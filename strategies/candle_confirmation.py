@@ -563,3 +563,7 @@ class CandleConfirmationStrategy:
     @staticmethod
     def _has_bearish_fvg(leg: list[BarEvent]) -> bool:
         return any(leg[i + 2].high < leg[i].low for i in range(len(leg) - 2))
+
+    def notify_signal_rejected(self, symbol: str):
+        """Release an unsubmitted proposal, retaining indicators and setup context."""
+        self._signal_fired[symbol] = False

@@ -161,8 +161,8 @@ class SimulatedExecutionTests(unittest.TestCase):
 
         self.assertEqual(len(closed), 1)
         self.assertAlmostEqual(closed[0]['entry_price'], 1.1000)
-        self.assertAlmostEqual(closed[0]['exit_price'], 1.0982)
-        self.assertAlmostEqual(closed[0]['pnl'], 180.0)
+        self.assertAlmostEqual(closed[0]['exit_price'], 1.0980)
+        self.assertAlmostEqual(closed[0]['pnl'], 200.0)
 
     def test_sell_tp_is_not_hit_until_ask_reaches_target(self):
         execution = SimulatedExecution(10_000, spread_pips=2.0, commission_per_lot=0.0)
@@ -247,7 +247,7 @@ class SimulatedExecutionTests(unittest.TestCase):
             open=1.0999, high=1.1000, low=1.0998, close=1.0999, volume=1,
         ))
         position = execution.get_open_positions()[0]
-        self.assertEqual(position['open_time'], datetime(2024, 1, 1, 10, 15))
+        self.assertEqual(position['open_time'], datetime(2024, 1, 1, 10, 30))
         self.assertEqual(position['entry_price'], 1.1000)
 
 

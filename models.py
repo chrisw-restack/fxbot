@@ -41,3 +41,4 @@ class EnrichedSignal:
     timestamp: datetime
     entry_timeframe: str | None = None
     tp_locked: bool = False  # True when TP is a strategy price level, not R:R calculated
+    risk_budget: float | None = None  # maximum account-currency loss at submitted SL

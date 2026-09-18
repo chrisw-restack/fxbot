@@ -8,6 +8,7 @@ from execution.base_execution import BaseExecution
 from utils.trade_logger import TradeLogger
 from utils.trade_journal import TradeJournal
 from data.news_filter import NewsFilter
+from data.historical_loader import bar_close_time
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +47,7 @@ class EventEngine:
         self._symbols_by_strategy_name: dict[str, set[str]] = {}
         # ticket -> cancellation intent retained after a temporary broker failure
         self._pending_cancel_retries: dict[int, dict] = {}
+        self._processed_bars: dict[tuple[str, str, str], object] = {}
 
     def register(self, strategy, symbols: list[str]):
         """Subscribe a strategy to receive BarEvents for the given symbols."""
@@ -72,25 +74,44 @@ class EventEngine:
         """
         key = (event.symbol, event.timeframe)
         for strategy in self._subscriptions.get(key, []):
-            strategy.generate_signal(event)
+            signal = strategy.generate_signal(event)
+            if signal is not None and signal.direction != 'CANCEL':
+                self.reject_signal(signal)
 
-    def process_bar(self, event: BarEvent):
+    def reject_signal(self, signal):
+        # A proposal that was not submitted must not consume a trading opportunity.
+        # Do not clear tracking for an already accepted position in the same slot.
+        key = (signal.symbol, signal.strategy_name)
+        if key in self.portfolio.get_open_positions():
+            return
+        strategy = self._strategies_by_name.get(signal.strategy_name)
+        callback = getattr(strategy, 'notify_signal_rejected', None)
+        if callback is not None:
+            callback(signal.symbol)
+
+    def process_bar(self, event: BarEvent, allow_entries: bool = True, processing_time=None):
         """
         Process a single BarEvent through the full pipeline.
         Daily loss check is performed first; if exceeded no new trades are placed.
         """
         # Advance the portfolio date so the daily loss counter resets correctly
         # in both live (date.today()) and backtest (bar's date) contexts.
-        self.portfolio.set_current_date(event.timestamp.date())
+        self.portfolio.set_current_date((processing_time or bar_close_time(event)).date())
 
         balance = self.execution.get_account_balance()
-        if self.portfolio.is_daily_loss_exceeded(balance):
-            return
+        entries_blocked = not allow_entries or self.portfolio.is_daily_loss_exceeded(balance)
 
         key = (event.symbol, event.timeframe)
         strategies = self._subscriptions.get(key, [])
 
         for strategy in strategies:
+            dispatch_key = (event.symbol, event.timeframe, strategy.NAME)
+            previous = self._processed_bars.get(dispatch_key)
+            if previous is not None and event.timestamp <= previous:
+                continue
+            # A partial poll retry must not feed the same candle twice to an
+            # already advanced strategy or resubmit an ambiguously sent order.
+            self._processed_bars[dispatch_key] = event.timestamp
             signal = strategy.generate_signal(event)
             if signal is None:
                 continue
@@ -105,7 +126,7 @@ class EventEngine:
 
             logger.info(
                 f"Signal: {signal.symbol} {signal.direction} {signal.order_type} "
-                f"entry={signal.entry_price:.5f} sl={signal.stop_loss:.5f} "
+                f"entry={signal.entry_price} sl={signal.stop_loss} "
                 f"({signal.strategy_name})"
             )
 
@@ -115,23 +136,38 @@ class EventEngine:
                 self._handle_cancel(signal)
                 continue
 
+            if entries_blocked:
+                self.reject_signal(signal)
+                if self.trade_journal:
+                    self.trade_journal.log_rejected(signal, 'entries_paused', context)
+                continue
+
             # Block signals near high-impact news events
             if self.news_filter and self.news_filter.is_blocked(
-                signal.symbol, signal.timestamp
+                signal.symbol, processing_time or bar_close_time(event)
             ):
+                self.reject_signal(signal)
                 logger.info(f"Blocked by news filter: {signal.symbol} {signal.direction}")
                 if self.trade_journal:
                     self.trade_journal.log_rejected(signal, 'news_filter', context)
                 continue
 
-            enriched = self.risk.process(signal)
+            try:
+                enriched = self.risk.process(signal)
+            except Exception:
+                # No order has been submitted. Release the strategy's proposal
+                # while letting the runner recover from the unavailable data.
+                self.reject_signal(signal)
+                raise
             if enriched is None:
+                self.reject_signal(signal)
                 logger.info(f"Rejected by risk manager: {signal.symbol} {signal.direction}")
                 if self.trade_journal:
                     self.trade_journal.log_rejected(signal, 'risk_manager', context)
                 continue
 
             if not self.portfolio.approve(enriched):
+                self.reject_signal(signal)
                 if self.trade_journal:
                     self.trade_journal.log_rejected(signal, 'portfolio', context)
                 continue
@@ -148,6 +184,7 @@ class EventEngine:
                 entry_timeframe=enriched.entry_timeframe,
                 tp_locked=enriched.tp_locked,
                 signal_time=enriched.timestamp,
+                risk_budget=enriched.risk_budget,
             )
 
             if ticket:
@@ -174,7 +211,10 @@ class EventEngine:
                         lots=enriched.lot_size,
                         strategy=enriched.strategy_name,
                     )
-            elif self.trade_journal:
+            else:
+                self.reject_signal(signal)
+                if not self.trade_journal:
+                    continue
                 failure_context = dict(context or {})
                 if hasattr(self.execution, 'get_last_order_error'):
                     failure_context['execution_error'] = self.execution.get_last_order_error()

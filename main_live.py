@@ -22,8 +22,10 @@ from portfolio.portfolio_manager import PortfolioManager
 from execution.mt5_execution import MT5Execution
 from utils.trade_logger import TradeLogger
 from utils.trade_journal import TradeJournal
-from utils.live_reconciliation import recover_offline_journal_orders
+from utils.live_reconciliation import recover_offline_journal_orders, apply_trade_updates
+from utils.strategy_state import StrategyCheckpoint
 from data.mt5_data import connect, disconnect, reconnect, get_latest_completed_bar, get_recent_bars
+from data.mt5_data import get_completed_bars_since
 from data.historical_loader import bar_close_time
 from live_config import create_live_strategy_specs, live_symbols, live_risk_pct_overrides
 
@@ -104,7 +106,8 @@ def main():
         return
 
     try:
-        execution    = MT5Execution(magic_numbers=config.MAGIC_NUMBERS)
+        execution    = MT5Execution(magic_numbers=config.MAGIC_NUMBERS,
+                                    expected_account={'expected_login': login, 'expected_server': server})
         portfolio    = PortfolioManager()
         trade_logger = TradeLogger()
         trade_journal = TradeJournal()
@@ -112,6 +115,9 @@ def main():
             account_balance_fn=execution.get_account_balance,
             rr_ratio=2.5,  # engulfing uses 2.5R (fib strategies set their own TP and bypass this)
             risk_pct_overrides=live_risk_pct_overrides(),
+            entry_price_fn=execution.signal_entry_price,
+            loss_per_lot_fn=execution.loss_per_lot,
+            volume_limits_fn=execution.volume_limits,
         )
 
         notifier = TelegramNotifier()
@@ -143,6 +149,12 @@ def main():
         # Tracks the timestamp of the last processed bar per (symbol, timeframe).
         last_bar_time: dict[tuple[str, str], datetime] = {}
         subscribed_pairs = _sort_pairs(event_engine.get_subscribed_pairs())
+        checkpoint = StrategyCheckpoint('logs/strategy_state.json', strategy_specs,
+                                        {'login': login, 'server': server})
+        restored = checkpoint.load()
+        if restored is not None:
+            last_bar_time = restored
+            logger.info('Restored strategy state and bar timestamps from checkpoint')
 
         # ── Warm-up: feed historical bars so EMAs/ATR/fractals are seeded ────
         # D1 needs ~50 bars for EMA(20) + ATR(14) with margin.
@@ -152,14 +164,16 @@ def main():
         logger.info("Warming up strategy state with historical bars...")
         warmup_count = 0
         warmup_events = []
-        warmup_pairs = subscribed_pairs
+        warmup_pairs = [] if restored is not None else subscribed_pairs
         for symbol, timeframe in warmup_pairs:
             count = WARMUP_BARS.get(timeframe, 50)
             bars = get_recent_bars(symbol, timeframe, count)
-            if bars:
-                warmup_events.extend(bars)
-                # Set last_bar_time so the poll loop doesn't re-process the last bar
-                last_bar_time[(symbol, timeframe)] = bars[-1].timestamp
+            if len(bars) < count:
+                raise RuntimeError(f'Insufficient warm-up history for {symbol} {timeframe}: '
+                                   f'{len(bars)} of {count} required bars')
+            warmup_events.extend(bars)
+            # Set last_bar_time so the poll loop doesn't re-process the last bar
+            last_bar_time[(symbol, timeframe)] = bars[-1].timestamp
         warmup_events.sort(key=lambda b: (bar_close_time(b), TF_RANK.get(b.timeframe, 99), b.symbol))
         for bar in warmup_events:
             event_engine.warmup_bar(bar)
@@ -172,12 +186,14 @@ def main():
         close_pending_alerted: set[int] = set()
         last_duplicate_slots: list[tuple[str, str, list[int]]] = []
         logger.info(f"Reconciled {len(tracked_tickets)} existing MT5 positions/orders")
+        pending_strategy_closes = []
         recovered_closes, recovered_cancellations, unresolved_open = recover_offline_journal_orders(
             execution,
             trade_journal,
             notifier,
             list(tracked_tickets.values()),
             logger,
+            on_close=pending_strategy_closes.append,
         )
         if recovered_closes or recovered_cancellations:
             logger.info(
@@ -198,28 +214,32 @@ def main():
             notifier.notify_operational_alert(message)
         last_duplicate_slots = duplicate_slots
 
-        logger.info(f"Live trading started — watching {len(subscribed_pairs)} symbol/timeframe pairs")
+        logger.info(f"Demo trading started: watching {len(subscribed_pairs)} symbol/timeframe pairs")
         notifier.notify_started(live_symbols(), [s.NAME for s in strategies])
 
         consecutive_failures = 0
         last_heartbeat_date = None
 
         while True:
-            # Daily heartbeat at 8am UTC+2
-            now_local = datetime.now(HEARTBEAT_TZ)
-            if now_local.hour >= HEARTBEAT_HOUR and last_heartbeat_date != now_local.date():
-                last_heartbeat_date = now_local.date()
-                notifier.notify_heartbeat(
-                    balance=execution.get_account_balance(),
-                    open_positions=len(execution.get_open_positions()),
-                )
-
             try:
+                # Daily heartbeat at 8am UTC+2
+                now_local = datetime.now(HEARTBEAT_TZ)
+                if now_local.hour >= HEARTBEAT_HOUR and last_heartbeat_date != now_local.date():
+                    last_heartbeat_date = now_local.date()
+                    notifier.notify_heartbeat(
+                        balance=execution.get_account_balance(),
+                        open_positions=len(execution.get_open_positions()),
+                    )
+
+                now_utc = datetime.now(timezone.utc)
+                portfolio.set_current_date(now_utc.date())
                 event_engine.retry_pending_cancellations()
 
                 # Detect closed trades by comparing tracked tickets to current positions
                 current_positions = execution.get_open_positions()
                 current_tickets = {p['ticket'] for p in current_positions}
+                broker_state_changed = (current_tickets != set(tracked_tickets)
+                                        or bool(pending_strategy_closes))
                 for ticket, pos in list(tracked_tickets.items()):
                     if ticket not in current_tickets:
                         if any(_is_same_live_slot(pos, current) for current in current_positions):
@@ -309,13 +329,10 @@ def main():
                             pnl=closed['pnl'],
                             strategy=strategy_name,
                         )
-                        portfolio.record_close(closed['symbol'], closed['pnl'], strategy_name)
+                        portfolio.record_close(closed['symbol'], closed['pnl'], strategy_name,
+                                               close_time=closed.get('close_time'))
                         portfolio.is_daily_loss_exceeded(execution.get_account_balance())
-                        event_engine.notify_trade_closed({
-                            'symbol':        closed['symbol'],
-                            'strategy_name': strategy_name,
-                            'result':        closed['result'],
-                        })
+                        pending_strategy_closes.append(closed)
                 # Update tracked positions with latest profit values
                 for p in current_positions:
                     missing_close_since.pop(p['ticket'], None)
@@ -323,6 +340,7 @@ def main():
                     close_pending_alerted.discard(p['ticket'])
                     tracked_tickets[p['ticket']] = p
                 portfolio.sync_existing(current_positions)
+                portfolio.restore_daily_loss(now_utc.date(), execution.get_daily_loss(now_utc))
                 duplicate_slots = _duplicate_live_slots(current_positions)
                 if duplicate_slots and duplicate_slots != last_duplicate_slots:
                     logger.critical(f"Duplicate broker strategy slots detected: {duplicate_slots}")
@@ -331,18 +349,22 @@ def main():
                     )
                 last_duplicate_slots = duplicate_slots
 
+                new_bars = []
                 for symbol, timeframe in subscribed_pairs:
-                    bar = get_latest_completed_bar(symbol, timeframe)
-                    if bar is None:
-                        continue
-
+                    new_bars.extend(get_completed_bars_since(symbol, timeframe, last_bar_time.get((symbol, timeframe))))
+                new_bars.sort(key=lambda b: (bar_close_time(b), TF_RANK.get(b.timeframe, 99), b.symbol))
+                for bar in new_bars:
+                    pending_strategy_closes = apply_trade_updates(
+                        event_engine, pending_strategy_closes, bar_close_time(bar))
+                    symbol, timeframe = bar.symbol, bar.timeframe
                     key = (symbol, timeframe)
-                    if last_bar_time.get(key) == bar.timestamp:
-                        continue  # No new completed bar yet
-
+                    # Restore state from missed bars, but never submit a stale entry.
+                    recovery_now = datetime.now(timezone.utc).replace(tzinfo=None)
+                    fresh = 0 <= (recovery_now - bar_close_time(bar)).total_seconds() <= 60
+                    logger.info('New bar: %s %s @ %s', symbol, timeframe, bar.timestamp)
+                    event_engine.process_bar(bar, allow_entries=fresh,
+                                             processing_time=datetime.now(timezone.utc))
                     last_bar_time[key] = bar.timestamp
-                    logger.info(f"New bar: {symbol} {timeframe} @ {bar.timestamp}  O={bar.open} H={bar.high} L={bar.low} C={bar.close}")
-                    event_engine.process_bar(bar)
 
                     # Log strategy status after each D1 bar (daily diagnostic)
                     if timeframe == 'D1':
@@ -361,7 +383,11 @@ def main():
                                     parts.append(f"→ {status['blocker']}")
                                 logger.info(f"Status [{strat.NAME}] {symbol}: " + "  ".join(parts))
 
+                pending_strategy_closes = apply_trade_updates(
+                    event_engine, pending_strategy_closes, datetime.now(timezone.utc))
                 consecutive_failures = 0
+                if new_bars or broker_state_changed:
+                    checkpoint.save(last_bar_time)
             except Exception:
                 consecutive_failures += 1
                 logger.exception(f"Error in poll loop (failure #{consecutive_failures})")
@@ -370,7 +396,7 @@ def main():
                     if not reconnect():
                         logger.error("Reconnect failed — shutting down")
                         return
-                    tracked_tickets = _reconcile_portfolio(portfolio, execution)
+                    tracked_tickets.update(_reconcile_portfolio(portfolio, execution))
                     missing_close_since.clear()
                     close_pending_journaled.clear()
                     close_pending_alerted.clear()

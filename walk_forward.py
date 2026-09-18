@@ -12,10 +12,11 @@ Usage:
 """
 
 import argparse
+import inspect
+import logging
 import itertools
 import io
 import contextlib
-import logging
 import multiprocessing
 import os
 import sys
@@ -1427,25 +1428,33 @@ def _init_wf_worker(bars):
     _WF_BARS = bars
 
 
+def build_strategy(strategy_class, params):
+    """RR may belong to both engine and strategy; never silently strip its meaning."""
+    kwargs = dict(params)
+    rr = kwargs.get('rr_ratio', RR_RATIO)
+    if 'rr_ratio' not in inspect.signature(strategy_class).parameters:
+        kwargs.pop('rr_ratio', None)
+    return strategy_class(**kwargs), rr
+
+
 def _run_wf_combo(args):
     """Run one param combo on the pre-loaded training bars. Returns merged params+metrics dict.
 
-    If 'rr_ratio' appears in params or fixed_params it is extracted and passed to the
-    BacktestEngine rather than the strategy constructor (RR is an engine param, not a
-    strategy param).
+    Route engine and constructor settings through build_strategy so both receive
+    their intended reward/risk ratio.
     """
     params, strategy_class, fixed_params, symbols = args
     try:
         full_params = {**fixed_params, **params}
-        rr = full_params.pop('rr_ratio', RR_RATIO)
-        strategy = strategy_class(**full_params)
+        strategy, rr = build_strategy(strategy_class, full_params)
         m = run_backtest(
             _WF_BARS, strategy, symbols,
             INITIAL_BALANCE, rr, config.BACKTEST_SPREAD_PIPS, RISK_PCT_OVERRIDES,
         )
         return {**params, **m}
-    except Exception:
-        return {**params, 'trades': 0, 'win_rate': 0, 'total_r': 0,
+    except Exception as exc:
+        logging.exception('Walk-forward combination failed: %s', params)
+        return {**params, 'error': str(exc), 'trades': 0, 'win_rate': 0, 'total_r': 0,
                 'expectancy': 0, 'pf': 0, 'max_dd_r': 0,
                 'worst_loss_streak': 0, 'best_win_streak': 0}
 
@@ -1487,7 +1496,8 @@ def generate_folds(
 def run_backtest(bars: list, strategy, symbols: list[str],
                  initial_balance: float, rr_ratio: float,
                  spread_pips: dict[str, float] | float = config.BACKTEST_SPREAD_PIPS,
-                 risk_pct_overrides: dict | None = None) -> dict:
+                 risk_pct_overrides: dict | None = None,
+                 start_date=None, end_date=None) -> dict:
     """Run a single backtest on pre-filtered bars. Returns metrics dict."""
     engine = BacktestEngine(
         initial_balance=initial_balance,
@@ -1498,16 +1508,13 @@ def run_backtest(bars: list, strategy, symbols: list[str],
     engine.add_strategy(strategy, symbols=symbols)
 
     with contextlib.redirect_stdout(io.StringIO()):
-        for bar in bars:
-            closed_trades = engine.execution.check_fills(bar)
-            for trade in closed_trades:
-                engine.portfolio.record_close(trade['symbol'], trade['pnl'], trade.get('strategy_name', ''))
-                engine.trade_logger.log_close(trade['ticket'], trade)
-                engine.event_engine.notify_trade_closed(trade)
-            engine.event_engine.process_bar(bar)
-
-    trades = engine.execution.get_closed_trades()
-    return compute_metrics(trades)
+        engine.replay(bars, start_date=start_date, end_date=end_date)
+    metrics = compute_metrics(engine.execution.get_closed_trades())
+    metrics.update(open_positions=len(engine.execution._positions),
+                   pending_orders=len(engine.execution._pending),
+                   ending_equity=engine.execution.get_equity(),
+                   max_equity_dd_pct=engine.execution.max_equity_drawdown_pct)
+    return metrics
 
 
 def compute_metrics(trades: list[dict]) -> dict:
@@ -1521,8 +1528,8 @@ def compute_metrics(trades: list[dict]) -> dict:
 
     wins = sum(1 for t in trades if t['result'] == 'WIN')
     total_r = sum(t['r_multiple'] for t in trades)
-    gp = sum(t['r_multiple'] for t in trades if t['result'] == 'WIN')
-    gl = abs(sum(t['r_multiple'] for t in trades if t['result'] == 'LOSS'))
+    gp = sum(t['r_multiple'] for t in trades if t['r_multiple'] > 0)
+    gl = -sum(t['r_multiple'] for t in trades if t['r_multiple'] < 0)
 
     peak = running = max_dd = 0.0
     for t in trades:
@@ -1542,10 +1549,10 @@ def compute_metrics(trades: list[dict]) -> dict:
     return {
         'trades': total,
         'win_rate': round(wins / total * 100, 1),
-        'total_r': round(total_r, 1),
-        'expectancy': round(total_r / total, 3),
-        'pf': round(gp / gl, 2) if gl > 0 else 0.0,
-        'max_dd_r': round(max_dd, 1),
+        'total_r': total_r,
+        'expectancy': total_r / total,
+        'pf': gp / gl if gl > 0 else float('inf') if gp > 0 else 0.0,
+        'max_dd_r': max_dd,
         'worst_loss_streak': worst_loss,
         'best_win_streak': best_win,
     }
@@ -1554,7 +1561,9 @@ def compute_metrics(trades: list[dict]) -> dict:
 def optimize(all_bars, train_start, train_end, strategy_class,
              param_grid, fixed_params, symbols, metric, min_trades=MIN_TRADES, n_workers=1):
     """Optimize parameters on a training window. Returns best params and metrics."""
-    train_bars = filter_bars(all_bars, start=train_start, end=train_end)
+    from data.historical_loader import bar_close_time
+    train_bars = [bar for bar in filter_bars(all_bars, start=train_start, end=train_end)
+                  if bar_close_time(bar) <= train_end]
 
     keys = list(param_grid.keys())
     combos = [dict(zip(keys, c)) for c in itertools.product(*param_grid.values())]
@@ -1563,7 +1572,7 @@ def optimize(all_bars, train_start, train_end, strategy_class,
         task_args = [(params, strategy_class, fixed_params, symbols) for params in combos]
         with ProcessPoolExecutor(
             max_workers=n_workers,
-            mp_context=multiprocessing.get_context('fork'),
+            mp_context=multiprocessing.get_context('spawn'),
             initializer=_init_wf_worker,
             initargs=(train_bars,),
         ) as executor:
@@ -1573,16 +1582,16 @@ def optimize(all_bars, train_start, train_end, strategy_class,
         for params in combos:
             try:
                 full_params = {**fixed_params, **params}
-                rr = full_params.pop('rr_ratio', RR_RATIO)
-                strategy = strategy_class(**full_params)
+                strategy, rr = build_strategy(strategy_class, full_params)
                 m = run_backtest(
                     train_bars, strategy, symbols,
                     INITIAL_BALANCE, rr, config.BACKTEST_SPREAD_PIPS, RISK_PCT_OVERRIDES,
                 )
                 all_results.append({**params, **m})
-            except Exception:
+            except Exception as exc:
+                logging.exception('Walk-forward combination failed: %s', params)
                 all_results.append({
-                    **params, 'trades': 0, 'win_rate': 0, 'total_r': 0,
+                    **params, 'error': str(exc), 'trades': 0, 'win_rate': 0, 'total_r': 0,
                     'expectancy': 0, 'pf': 0, 'max_dd_r': 0,
                     'worst_loss_streak': 0, 'best_win_streak': 0,
                 })
@@ -1592,7 +1601,7 @@ def optimize(all_bars, train_start, train_end, strategy_class,
     best_metrics = None
 
     for result in all_results:
-        if result['trades'] < min_trades:
+        if result.get('error') or result['trades'] < min_trades:
             continue
         score = result[metric]
         if score > best_score:
@@ -1606,14 +1615,15 @@ def optimize(all_bars, train_start, train_end, strategy_class,
 def test_oos(all_bars, test_start, test_end, strategy_class,
              best_params, fixed_params, symbols):
     """Test best parameters on out-of-sample window."""
-    test_bars = filter_bars(all_bars, start=test_start, end=test_end)
+    from datetime import timedelta
+    test_bars = filter_bars(all_bars, start=test_start - timedelta(days=180), end=test_end)
     full_params = {**fixed_params, **best_params}
-    rr = full_params.pop('rr_ratio', RR_RATIO)
-    strategy = strategy_class(**full_params)
+    strategy, rr = build_strategy(strategy_class, full_params)
 
     return run_backtest(
         test_bars, strategy, symbols,
         INITIAL_BALANCE, rr, config.BACKTEST_SPREAD_PIPS, RISK_PCT_OVERRIDES,
+        start_date=test_start, end_date=test_end,
     )
 
 

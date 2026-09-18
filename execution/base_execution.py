@@ -17,6 +17,7 @@ class BaseExecution(ABC):
         entry_timeframe: str | None = None,
         tp_locked: bool = False,
         signal_time=None,
+        risk_budget: float | None = None,
     ) -> int:
         """Place an order. Returns ticket ID (> 0) on success, 0 on failure."""
         ...

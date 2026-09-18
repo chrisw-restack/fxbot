@@ -107,18 +107,7 @@ def _run(engine: BacktestEngine, paths: list[str], start: datetime | None, end: 
         # D1 needs 50 completed sessions; 90 calendar days gives ample room.
         load_start = start - pd_timedelta_days(90)
     bars = load_and_merge(paths, start=load_start, end=end)
-    if start is not None:
-        bars = _warmup(engine, bars, start)
-
-    for bar in bars:
-        closed_trades = engine.execution.check_fills(bar)
-        for trade in closed_trades:
-            engine.portfolio.record_close(
-                trade['symbol'], trade['pnl'], trade.get('strategy_name', '')
-            )
-            engine.trade_logger.log_close(trade['ticket'], trade)
-            engine.event_engine.notify_trade_closed(trade)
-        engine.event_engine.process_bar(bar)
+    engine.replay(bars, start_date=start, end_date=end)
 
 
 def pd_timedelta_days(days: int):
@@ -128,6 +117,8 @@ def pd_timedelta_days(days: int):
 
 
 def _net_r(trade: dict) -> float:
+    if 'net_r' in trade:
+        return trade['net_r']
     pip_value = config.PIP_VALUE_USD[trade['symbol']]
     initial_risk = trade['sl_pips'] * pip_value * trade['lot_size']
     return trade['pnl'] / initial_risk if initial_risk else 0.0

@@ -1,8 +1,11 @@
 import logging
+from datetime import timedelta
 
 import config
 from execution.base_execution import BaseExecution
 from models import BarEvent
+from data.historical_loader import bar_close_time
+from risk.validation import valid_levels, floor_volume
 
 logger = logging.getLogger(__name__)
 
@@ -20,11 +23,11 @@ class SimulatedExecution(BaseExecution):
 
     Fill rules:
     - MARKET orders: filled at the open of the next bar after the signal.
-    - PENDING orders: BUY triggers from the ask range, SELL from the bid range;
-      both fill at the submitted order price.
+    - PENDING orders: BUY triggers from ask, SELL from bid. Gaps use the opening
+      quote; other fills use the submitted order price.
     - SL/TP: checked on every subsequent bar using high/low. If both SL and TP are
       touched in the same bar, SL is assumed hit first (conservative assumption).
-    - Newly opened positions are not checked for SL/TP on their opening bar.
+    - Market entries are checked on the opening bar; pending ambiguity is SL-first.
     """
 
     def __init__(self, initial_balance: float, spread_pips: dict[str, float] | float = 0.1,
@@ -40,6 +43,11 @@ class SimulatedExecution(BaseExecution):
         self._positions: dict[int, dict] = {} # ticket -> position (open/filled)
         self._closed_trades: list[dict] = []
         self._next_ticket = 1
+        self._execution_timeframes = {}
+        self._quotes = {}
+        self._rejected_orders = []
+        self._equity_peak = initial_balance
+        self.max_equity_drawdown_pct = 0.0
 
     def place_order(
         self,
@@ -54,7 +62,10 @@ class SimulatedExecution(BaseExecution):
         entry_timeframe: str | None = None,
         tp_locked: bool = False,
         signal_time=None,
+        risk_budget: float | None = None,
     ) -> int:
+        if not valid_levels(direction, entry_price, sl, tp, config.MIN_RR_RATIO):
+            return 0
         ticket = self._next_ticket
         self._next_ticket += 1
         self._pending[ticket] = {
@@ -70,137 +81,186 @@ class SimulatedExecution(BaseExecution):
             'entry_timeframe': entry_timeframe,
             'tp_locked':       tp_locked,
             'signal_time':     signal_time,
+            'risk_budget':     risk_budget,
+            'submitted_time': (signal_time + timedelta(minutes=_TF_MINUTES[entry_timeframe])
+                               if signal_time is not None and entry_timeframe else signal_time),
+            'pending_type': self._pending_type(symbol, direction, entry_price) if order_type == 'PENDING' else None,
+            'requested_entry': entry_price,
+            'requested_rr': abs(tp - entry_price) / abs(entry_price - sl),
         }
         return ticket
 
+    def configure_timeframes(self, bars):
+        """Choose one execution stream per symbol, preventing overlapping OHLC checks."""
+        for bar in bars:
+            old = self._execution_timeframes.get(bar.symbol)
+            if old is None or _TF_MINUTES[bar.timeframe] < _TF_MINUTES[old]:
+                self._execution_timeframes[bar.symbol] = bar.timeframe
+
+    def _pending_type(self, symbol, direction, entry):
+        quote = self._quotes.get(symbol)
+        if quote is None:
+            return None  # Direct legacy calls use a touch-only order.
+        current = self._entry_price(quote, symbol, direction)
+        return 'STOP' if (entry > current if direction == 'BUY' else entry < current) else 'LIMIT'
+
+    def pip_value(self, symbol, price=None):
+        """USD conversion from available historical quotes; CFD values follow config."""
+        currencies = {'USD', 'EUR', 'GBP', 'AUD', 'NZD', 'CAD', 'CHF', 'JPY'}
+        if len(symbol) == 6 and symbol[:3] in currencies and symbol[3:] in currencies:
+            counter = symbol[3:]
+            value = 100_000 * config.PIP_SIZE[symbol]
+            if counter == 'USD':
+                return value
+            if symbol[:3] == 'USD' and price:
+                return value / price
+            if self._quotes.get(counter + 'USD'):
+                return value * self._quotes[counter + 'USD']
+            if self._quotes.get('USD' + counter):
+                return value / self._quotes['USD' + counter]
+        return config.PIP_VALUE_USD[symbol]
+
+    def loss_per_lot(self, symbol, direction, entry, sl):
+        return abs(entry - sl) / config.PIP_SIZE[symbol] * self.pip_value(symbol, sl)
+
+    def take_rejected_orders(self):
+        rejected, self._rejected_orders = self._rejected_orders, []
+        return rejected
+
     def check_fills(self, bar: BarEvent) -> list[dict]:
+        """Execute only the finest configured stream, then publish its closing quote.
+
+        Orders become available at signal-bar close. Market orders fill at the
+        following bar open. Intrabar pending fills use SL-first ambiguity, but
+        never use an earlier high to award a TP before a limit entry happened.
         """
-        Called at the start of each bar. Handles fills and SL/TP checks.
-        Returns a list of closed trade result dicts for trades closed this bar.
-
-        Fill and SL/TP checks are gated by the entry_timeframe stored on each
-        order (set from the bar that generated the signal):
-
-        - MARKET / PENDING fills: only triggered on bars whose timeframe matches
-          the order's entry_timeframe. This prevents a D1 bias bar (wide range)
-          from filling a pending that was signalled on an H1 bar.
-
-        - SL/TP checks: triggered on any bar whose timeframe is equal to or finer
-          than the entry_timeframe (e.g. H1 entry → check on H1 and M15/M5 if
-          available; D1 entry → check on D1, H4, H1, etc.). This ensures that
-          finer-grained data improves SL/TP accuracy without false triggers from
-          coarser bars.
-
-        Orders without an entry_timeframe (legacy / externally created) fall back
-        to the old behaviour: fills and SL/TP are checked on every bar.
-        """
+        execution_tf = self._execution_timeframes.get(bar.symbol)
+        if execution_tf is not None and bar.timeframe != execution_tf:
+            return []
+        self._quotes[bar.symbol] = bar.open
         closed = []
-        just_opened = set()
-        bar_minutes = _TF_MINUTES.get(bar.timeframe, 0)
-
-        # 1. Fill MARKET orders placed on a previous bar — fill at this bar's open
-        for ticket in list(self._pending):
-            pos = self._pending[ticket]
-            if pos['symbol'] != bar.symbol or pos['order_type'] != 'MARKET':
-                continue
-            entry_tf = pos.get('entry_timeframe')
-            if entry_tf is not None and bar.timeframe != entry_tf:
-                continue
-            pos['entry_price'] = self._entry_price(bar.open, pos['symbol'], pos['direction'])
-            self._recalc_tp(pos)
-            pos['open_time'] = bar.timestamp
-            self._positions[ticket] = self._pending.pop(ticket)
-            just_opened.add(ticket)
-            logger.debug(f"MARKET fill: {pos['symbol']} {pos['direction']} @ {pos['entry_price']:.5f} ticket={ticket}")
-
-        # 2. Check PENDING limit/stop orders for this symbol
-        for ticket in list(self._pending):
-            pos = self._pending[ticket]
+        intrabar_entries = set()
+        for ticket, pos in list(self._pending.items()):
             if pos['symbol'] != bar.symbol:
                 continue
             entry_tf = pos.get('entry_timeframe')
-            if entry_tf is not None and bar.timeframe != entry_tf:
+            if execution_tf is None and entry_tf and entry_tf != bar.timeframe:
                 continue
-            spread = self._spread_price(pos['symbol'])
-            if pos['direction'] == 'BUY':
-                touched = bar.low + spread <= pos['entry_price'] <= bar.high + spread
+            available = pos.get('submitted_time')
+            if available is not None and bar.timestamp < available:
+                continue
+            spread = self._spread_price(bar.symbol) if pos['direction'] == 'BUY' else 0.0
+            opening, low, high = bar.open + spread, bar.low + spread, bar.high + spread
+            entry = pos['entry_price']
+            at_open = pos['order_type'] == 'MARKET'
+            if at_open:
+                fill = self._entry_price(bar.open, bar.symbol, pos['direction'])
             else:
-                touched = bar.low <= pos['entry_price'] <= bar.high
-            if touched:
-                pos['open_time'] = bar.timestamp
-                self._positions[ticket] = self._pending.pop(ticket)
-                just_opened.add(ticket)
-                logger.debug(f"PENDING fill: {pos['symbol']} {pos['direction']} @ {pos['entry_price']:.5f} ticket={ticket}")
-
-        # 3. Check open positions for SL/TP (skip positions just opened this bar)
-        for ticket in list(self._positions):
-            if ticket in just_opened:
-                continue
-            pos = self._positions[ticket]
+                subtype = pos.get('pending_type')
+                buy = pos['direction'] == 'BUY'
+                if subtype == 'STOP':
+                    at_open = opening >= entry if buy else opening <= entry
+                    touched = high >= entry if buy else low <= entry
+                elif subtype == 'LIMIT':
+                    at_open = opening <= entry if buy else opening >= entry
+                    touched = low <= entry if buy else high >= entry
+                else:
+                    touched = low <= entry <= high
+                    at_open = opening == entry
+                if not touched:
+                    continue
+                fill = opening if at_open and subtype else entry
+            pos['entry_price'] = fill
+            if pos['order_type'] == 'MARKET':
+                self._recalc_tp(pos)
+                budget = pos.get('risk_budget')
+                if budget is not None and valid_levels(pos['direction'], fill, pos['sl']):
+                    pos['lot_size'] = floor_volume(min(pos['lot_size'], budget / self.loss_per_lot(
+                        bar.symbol, pos['direction'], fill, pos['sl'])))
+                if not pos['lot_size'] or not valid_levels(pos['direction'], fill, pos['sl'], pos['tp'], config.MIN_RR_RATIO):
+                    self._rejected_orders.append(self._pending.pop(ticket))
+                    continue
+            pos['initial_risk'] = self.loss_per_lot(bar.symbol, pos['direction'], fill, pos['sl']) * pos['lot_size']
+            pos['open_time'] = bar.timestamp if at_open else bar_close_time(bar)
+            self._positions[ticket] = self._pending.pop(ticket)
+            if not at_open:
+                intrabar_entries.add(ticket)
+        for ticket, pos in list(self._positions.items()):
             if pos['symbol'] != bar.symbol:
                 continue
-            entry_tf = pos.get('entry_timeframe')
-            if entry_tf is not None:
-                entry_minutes = _TF_MINUTES.get(entry_tf, 0)
-                if bar_minutes > entry_minutes:
-                    continue  # bar is coarser than entry TF — skip to avoid false SL/TP
-            result = self._check_sl_tp(pos, bar)
+            if execution_tf is None and _TF_MINUTES[bar.timeframe] > _TF_MINUTES.get(pos.get('entry_timeframe'), 1440):
+                continue
+            # Intrabar order: a TP is certain only if the close crosses it after
+            # entry; an SL touch is conservatively assigned to after entry.
+            result = self._check_sl_tp(pos, bar, intrabar=ticket in intrabar_entries)
             if result:
                 del self._positions[ticket]
                 self._balance += result['pnl']
                 self._closed_trades.append(result)
                 closed.append(result)
-
+        self._quotes[bar.symbol] = bar.close
+        equity = self.get_equity()
+        self._equity_peak = max(self._equity_peak, equity)
+        if self._equity_peak > 0:
+            self.max_equity_drawdown_pct = max(self.max_equity_drawdown_pct,
+                                               (self._equity_peak - equity) / self._equity_peak * 100)
         return closed
 
-    def _check_sl_tp(self, pos: dict, bar: BarEvent) -> dict | None:
+    def get_equity(self):
+        equity = self._balance
+        for pos in self._positions.values():
+            quote = self._quotes.get(pos['symbol'], pos['entry_price'])
+            exit_price = self._exit_price(quote, pos['symbol'], pos['direction'])
+            delta = exit_price - pos['entry_price']
+            if pos['direction'] == 'SELL':
+                delta = -delta
+            equity += delta / config.PIP_SIZE[pos['symbol']] * self.pip_value(pos['symbol'], exit_price) * pos['lot_size']
+            equity -= self._commission(pos['symbol']) * pos['lot_size']
+        return equity
+
+    def _commission(self, symbol):
+        return (self._commission_per_lot.get(symbol, config.COMMISSION_PER_LOT)
+                if isinstance(self._commission_per_lot, dict) else self._commission_per_lot)
+
+    def _check_sl_tp(self, pos: dict, bar: BarEvent, intrabar=False) -> dict | None:
         """
         Returns a closed trade dict if SL or TP was hit, otherwise None.
         If both are hit in the same bar, SL is assumed to have been hit first.
         """
-        # Break-even logic: move SL to entry once price reaches N×R in profit
-        if self._breakeven_at_r is not None and not pos.get('_be_active'):
-            sl_dist = abs(pos['entry_price'] - pos['sl'])
-            be_target = sl_dist * self._breakeven_at_r
-            if pos['direction'] == 'BUY':
-                if bar.high >= pos['entry_price'] + be_target:
-                    pos['_original_sl'] = pos['sl']
-                    pos['sl'] = pos['entry_price']
-                    pos['_be_active'] = True
-            else:
-                if bar.low <= pos['entry_price'] - be_target:
-                    pos['_original_sl'] = pos['sl']
-                    pos['sl'] = pos['entry_price']
-                    pos['_be_active'] = True
-
         if pos['direction'] == 'BUY':
             sl_hit = bar.low <= pos['sl']
-            tp_hit = bar.high >= pos['tp']
+            if not intrabar and bar.open >= pos['tp']:
+                sl_hit = False
+            tp_hit = (bar.close if intrabar else bar.high) >= pos['tp']
             if sl_hit:
-                exit_price = self._exit_price(pos['sl'], pos['symbol'], pos['direction'])
+                exit_price = pos['sl'] if intrabar else min(pos['sl'], bar.open)
                 result = 'BE' if pos.get('_be_active') else 'LOSS'
             elif tp_hit:
-                exit_price, result = self._exit_price(pos['tp'], pos['symbol'], pos['direction']), 'WIN'
+                exit_price, result = pos['tp'], 'WIN'
             else:
+                self._update_breakeven(pos, bar)
                 return None
         else:  # SELL
             ask_high = bar.high + self._spread_price(pos['symbol'])
             ask_low = bar.low + self._spread_price(pos['symbol'])
             sl_hit = ask_high >= pos['sl']
-            tp_hit = ask_low <= pos['tp']
+            if not intrabar and bar.open + self._spread_price(pos['symbol']) <= pos['tp']:
+                sl_hit = False
+            tp_hit = (bar.close + self._spread_price(pos['symbol']) if intrabar else ask_low) <= pos['tp']
             if sl_hit:
-                exit_price = self._exit_price(pos['sl'], pos['symbol'], pos['direction'])
+                exit_price = pos['sl'] if intrabar else max(pos['sl'], bar.open + self._spread_price(pos['symbol']))
                 result = 'BE' if pos.get('_be_active') else 'LOSS'
             elif tp_hit:
-                exit_price, result = self._exit_price(pos['tp'], pos['symbol'], pos['direction']), 'WIN'
+                exit_price, result = pos['tp'], 'WIN'
             else:
+                self._update_breakeven(pos, bar)
                 return None
 
         pip_size  = config.PIP_SIZE.get(pos['symbol'], 0.0001)
-        pip_value = config.PIP_VALUE_USD.get(pos['symbol'], 10.0)
+        pip_value = self.pip_value(pos['symbol'], exit_price)
 
         open_time = pos.get('open_time')
-        duration_hours = round((bar.timestamp - open_time).total_seconds() / 3600, 1) if open_time else None
+        duration_hours = round((bar_close_time(bar) - open_time).total_seconds() / 3600, 1) if open_time else None
         signal_time = pos.get('signal_time')
         pending_hours = round((open_time - signal_time).total_seconds() / 3600, 1) if (open_time and signal_time) else None
 
@@ -218,7 +278,11 @@ class SimulatedExecution(BaseExecution):
         pnl = pips * pip_value * pos['lot_size'] - commission
         original_sl = pos.get('_original_sl', pos['sl'])
         sl_pips = abs(pos['entry_price'] - original_sl) / pip_size
-        r_multiple = round(pips / sl_pips, 2) if sl_pips > 0 else 0.0
+        initial_risk = pos.get('initial_risk') or sl_pips * pip_value * pos['lot_size']
+        gross_r = (pnl + commission) / initial_risk if initial_risk else 0.0
+        net_r = pnl / initial_risk if initial_risk else 0.0
+        exit_reason = result
+        result = 'WIN' if pnl > 0 else 'LOSS' if pnl < 0 else 'BE'
 
         return {
             'ticket':        pos['ticket'],
@@ -234,12 +298,32 @@ class SimulatedExecution(BaseExecution):
             'duration_hours': duration_hours,
             'lot_size':      pos['lot_size'],
             'result':        result,
-            'r_multiple':    r_multiple,
-            'pnl':           round(pnl, 2),
+            'r_multiple':    net_r,
+            'net_r':         net_r,
+            'gross_r':       gross_r,
+            'initial_risk':  initial_risk,
+            'exit_reason':   exit_reason,
+            'pnl':           pnl,
             'commission':    round(commission, 2),
             'open_time':     open_time,
-            'close_time':    bar.timestamp,
+            'close_time':    bar_close_time(bar),
         }
+
+    def _update_breakeven(self, pos, bar):
+        # Break-even logic: move SL to entry once price reaches N×R in profit
+        if self._breakeven_at_r is not None and not pos.get('_be_active'):
+            sl_dist = abs(pos['entry_price'] - pos['sl'])
+            be_target = sl_dist * self._breakeven_at_r
+            if pos['direction'] == 'BUY':
+                if bar.high >= pos['entry_price'] + be_target:
+                    pos['_original_sl'] = pos['sl']
+                    pos['sl'] = pos['entry_price']
+                    pos['_be_active'] = True
+            else:
+                if bar.low <= pos['entry_price'] - be_target:
+                    pos['_original_sl'] = pos['sl']
+                    pos['sl'] = pos['entry_price']
+                    pos['_be_active'] = True
 
     def _recalc_tp(self, pos: dict):
         """Recalculate TP from actual fill price so R:R is measured from real entry.
@@ -248,9 +332,9 @@ class SimulatedExecution(BaseExecution):
             return
         sl_dist = abs(pos['entry_price'] - pos['sl'])
         if pos['direction'] == 'BUY':
-            pos['tp'] = pos['entry_price'] + sl_dist * self._rr_ratio
+            pos['tp'] = pos['entry_price'] + sl_dist * pos.get('requested_rr', self._rr_ratio)
         else:
-            pos['tp'] = pos['entry_price'] - sl_dist * self._rr_ratio
+            pos['tp'] = pos['entry_price'] - sl_dist * pos.get('requested_rr', self._rr_ratio)
 
     def _spread_price(self, symbol: str) -> float:
         pip_size = config.PIP_SIZE.get(symbol, 0.0001)

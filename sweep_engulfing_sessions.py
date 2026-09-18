@@ -87,15 +87,7 @@ def run_one(symbol: str, session_label: str, allowed_hours: tuple) -> dict:
 
     bars = bars_by_symbol[symbol]
     with contextlib.redirect_stdout(io.StringIO()):
-        for bar in bars:
-            closed_trades = engine.execution.check_fills(bar)
-            for trade in closed_trades:
-                engine.portfolio.record_close(
-                    trade['symbol'], trade['pnl'], trade.get('strategy_name', '')
-                )
-                engine.trade_logger.log_close(trade['ticket'], trade)
-                engine.event_engine.notify_trade_closed(trade)
-            engine.event_engine.process_bar(bar)
+        engine.replay(bars)
 
     trades = engine.execution.get_closed_trades()
     n = len(trades)

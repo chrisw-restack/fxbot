@@ -94,12 +94,16 @@ def run_diagnostic_backtest(bars, symbols, candidate):
     risk = RiskManager(
         account_balance_fn=execution.get_account_balance,
         rr_ratio=strategy.rr_ratio,
+        loss_per_lot_fn=execution.loss_per_lot,
     )
 
     ticket_context = {}
     closed_with_context = []
 
+    from data.historical_loader import bar_close_time
+    execution.configure_timeframes(bars)
     for bar in bars:
+        portfolio.set_current_date(bar_close_time(bar).date())
         closed = execution.check_fills(bar)
         for trade in closed:
             portfolio.record_close(trade['symbol'], trade['pnl'], trade.get('strategy_name', ''))
@@ -111,7 +115,10 @@ def run_diagnostic_backtest(bars, symbols, candidate):
             elif trade.get('result') == 'WIN':
                 strategy.notify_win(trade['symbol'])
 
-        portfolio.set_current_date(bar.timestamp.date())
+        for rejected in execution.take_rejected_orders():
+            portfolio.record_close(rejected['symbol'], 0., rejected['strategy_name'])
+            ticket_context.pop(rejected['ticket'], None)
+            strategy.notify_signal_rejected(rejected['symbol'])
         if bar.symbol not in symbols or bar.timeframe not in strategy.TIMEFRAMES:
             continue
 
@@ -148,6 +155,7 @@ def run_diagnostic_backtest(bars, symbols, candidate):
             entry_timeframe=enriched.entry_timeframe,
             tp_locked=enriched.tp_locked,
             signal_time=enriched.timestamp,
+            risk_budget=enriched.risk_budget,
         )
         if ticket:
             portfolio.record_open(enriched, ticket)

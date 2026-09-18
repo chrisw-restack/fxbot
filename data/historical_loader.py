@@ -1,5 +1,7 @@
 import os
 import logging
+import json
+from pathlib import Path
 from datetime import datetime, timedelta
 
 import pandas as pd
@@ -33,6 +35,7 @@ def load_csv(
     filepath: str,
     start: datetime | None = None,
     end: datetime | None = None,
+    time_basis: str | None = None,
 ) -> list[BarEvent]:
     """
     Load a historical CSV and return a list of BarEvents sorted by timestamp.
@@ -83,17 +86,28 @@ def load_csv(
         logger.warning(f"CSV {filename} has no volume column — defaulting to 0")
         df[vol_col] = 0
 
-    # Detect whether data is already UTC (Dukascopy) or server time (MT5/ICMarkets).
-    # UTC data has Sunday bars (market opens ~22:00 UTC Sunday); server-time data never does.
-    is_utc_normalized_mt5 = 'mt5_icmarkets_utc' in os.path.normpath(filepath).split(os.sep)
-    has_sunday = (df['time'].dt.dayofweek == 6).any()
-    if is_utc_normalized_mt5:
-        logger.info(f"CSV {filename} is from UTC-normalized MT5 data — no conversion needed")
-    elif has_sunday:
-        logger.info(f"CSV {filename} appears to be UTC (has Sunday bars) — no conversion needed")
-    else:
-        logger.info(f"CSV {filename} appears to be server time — converting to UTC")
+    # Source contracts replace the unreliable Sunday-bar heuristic. Repository
+    # Dukascopy/HistData exports are UTC; raw IC Markets exports have their own folder.
+    # External legacy exports can pass time_basis='icmarkets' or use a sidecar.
+    metadata_path = Path(str(filepath) + '.meta.json')
+    metadata = json.loads(metadata_path.read_text(encoding='utf-8')) if metadata_path.exists() else {}
+    path_parts = Path(filepath).parts
+    basis = time_basis or metadata.get('time_basis') or (
+        'icmarkets' if 'mt5_icmarkets' in path_parts else 'utc'
+    )
+    if basis not in ('utc', 'icmarkets'):
+        raise ValueError(f'Unknown time_basis {basis!r} for {filepath}')
+    is_utc_normalized_mt5 = (
+        'mt5_icmarkets_utc' in path_parts or basis == 'icmarkets'
+        or metadata.get('session_origin') == 'icmarkets'
+    )
+    if df['time'].dt.tz is not None:
+        if basis != 'utc':
+            raise ValueError('Broker wall-clock input must be timezone-naive')
+        df['time'] = df['time'].dt.tz_convert('UTC').dt.tz_localize(None)
+    elif basis == 'icmarkets':
         df['time'] = df['time'].apply(lambda t: _server_to_utc(t.to_pydatetime()))
+    logger.info('CSV %s time basis: %s', filename, basis)
 
     # Filter out weekend D1 bars from non-MT5 data.
     # Dukascopy generates D1 bars for Saturdays/Sundays with minimal volume.
@@ -115,17 +129,9 @@ def load_csv(
         df = df[df['time'] < end]
 
     events = [
-        BarEvent(
-            symbol=symbol,
-            timeframe=timeframe,
-            timestamp=row['time'],
-            open=float(row['open']),
-            high=float(row['high']),
-            low=float(row['low']),
-            close=float(row['close']),
-            volume=float(row[vol_col]),
-        )
-        for _, row in df.iterrows()
+        BarEvent(symbol, timeframe, row.time, float(row.open), float(row.high),
+                 float(row.low), float(row.close), float(getattr(row, vol_col)))
+        for row in df.itertuples(index=False)
     ]
 
     logger.info(f"Loaded {len(events)} bars from {filepath} ({symbol} {timeframe})")
@@ -200,6 +206,7 @@ def load_and_merge(
     csv_paths: list[str],
     start: datetime | None = None,
     end: datetime | None = None,
+    time_basis: str | None = None,
 ) -> list[BarEvent]:
     """
     Load multiple CSV files and return all BarEvents merged and sorted by
@@ -214,7 +221,7 @@ def load_and_merge(
     """
     all_events: list[BarEvent] = []
     for path in csv_paths:
-        all_events.extend(load_csv(path, start=start, end=end))
+        all_events.extend(load_csv(path, start=start, end=end, time_basis=time_basis))
 
     # Deduplicate: same symbol + timeframe + timestamp = duplicate bar
     seen: set[tuple[str, str, datetime]] = set()

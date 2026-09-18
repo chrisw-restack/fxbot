@@ -232,6 +232,12 @@ class TradeJournal:
         if execution_details:
             row['entry_price_actual'] = _round(execution_details.get('fill_price'))
             row['spread_pips'] = execution_details.get('spread_pips', '')
+            row['lot_size'] = execution_details.get('volume', row.get('lot_size', ''))
+            row['stop_loss'] = execution_details.get('sl', row.get('stop_loss', ''))
+            row['take_profit'] = execution_details.get('tp', row.get('take_profit', ''))
+            details_context = dict(context or {})
+            details_context['execution'] = execution_details
+            row['context_json'] = json.dumps(_json_safe(details_context), sort_keys=True)
         self._write(row)
 
     def log_cancel_requested(self, signal: Signal, context: dict | None = None):

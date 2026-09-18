@@ -67,14 +67,7 @@ def _run_threshold(threshold: float) -> dict:
         engine.add_strategy(strategy, symbols=[symbol])
 
         with contextlib.redirect_stdout(io.StringIO()):
-            for bar in bars:
-                closed = engine.execution.check_fills(bar)
-                for trade in closed:
-                    engine.portfolio.record_close(
-                        trade['symbol'], trade['pnl'], trade.get('strategy_name', ''))
-                    engine.trade_logger.log_close(trade['ticket'], trade)
-                    engine.event_engine.notify_trade_closed(trade)
-                engine.event_engine.process_bar(bar)
+            engine.replay(bars)
 
         all_trades.extend(engine.execution.get_closed_trades())
 

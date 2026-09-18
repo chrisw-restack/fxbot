@@ -601,3 +601,10 @@ class EmaFibRunningStrategy:
             'fvg_bear': self._fvg_since_fractal_high.get(symbol, False),
             'blocker': f'PENDING {pending} @ {self._pending_entry[symbol]:.5f}' if pending else 'READY',
         }
+
+    def notify_signal_rejected(self, symbol: str):
+        """Release an unsubmitted proposal, retaining indicators and setup context."""
+        self._pending_entry[symbol] = None
+        self._pending_direction[symbol] = None
+        self._pending_anchor_low[symbol] = None
+        self._pending_anchor_high[symbol] = None

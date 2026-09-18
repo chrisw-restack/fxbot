@@ -17,6 +17,7 @@ def recover_offline_journal_orders(
     notifier,
     current_positions: list[dict],
     logger: logging.Logger,
+    on_close=None,
 ) -> tuple[int, int, list[int]]:
     """Backfill broker outcomes that occurred while the Python bot was offline."""
     recovered_closes = 0
@@ -34,6 +35,8 @@ def recover_offline_journal_orders(
         closed = execution.get_recent_closed_trade(pos, lookback_days=30)
         if closed is not None:
             trade_journal.log_close(closed)
+            if on_close is not None:
+                on_close(closed)
             notifier.notify_order_closed(
                 symbol=closed['symbol'],
                 direction=closed['direction'],
@@ -61,3 +64,17 @@ def recover_offline_journal_orders(
             unresolved_open.append(ticket)
 
     return recovered_closes, recovered_cancellations, unresolved_open
+
+
+def apply_trade_updates(event_engine, trades, through):
+    """Apply recovered outcomes in UTC order during completed-bar catch-up."""
+    from datetime import timezone
+    def utc_naive(value):
+        return value.astimezone(timezone.utc).replace(tzinfo=None) if value.tzinfo else value
+    remaining = []
+    for trade in sorted(trades, key=lambda t: utc_naive(t['close_time'])):
+        if utc_naive(trade['close_time']) <= utc_naive(through):
+            event_engine.notify_trade_closed(trade)
+        else:
+            remaining.append(trade)
+    return remaining

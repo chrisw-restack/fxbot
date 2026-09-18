@@ -44,6 +44,11 @@ SYMBOL_CURRENCIES = {
     'NZDUSD': ['NZD', 'USD'],
     'USDJPY': ['USD', 'JPY'],
     'USDCAD': ['USD', 'CAD'],
+    'USDCHF': ['USD', 'CHF'],
+    'XAUUSD': ['USD'],
+    'USTEC': ['USD'], 'US30': ['USD'], 'US500': ['USD'],
+    'USA100': ['USD'], 'USA30': ['USD'], 'USA500': ['USD'],
+    'DE40': ['EUR'],
 }
 
 DEFAULT_CSV = os.path.join('data', 'news', 'forex_factory_calendar.csv')
@@ -136,12 +141,13 @@ class NewsFilter:
 
         Returns True if blocked, False if clear.
         """
+        timestamp = self._utc_naive(timestamp)
         if not self._events:
             return False
 
-        currencies = SYMBOL_CURRENCIES.get(symbol, [])
-        window_start = timestamp - self.block_before
-        window_end = timestamp + self.block_after
+        currencies = SYMBOL_CURRENCIES.get(symbol, list((symbol[:3], symbol[3:])))
+        window_start = timestamp - self.block_after
+        window_end = timestamp + self.block_before
 
         for ccy in currencies:
             ts_list = self._timestamps.get(ccy)
@@ -170,12 +176,13 @@ class NewsFilter:
         Return all events within the block window for a symbol at a given time.
         Returns list of (datetime, currency, event_name).
         """
+        timestamp = self._utc_naive(timestamp)
         if not self._events:
             return []
 
-        currencies = SYMBOL_CURRENCIES.get(symbol, [])
-        window_start = timestamp - self.block_before
-        window_end = timestamp + self.block_after
+        currencies = SYMBOL_CURRENCIES.get(symbol, list((symbol[:3], symbol[3:])))
+        window_start = timestamp - self.block_after
+        window_end = timestamp + self.block_before
         results = []
 
         for ccy in currencies:
@@ -191,3 +198,8 @@ class NewsFilter:
                 results.append((event_time, ccy, event_name))
 
         return sorted(results)
+
+    @staticmethod
+    def _utc_naive(timestamp):
+        from datetime import timezone
+        return timestamp.astimezone(timezone.utc).replace(tzinfo=None) if timestamp.tzinfo else timestamp

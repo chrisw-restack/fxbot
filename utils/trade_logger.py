@@ -32,6 +32,10 @@ class TradeLogger:
             f"tp={signal.take_profit:.5f}  lots={signal.lot_size} | {signal.strategy_name}"
         )
 
+    def discard_unfilled(self, ticket: int):
+        """Remove an order rejected at simulated fill without logging a trade."""
+        self._open_trades.pop(ticket, None)
+
     def log_close(self, ticket: int, trade: dict):
         self._closed_trades.append(trade)
         self._open_trades.pop(ticket, None)

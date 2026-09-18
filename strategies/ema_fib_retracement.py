@@ -624,3 +624,11 @@ class EmaFibRetracementStrategy:
         if ema_fast is None or ema_slow is None:
             return None
         return 'BUY' if ema_fast > ema_slow else 'SELL'
+
+    def notify_signal_rejected(self, symbol: str):
+        """Release an unsubmitted proposal, retaining indicators and setup context."""
+        self._pending_entry[symbol] = None
+        self._pending_direction[symbol] = None
+        self._pending_swing_high[symbol] = None
+        self._pending_swing_low[symbol] = None
+        self._pending_placed_bar[symbol] = None

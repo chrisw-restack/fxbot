@@ -2,11 +2,13 @@ import logging
 import re
 import time
 from datetime import datetime, timedelta, timezone
-from math import floor
+from collections import defaultdict
+import config
+from risk.validation import positive, valid_levels, floor_volume
 
 import MetaTrader5 as mt5
 
-from data.mt5_data import mt5_time_to_utc
+from data.mt5_data import mt5_time_to_utc, validate_demo_account
 from execution.base_execution import BaseExecution
 
 logger = logging.getLogger(__name__)
@@ -27,13 +29,14 @@ MT5_TIMEFRAME_MAP = {
 
 class MT5Execution(BaseExecution):
 
-    def __init__(self, magic_numbers: dict[str, int] | None = None):
+    def __init__(self, magic_numbers: dict[str, int] | None = None, expected_account=None):
         """
         magic_numbers: maps strategy NAME → MT5 magic integer.
         When provided, every order is tagged and get_open_positions filters
         to only return positions belonging to this bot.
         """
         self._magic_numbers = magic_numbers or {}
+        self._expected_account = expected_account
         if len(set(self._magic_numbers.values())) != len(self._magic_numbers):
             raise ValueError("MT5 magic numbers must be unique per strategy")
         self._known_magic: set[int] = set(self._magic_numbers.values())
@@ -83,19 +86,65 @@ class MT5Execution(BaseExecution):
     def _normalize_volume(self, symbol: str, volume: float) -> float:
         info = mt5.symbol_info(symbol)
         if info is None:
-            return volume
+            raise RuntimeError(f'MT5 volume rules unavailable: {symbol}')
         step = getattr(info, 'volume_step', 0.01) or 0.01
         min_vol = getattr(info, 'volume_min', step) or step
         max_vol = getattr(info, 'volume_max', volume) or volume
         # Round down so risk is not accidentally increased by broker volume steps.
-        normalized = floor(volume / step) * step
-        normalized = max(min_vol, min(max_vol, normalized))
-        return round(normalized, 10)
+        return floor_volume(volume, step, min_vol, max_vol)
+
+    def volume_limits(self, symbol: str) -> dict:
+        info = mt5.symbol_info(symbol)
+        if info is None:
+            raise RuntimeError(f'MT5 symbol information unavailable: {symbol}')
+        return dict(step=info.volume_step, minimum=info.volume_min, maximum=info.volume_max)
+
+    def signal_entry_price(self, signal) -> float:
+        if signal.order_type != 'MARKET':
+            return self._normalize_price(signal.symbol, signal.entry_price)
+        tick = mt5.symbol_info_tick(signal.symbol)
+        if tick is None or not positive(tick.ask) or not positive(tick.bid):
+            raise RuntimeError(f'MT5 quote unavailable: {signal.symbol}')
+        return tick.ask if signal.direction == 'BUY' else tick.bid
+
+    def loss_per_lot(self, symbol, direction, entry, sl) -> float:
+        order_type = mt5.ORDER_TYPE_BUY if direction == 'BUY' else mt5.ORDER_TYPE_SELL
+        loss = mt5.order_calc_profit(order_type, symbol, 1.0, entry, sl)
+        if loss is None or not positive(-loss):
+            raise RuntimeError(f'MT5 stop-risk calculation failed: {symbol}')
+        return -loss
+
+    def get_daily_loss(self, now: datetime) -> float:
+        """Gross losing position cash flows realized today, including deal costs.
+
+        Query a padded server-time window, then filter converted UTC timestamps.
+        Group partial deals by position; do not confuse a failed query with zero loss.
+        """
+        deals = mt5.history_deals_get(now - timedelta(days=2), now + timedelta(days=1))
+        if deals is None:
+            raise RuntimeError(f'MT5 daily deal history unavailable: {self._last_error_text()}')
+        pnl_by_position = defaultdict(float)
+        seen = set()
+        for deal in deals:
+            if deal.ticket in seen:
+                continue
+            seen.add(deal.ticket)
+            if self._known_magic and deal.magic not in self._known_magic:
+                continue
+            if deal.type not in (mt5.ORDER_TYPE_BUY, mt5.ORDER_TYPE_SELL):
+                continue
+            timestamp = self._mt5_timestamp_utc(deal.time)
+            if timestamp.date() != now.date() or timestamp > now:
+                continue
+            pnl_by_position[deal.position_id] += sum(
+                getattr(deal, field, 0.0) for field in ('profit', 'swap', 'commission', 'fee')
+            )
+        return sum(-pnl for pnl in pnl_by_position.values() if pnl < 0)
 
     def _normalize_price(self, symbol: str, price: float) -> float:
         info = mt5.symbol_info(symbol)
         if info is None:
-            return price
+            raise RuntimeError(f'MT5 price rules unavailable: {symbol}')
         tick_size = getattr(info, 'trade_tick_size', 0.0) or getattr(info, 'point', 0.0)
         digits = getattr(info, 'digits', 5)
         if tick_size:
@@ -121,9 +170,17 @@ class MT5Execution(BaseExecution):
         entry_timeframe: str | None = None,  # informational — MT5 handles fills natively
         tp_locked: bool = False,              # informational — MT5 uses the tp price directly
         signal_time=None,                     # informational — not used by MT5 execution
+        risk_budget: float | None = None,
     ) -> int:
         self._last_order_details = None
         self._last_order_error = None
+        if self._expected_account is not None:
+            validate_demo_account(mt5.account_info(), **self._expected_account)
+        if order_type not in ('MARKET', 'PENDING') or not valid_levels(
+            direction, entry_price, sl, tp, config.MIN_RR_RATIO
+        ) or not positive(lot_size):
+            self._last_order_error = {'stage': 'risk_validation', 'broker_comment': 'invalid order levels or volume'}
+            return 0
         info = mt5.symbol_info(symbol)
         if info is None:
             logger.error(f"Could not get symbol info for {symbol}")
@@ -188,15 +245,40 @@ class MT5Execution(BaseExecution):
         }
         request = self._normalize_request_prices(symbol, request)
 
+        # Refresh R:R and size using the actual request, after broker rounding.
+        if order_type == 'MARKET' and not tp_locked:
+            rr = abs(tp - entry_price) / abs(entry_price - sl)
+            distance = abs(request['price'] - request['sl']) * rr
+            request['tp'] = self._normalize_price(
+                symbol, request['price'] + distance if direction == 'BUY' else request['price'] - distance
+            )
+        if not valid_levels(direction, request['price'], request['sl'], request['tp'], config.MIN_RR_RATIO):
+            self._last_order_error = {'stage': 'risk_validation', 'broker_comment': 'executable levels violate minimum R:R'}
+            return 0
+        if risk_budget is not None:
+            if not positive(risk_budget):
+                return 0
+            loss = self.loss_per_lot(symbol, direction, request['price'], request['sl'])
+            request['volume'] = self._normalize_volume(symbol, min(lot_size, risk_budget / loss))
+        if not positive(request['volume']):
+            self._last_order_error = {'stage': 'risk_validation', 'broker_comment': 'minimum lot exceeds risk budget'}
+            return 0
+
         check_result = None
         if hasattr(mt5, 'order_check'):
             try:
                 check_result = mt5.order_check(request)
             except Exception as exc:
-                logger.warning(f"MT5 order_check failed for {symbol}: {exc}")
+                raise RuntimeError(f'MT5 order_check failed for {symbol}') from exc
+            if check_result is None:
+                raise RuntimeError(f'MT5 order_check unavailable for {symbol}')
 
-        result = mt5.order_send(request)
+        # A failed preflight is a rejected order, not permission to send it anyway.
+        result = (check_result if check_result is not None and check_result.retcode != 0
+                  else mt5.order_send(request))
         success_codes = {mt5.TRADE_RETCODE_DONE}
+        if hasattr(mt5, 'TRADE_RETCODE_DONE_PARTIAL'):
+            success_codes.add(mt5.TRADE_RETCODE_DONE_PARTIAL)
         if order_type != 'MARKET' and hasattr(mt5, 'TRADE_RETCODE_PLACED'):
             success_codes.add(mt5.TRADE_RETCODE_PLACED)
 
@@ -256,11 +338,21 @@ class MT5Execution(BaseExecution):
             return 0
 
         fill_price = getattr(result, 'price', None) or price
+        fill_risk = abs(fill_price - request['sl'])
+        fill_reward = request['tp'] - fill_price if direction == 'BUY' else fill_price - request['tp']
+        fill_rr = fill_reward / fill_risk if fill_risk else 0.0
+        if order_type == 'MARKET' and fill_rr + 1e-10 < config.MIN_RR_RATIO:
+            logger.error('Actual fill R:R below minimum: %s ticket=%s rr=%s', symbol, result.order, fill_rr)
         self._last_order_details = {
             'ticket': result.order,
             'deal': getattr(result, 'deal', 0),
             'fill_price': fill_price,
             'request_price': price,
+            'volume': getattr(result, 'volume', 0) or request['volume'],
+            'sl': request['sl'],
+            'tp': request['tp'],
+            'fill_rr': fill_rr,
+            'risk_budget': risk_budget,
             'bid': getattr(tick, 'bid', None),
             'ask': getattr(tick, 'ask', None),
             'spread_pips': round(spread_pips, 2) if spread_pips is not None else '',
@@ -380,6 +472,8 @@ class MT5Execution(BaseExecution):
 
         # Filled/open positions — filter to bot-owned trades when magic numbers are configured
         positions = mt5.positions_get()
+        if positions is None:
+            raise RuntimeError(f'MT5 position query failed: {self._last_error_text()}')
         if positions:
             result.extend([
                 {
@@ -408,6 +502,8 @@ class MT5Execution(BaseExecution):
         # Broker-generated close orders, such as temporary SL/TP market orders, are
         # not strategy slots and must not be tracked as separate positions.
         orders = mt5.orders_get()
+        if orders is None:
+            raise RuntimeError(f'MT5 order query failed: {self._last_error_text()}')
         if orders:
             buy_pending_types = {
                 mt5.ORDER_TYPE_BUY_LIMIT,
@@ -447,7 +543,11 @@ class MT5Execution(BaseExecution):
 
     def get_account_balance(self) -> float:
         info = mt5.account_info()
-        return info.balance if info else 0.0
+        if self._expected_account is not None:
+            validate_demo_account(info, **self._expected_account)
+        if info is None or not positive(info.balance):
+            raise RuntimeError(f'MT5 balance unavailable or non-positive: {self._last_error_text()}')
+        return info.balance
 
     def get_historical_order_state(self, tracked_pos: dict) -> str | None:
         """Return CANCELLED, FILLED, ACTIVE, or None for a broker-history order."""
