@@ -3,14 +3,14 @@ Download and convert free HistData M1 bars into this project's CSV format.
 
 HistData source notes:
 - Free web downloads are organized by symbol/year/month ZIP files.
-- M1 bar timestamps are treated as New York local market time.
-- This script converts timestamps to naive UTC using New York DST rules.
+- HistData's FAQ declares fixed EST, but supplied years can follow US or European DST.
+- Conversion requires hash-bound clock verification; it never guesses the clock.
 - Output files are written under data/historical/histdata/ so backtests can use:
       python run_backtest.py live_suite --data-source histdata
 
 Usage examples:
     python fetch_data_histdata.py --symbols EURUSD GBPUSD --timeframes M5 M15 H1 H4 D1
-    python fetch_data_histdata.py --symbols EURUSD --start-year 2016 --end-date 2026-03-20 --insecure
+    python fetch_data_histdata.py --symbols EURUSD --start-year 2016 --end-date 2026-03-20 --download-only
     python fetch_data_histdata.py --from-zip-dir data/raw/histdata --symbols EURUSD --timeframes H1 D1
 """
 
@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import io
+import json
 import os
 import re
 import ssl
@@ -25,11 +26,12 @@ import time
 import urllib.parse
 import urllib.request
 import zipfile
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
-from zoneinfo import ZoneInfo
-
+import certifi
 import pandas as pd
+from data.histdata_provenance import (file_hash, metadata_path, read_raw_archive,
+    verified_archive_metadata, to_utc, validate_frame, write_json)
 
 
 BASE_URL = 'https://www.histdata.com'
@@ -84,7 +86,7 @@ def build_periods(start_year: int, end_date: datetime) -> list[tuple[int, int | 
 
 
 def make_context(insecure: bool):
-    return ssl._create_unverified_context() if insecure else None
+    return ssl._create_unverified_context() if insecure else ssl.create_default_context(cafile=certifi.where())
 
 
 def fetch_html(url: str, context) -> str:
@@ -109,6 +111,10 @@ def download_zip(symbol: str, year: int, month: int | None, raw_dir: Path, conte
 
     html = fetch_html(period_url, context)
     fields = parse_hidden_form(html)
+    suffix = f'{year}{month:02d}' if month is not None else str(year)
+    expected = dict(fxpair=symbol.upper(), timeframe='M1', platform='ASCII', date=str(year), datemonth=suffix)
+    if any(fields.get(k) != value for k, value in expected.items()):
+        raise ValueError(f'HistData form does not match requested archive: {expected}')
     body = urllib.parse.urlencode(fields).encode('ascii')
     req = urllib.request.Request(
         f'{BASE_URL}/get.php',
@@ -121,44 +127,57 @@ def download_zip(symbol: str, year: int, month: int | None, raw_dir: Path, conte
     )
     with urllib.request.urlopen(req, timeout=180, context=context) as response:
         data = response.read()
+        final_url = response.geturl()
+    if urllib.parse.urlsplit(final_url).scheme != 'https' or urllib.parse.urlsplit(final_url).hostname not in ('histdata.com', 'www.histdata.com'):
+        raise ValueError(f'Unexpected HistData download origin: {final_url}')
 
     if not zipfile.is_zipfile(io.BytesIO(data)):
         raise RuntimeError(f'HistData did not return a ZIP for {symbol} {year}/{month or ""}')
 
     raw_dir.mkdir(parents=True, exist_ok=True)
-    suffix = f'{year}{month:02d}' if month is not None else str(year)
     path = raw_dir / f'DAT_ASCII_{symbol.upper()}_M1_{suffix}.zip'
-    path.write_bytes(data)
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        expected_member = path.stem + '.csv'
+        if len([n for n in archive.namelist() if Path(n).name.upper() == expected_member.upper()]) != 1 or archive.testzip() is not None:
+            raise ValueError(f'Invalid HistData archive members or CRC: {path.name}')
+    temporary = path.with_suffix('.zip.part')
+    temporary.write_bytes(data)
+    temporary.replace(path)
+    write_json(metadata_path(path), dict(schema_version=1, provider='HistData',
+        source_url=period_url, download_url=final_url, downloaded_at_utc=datetime.now(timezone.utc).isoformat(),
+        tls_verified=context is None or context.verify_mode == ssl.CERT_REQUIRED,
+        source_symbol=symbol.upper(), period=suffix, sha256=file_hash(path), size_bytes=len(data)))
     return path
 
 
 def find_zip(raw_dir: Path, symbol: str, year: int, month: int | None) -> Path | None:
     suffix = f'{year}{month:02d}' if month is not None else str(year)
-    matches = sorted(raw_dir.glob(f'*{symbol.upper()}*M1*{suffix}*.zip'))
+    matches = sorted(raw_dir.glob(f'DAT_ASCII_{symbol.upper()}_M1_{suffix}.zip'))
     return matches[0] if matches else None
 
 
-def read_histdata_zip(path: Path) -> pd.DataFrame:
-    with zipfile.ZipFile(path) as zf:
-        names = [name for name in zf.namelist() if name.lower().endswith(('.csv', '.txt'))]
-        if not names:
-            raise ValueError(f'No CSV/TXT file found inside {path}')
-        with zf.open(names[0]) as f:
-            df = pd.read_csv(
-                f,
-                sep=';',
-                header=None,
-                names=['time_est', 'open', 'high', 'low', 'close', 'volume'],
-            )
+def has_verified_download(path: Path) -> bool:
+    """An old cached ZIP cannot stand in for an authenticated download receipt."""
+    try:
+        meta = json.loads(metadata_path(path).read_text(encoding='utf-8'))
+        return (meta.get('schema_version') == 1 and meta.get('provider') == 'HistData'
+                and meta.get('tls_verified') is True and meta.get('sha256') == file_hash(path)
+                and bool(meta.get('source_url')))
+    except (OSError, ValueError):
+        return False
 
-    local_time = pd.to_datetime(df['time_est'], format='%Y%m%d %H%M%S')
-    df['time'] = (
-        local_time
-        .dt.tz_localize(ZoneInfo('America/New_York'), ambiguous='infer', nonexistent='shift_forward')
-        .dt.tz_convert('UTC')
-        .dt.tz_localize(None)
-    )
-    return df[['time', 'open', 'high', 'low', 'close', 'volume']]
+
+def read_histdata_zip(path: Path) -> pd.DataFrame:
+    meta = verified_archive_metadata(path)
+    cleanup = meta['clock_verification'].get('raw_cleanup', {})
+    quarantine = cleanup.get('conflict_policy') == 'exclude_all_versions_and_intersecting_candles'
+    df = read_raw_archive(path, quarantine_conflicts=quarantine)
+    if df.attrs['raw_cleanup'] != cleanup:
+        raise ValueError(f'Archive cleanup differs from its verified clock evidence: {path}')
+    df['time'] = to_utc(df['time'], meta['clock_verification']['source_clock'])
+    validate_frame(df, str(path))
+    df.attrs['histdata_source'] = meta
+    return df
 
 
 def round_prices(df: pd.DataFrame, symbol: str) -> pd.DataFrame:
@@ -195,8 +214,26 @@ def resample(df_m1: pd.DataFrame, timeframe: str) -> pd.DataFrame:
     return ohlc
 
 
-def save_timeframe(df_m1: pd.DataFrame, symbol: str, timeframe: str, output_dir: Path):
+def save_timeframe(df_m1: pd.DataFrame, symbol: str, timeframe: str, output_dir: Path, sources=None):
+    if not sources or any(s.get('clock_verification', {}).get('status') != 'verified'
+                           or not s.get('sha256') or not s.get('source_url') or s.get('tls_verified') is not True
+                           for s in sources):
+        raise ValueError('Verified source receipts are required before writing HistData CSVs')
     df = resample(df_m1, timeframe)
+    excluded = []
+    for source in sources:
+        proof = source['clock_verification']
+        local = proof.get('raw_cleanup', {}).get('conflicting_local_minutes', [])
+        if local:
+            excluded.extend(to_utc(pd.Series(pd.to_datetime(local)), proof['source_clock']).tolist())
+    # A candle built from the remaining minutes would conceal missing highs/lows.
+    # Remove the whole containing candle, including H4/D1, rather than invent OHLC.
+    excluded = sorted(set(excluded))
+    affected = pd.DatetimeIndex(excluded).floor(RESAMPLE_RULES[timeframe]).unique()
+    bad = df.time.isin(affected)
+    omitted_candles = int(bad.sum())
+    df = df.loc[~bad].reset_index(drop=True)
+    validate_frame(df, f'{symbol} {timeframe}')
     df = round_prices(df, symbol)
     output_dir.mkdir(parents=True, exist_ok=True)
     start = df['time'].iloc[0].strftime('%Y%m%d')
@@ -205,6 +242,14 @@ def save_timeframe(df_m1: pd.DataFrame, symbol: str, timeframe: str, output_dir:
     temp_path = path.with_suffix('.csv.part')
     df.to_csv(temp_path, index=False)
     temp_path.replace(path)
+    write_json(metadata_path(path), dict(schema_version=1, provider='HistData', provenance_status='verified',
+        time_basis='utc', price_basis='bid', symbol=symbol, timeframe=timeframe, sha256=file_hash(path),
+        resampling='UTC midnight aligned, left labelled, left closed; no invented missing candles',
+        converted_at_utc=datetime.now(timezone.utc).isoformat(), sources=sources,
+        data_quality=dict(conflict_policy='exclude_all_versions_and_intersecting_candles',
+            conflicting_utc_minutes=[str(t) for t in excluded],
+            resampled_candles_excluded=omitted_candles,
+            note='Known conflicting minutes and containing candles omitted; other provider gaps are not filled.')))
     print(f'  saved {path} ({len(df):,} rows)')
 
 
@@ -218,6 +263,7 @@ def parse_args():
     parser.add_argument('--output-dir', type=Path, default=OUTPUT_DIR)
     parser.add_argument('--from-zip-dir', type=Path, default=None, help='Convert existing HistData ZIPs instead of downloading.')
     parser.add_argument('--download-missing', action='store_true', help='With --from-zip-dir, download ZIPs not found locally.')
+    parser.add_argument('--download-only', action='store_true', help='Download raw archives and receipts; verify their clocks before converting.')
     parser.add_argument('--insecure', action='store_true', help='Disable SSL certificate verification for HistData downloads.')
     parser.add_argument('--sleep', type=float, default=1.0, help='Delay between HistData web downloads.')
     return parser.parse_args()
@@ -237,23 +283,32 @@ def main():
 
         print(f'\n{project_symbol}: collecting {len(periods)} ZIP periods')
         chunks = []
+        sources = []
         for year, month in periods:
             zip_path = find_zip(source_zip_dir, hist_symbol, year, month)
+            if zip_path is not None and args.from_zip_dir is None and not has_verified_download(zip_path):
+                zip_path = None
             if zip_path is None:
                 if args.from_zip_dir is not None and not args.download_missing:
-                    print(f'  missing local ZIP: {hist_symbol} {year}/{month or ""}')
-                    continue
+                    raise FileNotFoundError(f'Missing requested HistData period: {hist_symbol} {year}/{month or ""}')
                 print(f'  downloading {hist_symbol} {year}/{month or ""}...')
                 zip_path = download_zip(hist_symbol, year, month, args.raw_dir, context)
                 time.sleep(args.sleep)
-            chunks.append(read_histdata_zip(zip_path))
+            if not args.download_only:
+                chunk = read_histdata_zip(zip_path)
+                sources.append(chunk.attrs.pop('histdata_source'))
+                chunks.append(chunk)
+
+        if args.download_only:
+            continue
 
         if not chunks:
             print(f'  no data for {project_symbol}')
             continue
 
         df_m1 = pd.concat(chunks, ignore_index=True)
-        df_m1 = df_m1.drop_duplicates(subset=['time']).sort_values('time')
+        df_m1 = df_m1.sort_values('time').reset_index(drop=True)
+        validate_frame(df_m1, project_symbol)
         df_m1 = df_m1[df_m1['time'] < args.end_date]
 
         if df_m1.empty:
@@ -261,7 +316,7 @@ def main():
             continue
 
         for timeframe in args.timeframes:
-            save_timeframe(df_m1, project_symbol, timeframe, args.output_dir)
+            save_timeframe(df_m1, project_symbol, timeframe, args.output_dir, sources)
 
 
 if __name__ == '__main__':

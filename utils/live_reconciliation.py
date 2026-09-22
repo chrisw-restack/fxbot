@@ -11,6 +11,16 @@ def _same_strategy_slot(expected: dict, current: dict) -> bool:
     )
 
 
+def same_broker_position(expected, current):
+    """Match confirmed order/position identifiers, never just a strategy slot."""
+    if not _same_strategy_slot(expected, current):
+        return False
+    old_order = expected.get('origin_order_ticket') or expected.get('ticket')
+    new_order = current.get('origin_order_ticket') or current.get('ticket')
+    return bool(old_order and old_order == new_order) or bool(
+        expected.get('position_id') and expected['position_id'] == current.get('position_id'))
+
+
 def recover_offline_journal_orders(
     execution,
     trade_journal,
@@ -18,6 +28,7 @@ def recover_offline_journal_orders(
     current_positions: list[dict],
     logger: logging.Logger,
     on_close=None,
+    on_cancel=None,
 ) -> tuple[int, int, list[int]]:
     """Backfill broker outcomes that occurred while the Python bot was offline."""
     recovered_closes = 0
@@ -25,10 +36,14 @@ def recover_offline_journal_orders(
     unresolved_open = []
     current_tickets = {pos['ticket'] for pos in current_positions}
 
-    for pos in trade_journal.get_unresolved_orders(max_age_days=30):
+    unresolved = {p['ticket']: p for p in trade_journal.get_unresolved_orders(max_age_days=30)}
+    ledger = getattr(execution, 'setup_ledger', None)
+    if ledger is not None:
+        unresolved.update({p['ticket']: p for p in ledger.unresolved_orders()})
+    for pos in unresolved.values():
         ticket = pos['ticket']
         if ticket in current_tickets or any(
-            _same_strategy_slot(pos, current) for current in current_positions
+            same_broker_position(pos, current) for current in current_positions
         ):
             continue
 
@@ -55,6 +70,10 @@ def recover_offline_journal_orders(
         state_lookup = getattr(execution, 'get_historical_order_state', None)
         order_state = state_lookup(pos) if state_lookup is not None else None
         if pos.get('state') == 'PENDING' and order_state == 'CANCELLED':
+            if ledger is not None:
+                ledger.cancel(pos)
+            if on_cancel is not None:
+                on_cancel(pos)
             trade_journal.log_order_cancelled(pos, reason='startup_missing_from_broker')
             logger.info(
                 f"Recovered offline pending-order cancellation: {pos['symbol']} ticket={ticket}"

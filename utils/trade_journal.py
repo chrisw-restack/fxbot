@@ -147,6 +147,9 @@ class TradeJournal:
                     'volume': _float(row.get('lot_size')),
                     '_journal_time_utc': row.get('journal_time_utc', ''),
                 }
+                context = json.loads(row.get('context_json') or '{}')
+                unresolved[ticket].update({k: context[k] for k in ('setup_id', 'attempt_id', 'origin_order_ticket', 'submitted_tp')
+                                           if context.get(k) is not None})
             elif row.get('event') in TERMINAL_EVENTS:
                 unresolved.pop(ticket, None)
 
@@ -183,7 +186,8 @@ class TradeJournal:
         if risk and take_profit is not None:
             rr_ratio = abs(take_profit - signal.entry_price) / risk
 
-        context = context or {}
+        context = dict(context or {})
+        context.update({key: getattr(signal, key) for key in ('setup_id', 'attempt_id') if getattr(signal, key, None)})
         return {
             'journal_time_utc': _utc_now_iso(),
             'symbol': signal.symbol,
@@ -235,7 +239,7 @@ class TradeJournal:
             row['lot_size'] = execution_details.get('volume', row.get('lot_size', ''))
             row['stop_loss'] = execution_details.get('sl', row.get('stop_loss', ''))
             row['take_profit'] = execution_details.get('tp', row.get('take_profit', ''))
-            details_context = dict(context or {})
+            details_context = json.loads(row['context_json'] or '{}')
             details_context['execution'] = execution_details
             row['context_json'] = json.dumps(_json_safe(details_context), sort_keys=True)
         self._write(row)
@@ -308,4 +312,6 @@ class TradeJournal:
             'r_multiple': trade.get('r_multiple', ''),
             'close_time_utc': _iso(trade.get('close_time')),
             'reason': trade.get('close_reason', ''),
+            'context_json': json.dumps({k: trade[k] for k in ('setup_id', 'attempt_id', 'origin_order_ticket', 'position_id')
+                                       if trade.get(k) is not None}, sort_keys=True),
         })

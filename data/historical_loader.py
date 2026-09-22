@@ -51,6 +51,14 @@ def load_csv(
     symbol = parts[0]
     timeframe = parts[1]
 
+    metadata_path = Path(str(filepath) + '.meta.json')
+    metadata = json.loads(metadata_path.read_text(encoding='utf-8')) if metadata_path.exists() else {}
+    if any(part.lower().startswith('histdata') for part in Path(filepath).parts[:-1]) or metadata.get('provider') == 'HistData':
+        from data.histdata_provenance import validate_output_metadata
+        validate_output_metadata(filepath, metadata)
+        if time_basis not in (None, 'utc'):
+            raise ValueError('Verified HistData candles are already UTC; a second conversion is not permitted')
+
     df = pd.read_csv(filepath, parse_dates=['time'])
 
     # ── Validate CSV structure ────────────────────────────────────────────────
@@ -89,8 +97,6 @@ def load_csv(
     # Source contracts replace the unreliable Sunday-bar heuristic. Repository
     # Dukascopy/HistData exports are UTC; raw IC Markets exports have their own folder.
     # External legacy exports can pass time_basis='icmarkets' or use a sidecar.
-    metadata_path = Path(str(filepath) + '.meta.json')
-    metadata = json.loads(metadata_path.read_text(encoding='utf-8')) if metadata_path.exists() else {}
     path_parts = Path(filepath).parts
     basis = time_basis or metadata.get('time_basis') or (
         'icmarkets' if 'mt5_icmarkets' in path_parts else 'utc'

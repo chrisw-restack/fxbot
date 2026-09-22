@@ -63,6 +63,8 @@ class SimulatedExecution(BaseExecution):
         tp_locked: bool = False,
         signal_time=None,
         risk_budget: float | None = None,
+        setup_id: str | None = None,
+        attempt_id: str | None = None,
     ) -> int:
         if not valid_levels(direction, entry_price, sl, tp, config.MIN_RR_RATIO):
             return 0
@@ -70,6 +72,10 @@ class SimulatedExecution(BaseExecution):
         self._next_ticket += 1
         self._pending[ticket] = {
             'ticket':          ticket,
+            'origin_order_ticket': ticket,
+            'setup_id': setup_id,
+            'attempt_id': attempt_id,
+            'submitted_tp': tp,
             'symbol':          symbol,
             'direction':       direction,
             'order_type':      order_type,
@@ -289,6 +295,10 @@ class SimulatedExecution(BaseExecution):
             'symbol':        pos['symbol'],
             'direction':     pos['direction'],
             'strategy_name': pos['strategy_name'],
+            'origin_order_ticket': pos['ticket'],
+            'setup_id': pos.get('setup_id'),
+            'attempt_id': pos.get('attempt_id'),
+            'is_final': True,
             'entry_price':   pos['entry_price'],
             'exit_price':    exit_price,
             'sl':            original_sl,

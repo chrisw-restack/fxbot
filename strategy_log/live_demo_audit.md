@@ -2,6 +2,53 @@
 
 This file audits the IC Markets demo account. No entry in this file authorizes real-money trading. Older dated sections may use `live` to refer to the MT5 runner or `live_config.py`; current deployment status is DEMO.
 
+## IMS Reversal setup tracking prepared locally - 2026-09-21
+
+The user authorized correcting setup tracking and testing the alternative
+cancellation rules. The local implementation now links signals, orders, and
+final outcomes to an originating setup, with an account-bound recovery ledger.
+All 114 unit tests pass. Thirty broker comparisons plus four final verification
+replays excluded the protected period after 14 July 2026.
+
+Corrected entry-hours cancellation returned +37.52R over 2020-2025 versus
++32.54R for the original code and +27.28R with all-hours cancellation. Original
+and moving target references gave identical trade paths. Defaults remain
+entry-hours cancellation and a moving target reference; numeric parameters,
+EURUSD-only membership, and risk have not changed.
+
+This work is not deployed and does not replace the frozen DEMO trial or authorize
+real-money trading. The last confirmed server revision is still `4cdc9eb` below.
+Before any eventual rollout, review inherited IMS pending orders because older
+orders lack setup IDs. See [the full report](ims_setup_tracking_20260919.md).
+
+## Infrastructure corrections deployed to DEMO - 2026-09-18
+
+The user committed and pushed the September corrections, pulled commit
+`4cdc9eb7bc0bcd758d04af9e83f035faaa9bce09` on the Windows MT5 host, installed
+`requirements.txt`, and restarted the demo runner. All 89 unit tests passed on
+the host under Python 3.13. The tests' simulated failure logs were expected;
+the final unittest result was `OK`.
+
+User-supplied startup output confirms connection to `ICMarketsSC-Demo`, account
+`52775013`, at 11:55:18 host time. Warm-up completed at 11:55:21 with 4,950 bars
+across 38 symbol/timeframe pairs. The runner reconciled two existing broker
+positions/orders, reported `Demo trading started`, and processed new completed
+bars at 11:55:23. No startup warnings or errors appear in the supplied excerpt.
+The excerpt does not distinguish pending orders from filled positions or give
+their ticket IDs. No new order submission or close is demonstrated yet.
+
+Use approximately 2026-09-18 09:55 UTC as the deployment boundary, based on the
+host's UTC+2 log time and the 09:50 UTC M5 candles completing at startup. Assess
+orders submitted after the restart separately from the two inherited broker
+positions/orders. Existing pending orders retain their submitted volume and
+levels; a later fill alone does not make them orders sized by the corrected code.
+
+Demo membership, parameters, and configured risk are unchanged. The startup
+registrations confirm eight IMS symbols excluding XAUUSD and EURUSD-only IMS
+Reversal. This is a demo deployment, with no real-money promotion. The prior
+September entry describes implementation before this deployment. Successful
+startup and unit tests do not establish improved trading performance.
+
 ## Infrastructure corrections - 2026-09-07
 
 The approved code review corrections have been implemented locally. Demo membership, strategy parameters, and risk configuration are unchanged; no deployment or real-money promotion occurred. The simulator now accounts for entry-candle exits, adverse stop gaps, corrected SELL spread handling, and net R. Historical results below were produced with the earlier engine and require fresh runs before direct comparison. The local Dukascopy comparison and implementation details are in [Codebase improvements](codebase_improvements_20260907.md). Broker-native data is absent from this checkout, so that comparison does not replace the broker validation decisions below.

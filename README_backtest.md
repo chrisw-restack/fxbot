@@ -38,16 +38,21 @@ Keep sweep and walk-forward workers at one by default. To reproduce the code rev
     ✓  data/historical/XAUUSD_M5_20160103-20260319.csv
 
   ---
-  Option B — HistData (free independent cross-check against Dukascopy)
+  Option B — HistData (source and clock verification required)
 
-  4. Download HistData M1 ZIPs, convert New York local market timestamps to UTC, and resample locally:
-  python fetch_data_histdata.py --symbols EURUSD GBPUSD AUDUSD NZDUSD USDJPY USDCAD USDCHF XAUUSD EURAUD CADJPY GBPCAD GBPNZD AUDJPY AUDCAD --timeframes M5 M15 H1 H4 D1 --start-year 2016 --end-date 2026-03-20 --insecure
+  4. Download raw ZIPs with HTTPS provenance receipts, verify their clocks against existing UTC M5 references, then convert and resample:
+  python fetch_data_histdata.py --symbols EURUSD --start-year 2016 --end-date 2026-03-20 --download-only
+  python audit_histdata_provenance.py --verify-clocks --raw-dir data/raw/histdata --resume
+  python fetch_data_histdata.py --from-zip-dir data/raw/histdata --symbols EURUSD --timeframes M5 M15 H1 H4 D1 --start-year 2016 --end-date 2026-03-20
 
   5. Run a backtest against the HistData folder:
   python run_backtest.py live_suite --data-source histdata
 
   HistData files are saved under data/historical/histdata/.
-  Use --insecure only if your machine rejects HistData's SSL certificate.
+  Keep each CSV and ZIP with its `.meta.json` sidecar. The loader rejects changed or unverified HistData CSVs. The verifier needs reference M5 coverage for the requested period; update the reference data first if coverage is insufficient. HTTPS verification uses the certifi CA bundle. Downloads made with `--insecure` cannot be certified for backtesting.
+  Do not force all archives to fixed EST or New York time. Measured archive years can follow different DST calendars. HistData's price overlap with Dukascopy also prevents assuming an independent feed merely because the download websites differ.
+  If the clock audit reports conflicting prices for one minute, first try a fresh official download. To explicitly quarantine unresolved conflicts, repeat the audit with `--quarantine-conflicts`. It excludes every price version for those minutes and the entire containing candle at each requested timeframe. The sidecars list the affected UTC minutes and omitted candle counts. No missing candles are invented. These gaps can still affect backtest execution.
+  The [September 2026 provenance repair](strategy_log/histdata_provenance_20260921.md) documents the verified archives, clock rules, backups, and limits. Its `--download` and `--rebuild` migration commands use dated staging paths; normal future conversions use `fetch_data_histdata.py`.
   US30 is not mapped because HistData does not provide a direct Dow/US30 equivalent.
 
   ---

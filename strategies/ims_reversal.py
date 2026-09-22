@@ -42,11 +42,12 @@ from collections import deque
 from datetime import timedelta
 
 from models import BarEvent, Signal
+from strategies.ims_setup_tracking import ImsSetupTracking
 
 logger = logging.getLogger(__name__)
 
 
-class ImsReversalStrategy:
+class ImsReversalStrategy(ImsSetupTracking):
     ORDER_TYPE = 'PENDING'
 
     def __init__(
@@ -84,7 +85,14 @@ class ImsReversalStrategy:
         er_tf: str = 'D1',           # ER near 1 = trending, near 0 = ranging
         streak_pause_after: int = 0,  # 0 = disabled; pause after this many consecutive losses
         streak_pause_days: int = 7,   # how many calendar days to pause after streak fires
+        pending_cancel_hours: str = 'entry',  # 'entry' | 'all'; preserve existing policy by default
+        pending_target_reference: str = 'moving',  # 'moving' | 'submitted'
     ):
+        if pending_cancel_hours not in ('entry', 'all') or pending_target_reference not in ('moving', 'submitted'):
+            raise ValueError('Invalid pending cancellation policy')
+        self.pending_cancel_hours = pending_cancel_hours
+        self.pending_target_reference = pending_target_reference
+        self._init_setup_tracking()
         self.tf_htf = tf_htf
         self.tf_ltf = tf_ltf
         self.fractal_n = fractal_n
@@ -155,6 +163,7 @@ class ImsReversalStrategy:
         self._paused_until = None   # datetime | None
 
     def reset(self):
+        self._init_setup_tracking()
         self._htf_bars.clear()
         self._ltf_bars.clear()
         self._htf_bias.clear()
@@ -181,33 +190,14 @@ class ImsReversalStrategy:
         self._paused_until = None
 
     def notify_loss(self, symbol: str):
-        """After a loss: increment bias loss counter. If limit reached, expire the bias.
-        Otherwise reset LTF state so a fresh setup can form on the same bias."""
-        # Global circuit breaker: count consecutive losses across all symbols
-        if self.streak_pause_after > 0:
-            self._global_loss_streak += 1
-
-        self._bias_loss_count[symbol] = self._bias_loss_count.get(symbol, 0) + 1
-        if self._bias_loss_count[symbol] >= self.max_losses_per_bias:
-            # Bias has used up its allowed losses — retire it
-            self._htf_bias[symbol] = None
-            self._reset_ltf(symbol)  # also resets _bias_loss_count
-            return
-        # Still within the allowance — reset LTF state only, keep the bias alive
-        self._ltf_in_zone[symbol] = False
-        self._ltf_signal_fired[symbol] = False
-        self._ltf_last_sl_ts[symbol] = None
-        self._last_signal_entry[symbol] = 0.0
-        self._last_signal_sl[symbol] = 0.0
-        self._ltf_bars[symbol].clear()
-        if self.cooldown_bars > 0:
-            self._cooldown[symbol] = self.cooldown_bars
+        """Legacy symbol-only closes cannot be attributed to a setup safely."""
+        logger.warning('Ignoring unattributed setup loss for %s; use notify_trade_closed', symbol)
 
     def notify_win(self, symbol: str):
         """After a win: reset the global consecutive-loss streak."""
         self._global_loss_streak = 0
 
-    def generate_signal(self, event: BarEvent) -> Signal | None:
+    def _generate_signal(self, event: BarEvent) -> Signal | None:
         symbol = event.symbol
         if symbol not in self._htf_bias:
             self._htf_bars[symbol] = deque(maxlen=300)
@@ -485,6 +475,8 @@ class ImsReversalStrategy:
             and all(bars[i].low < bars[i + k].low for k in range(1, fn + 1))
         ]
         for sl_idx in reversed(swing_low_idxs):
+            if self._is_retired_origin(bars[-1].symbol, 'BUY', bars[sl_idx].timestamp):
+                continue
             swing_low_price = bars[sl_idx].low
 
             prev_sh_idxs = [
@@ -523,6 +515,8 @@ class ImsReversalStrategy:
             and all(bars[i].high > bars[i + k].high for k in range(1, fn + 1))
         ]
         for sh_idx in reversed(swing_high_idxs):
+            if self._is_retired_origin(bars[-1].symbol, 'SELL', bars[sh_idx].timestamp):
+                continue
             swing_high_price = bars[sh_idx].high
 
             prev_sl_idxs = [
@@ -609,6 +603,9 @@ class ImsReversalStrategy:
 
         self._ltf_bars[symbol].append(bar)
 
+        if self.pending_cancel_hours == 'all' and self._pending_target_touched(symbol, bar, bias):
+            return self._expire_bias(symbol, bar)
+
         # Cooldown after a loss
         if self._cooldown[symbol] > 0:
             self._cooldown[symbol] -= 1
@@ -618,26 +615,8 @@ class ImsReversalStrategy:
         if bar.timestamp.hour in self.blocked_hours:
             return None
 
-        # If TP is reached while a pending is live, cancel and expire
-        if self._ltf_signal_fired[symbol]:
-            if self.tp_mode == 'htf_pct':
-                tp_level = self._get_htf_tp_price(bias)
-                # BUY bias → SELL trade: price dropped to TP level
-                if bias['direction'] == 'BUY' and bar.low <= tp_level:
-                    return self._expire_bias(symbol, bar)
-                # SELL bias → BUY trade: price rose to TP level
-                if bias['direction'] == 'SELL' and bar.high >= tp_level:
-                    return self._expire_bias(symbol, bar)
-            else:  # rr mode
-                entry = self._last_signal_entry[symbol]
-                sl = self._last_signal_sl[symbol]
-                if entry != 0.0:
-                    if bias['direction'] == 'BUY':   # SELL trade
-                        if bar.low <= entry - self.rr_ratio * (sl - entry):
-                            return self._expire_bias(symbol, bar)
-                    else:                             # BUY trade
-                        if bar.high >= entry + self.rr_ratio * (entry - sl):
-                            return self._expire_bias(symbol, bar)
+        if self.pending_cancel_hours == 'entry' and self._pending_target_touched(symbol, bar, bias):
+            return self._expire_bias(symbol, bar)
 
         # Zone gate (reversed from IMS continuation):
         # BUY bias → SELL entry: wait for price to push into premium (above zone_pct level)

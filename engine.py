@@ -82,6 +82,11 @@ class EventEngine:
         # A proposal that was not submitted must not consume a trading opportunity.
         # Do not clear tracking for an already accepted position in the same slot.
         key = (signal.symbol, signal.strategy_name)
+        strategy = self._strategies_by_name.get(signal.strategy_name)
+        callback = getattr(strategy, 'notify_proposal_rejected', None)
+        if callback is not None:
+            callback(signal)
+            return
         if key in self.portfolio.get_open_positions():
             return
         strategy = self._strategies_by_name.get(signal.strategy_name)
@@ -97,6 +102,8 @@ class EventEngine:
         # Advance the portfolio date so the daily loss counter resets correctly
         # in both live (date.today()) and backtest (bar's date) contexts.
         self.portfolio.set_current_date((processing_time or bar_close_time(event)).date())
+        if any(hasattr(s, 'sync_order_state') for s in self._strategies_by_name.values()):
+            self.sync_order_states(self.execution.get_open_positions())
 
         balance = self.execution.get_account_balance()
         entries_blocked = not allow_entries or self.portfolio.is_daily_loss_exceeded(balance)
@@ -185,9 +192,15 @@ class EventEngine:
                 tp_locked=enriched.tp_locked,
                 signal_time=enriched.timestamp,
                 risk_budget=enriched.risk_budget,
+                **({'setup_id': enriched.setup_id, 'attempt_id': enriched.attempt_id}
+                   if enriched.setup_id else {}),
             )
 
             if ticket:
+                callback = getattr(strategy, 'notify_order_accepted', None)
+                if callback is not None:
+                    details_fn = getattr(self.execution, 'get_last_order_details', None)
+                    callback(enriched, ticket, details_fn() if details_fn else None)
                 logger.info(
                     f"Order placed: {enriched.symbol} {enriched.direction} "
                     f"{enriched.order_type} entry={enriched.entry_price:.5f} "
@@ -230,6 +243,7 @@ class EventEngine:
         for pos in self.execution.get_open_positions():
             if (pos['symbol'] == signal.symbol
                     and pos['strategy_name'] == signal.strategy_name
+                    and (not getattr(signal, 'setup_id', None) or pos.get('setup_id') == signal.setup_id)
                     and pos.get('open_time') is None):
                 matched = True
                 if self._cancel_pending_order(pos['ticket']):
@@ -324,7 +338,15 @@ class EventEngine:
         return None
 
     def _record_cancelled(self, pos: dict, reason: str):
-        self.portfolio.record_close(pos['symbol'], 0.0, pos['strategy_name'])
+        ledger = getattr(self.execution, 'setup_ledger', None)
+        if ledger is not None:
+            ledger.cancel(pos)
+        self.notify_order_cancelled(pos)
+        if pos.get('setup_id'):
+            # Cancelling a partially filled remainder must not release its open position.
+            self.portfolio.sync_existing(self.execution.get_open_positions())
+        else:
+            self.portfolio.record_close(pos['symbol'], 0.0, pos['strategy_name'])
         if self.trade_journal:
             self.trade_journal.log_order_cancelled(pos, reason=reason)
         logger.info(
@@ -350,6 +372,11 @@ class EventEngine:
                 "The position remains open with its broker SL/TP."
             )
 
+    def notify_order_cancelled(self, order):
+        callback = getattr(self._strategies_by_name.get(order.get('strategy_name')), 'notify_order_cancelled', None)
+        if callback is not None:
+            callback(order)
+
     def notify_trade_closed(self, trade: dict):
         """Notify the originating strategy that a trade closed (for filters like cooldown)."""
         strategy_name = trade.get('strategy_name')
@@ -358,10 +385,30 @@ class EventEngine:
             return
         if trade.get('symbol') not in self._symbols_by_strategy_name.get(strategy_name, set()):
             return
+        callback = getattr(strategy, 'notify_trade_closed', None)
+        if callback is not None:
+            callback(trade)
+            return
         if trade.get('result') == 'LOSS' and hasattr(strategy, 'notify_loss'):
             strategy.notify_loss(trade['symbol'])
         elif trade.get('result') == 'WIN' and hasattr(strategy, 'notify_win'):
             strategy.notify_win(trade['symbol'])
+
+    def sync_order_states(self, positions):
+        grouped = {}
+        for pos in positions:
+            attempt = pos.get('attempt_id')
+            if not attempt:
+                continue
+            state = pos.get('state') or ('OPEN' if pos.get('open_time') is not None else 'PENDING')
+            previous = grouped.get(attempt, {})
+            grouped[attempt] = dict(pos, state='OPEN' if state == 'OPEN' or previous.get('state') == 'OPEN' else state,
+                                   has_pending=state == 'PENDING' or previous.get('has_pending', False))
+        for pos in grouped.values():
+            strategy = self._strategies_by_name.get(pos.get('strategy_name'))
+            callback = getattr(strategy, 'sync_order_state', None)
+            if callback is not None:
+                callback(pos)
 
     def _journal_context(self, strategy, symbol: str) -> dict:
         if hasattr(strategy, 'get_last_signal_context'):

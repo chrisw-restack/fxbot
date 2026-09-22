@@ -75,4 +75,5 @@ class RiskManager:
             strategy_name=signal.strategy_name, timestamp=signal.timestamp,
             entry_timeframe=signal.entry_timeframe, tp_locked=tp_locked,
             risk_budget=budget,
+            setup_id=signal.setup_id, attempt_id=signal.attempt_id,
         )

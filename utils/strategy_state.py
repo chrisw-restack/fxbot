@@ -78,6 +78,7 @@ class StrategyCheckpoint:
                                                 'execution/mt5_execution.py', 'data/mt5_data.py',
                                                 'portfolio/portfolio_manager.py',
                                                 'utils/live_reconciliation.py',
+                                                'utils/setup_ledger.py', 'strategies/ims_setup_tracking.py',
                                                 'main_live.py', 'utils/strategy_state.py'))
         for source in sorted(sources):
             digest.update(source.read_bytes())

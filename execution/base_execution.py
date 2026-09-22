@@ -18,6 +18,8 @@ class BaseExecution(ABC):
         tp_locked: bool = False,
         signal_time=None,
         risk_budget: float | None = None,
+        setup_id: str | None = None,
+        attempt_id: str | None = None,
     ) -> int:
         """Place an order. Returns ticket ID (> 0) on success, 0 on failure."""
         ...

@@ -4,6 +4,178 @@
 
 The old eight-symbol proxy-data configuration validated STRONG but failed to transfer cleanly to IC Markets. Since 2026-07-15, `live_config.py` has run a frozen EURUSD-only forward trial. Do not tune against data after the 2026-07-14 cutoff. The strategy is not approved for real-money live trading.
 
+## 2026-09-22 performance rerun on repaired HistData
+
+Completed 25 sequential EURUSD replays with fixed parameters and the protected
+forward-demo period excluded. An unchanged-Dukascopy control reproduced all
+112 original trades exactly. Fifteen cases reproduce the earlier HistData
+figures; nine use the completed setup-tracking implementation.
+
+| Continuous 2020-2025 | Trades | Win % | Net R | PF | R/trade | Max DD R | W/L streak |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Old HistData, original code | 102 | 31.4 | +60.15 | 1.82 | +0.590 | 14.10 | 2/13 |
+| Repaired HistData, original code | 104 | 30.8 | +57.43 | 1.76 | +0.552 | 14.10 | 2/13 |
+| Repaired HistData, current tracking and default policy | 105 | 31.4 | +59.13 | 1.78 | +0.563 | 14.10 | 2/13 |
+
+The current default produces +43.21R with a 1.0-pip spread and +2.43R across nine
+trades in the previously viewed January to 14 July 2026 period. The latter now
+includes one additional +5.95R March trade. The earlier selected parameter
+schedule still underperforms, at +14.31R across the three rolling test windows.
+
+All-hours cancellation with the submitted target reaches +60.22R, versus
++59.13R for the existing entry-hours/moving-target default. Drawdown is the same.
+That small HistData difference does not overturn the earlier broker result or
+change the default policy.
+
+Across 2020 to 14 July 2026, 99.978% of common M5 candles match Dukascopy OHLC
+at five decimal places, while HistData lacks 10,524 reference M5 candles,
+including 9,799 in 2023. The higher HistData R is not independent confirmation.
+No DEMO parameters, membership, or risk changed. See [the full rerun report](ims_histdata_rerun_20260922.md)
+for folds, policies, spread stress, legacy experiments, and validation.
+
+## 2026-09-21 HistData provenance repair
+
+All 408 raw HistData archives were downloaded again and their source clocks
+verified. All 121 local backtest CSVs were rebuilt with hash-bound metadata.
+The observed clocks follow US DST in 2016-2018 and European DST in 2019-2025;
+the audit also checks each 2026 monthly archive. Conflicting prices are
+quarantined with their containing candles, and old files are preserved.
+
+The earlier HistData performance tables used the old conversion and must be
+rerun before use. Provenance repair does not establish an independent price
+feed or approve a parameter change. All 133 tests and the repaired-data
+integration replay pass. See [the repair report](histdata_provenance_20260921.md)
+for exclusions, coverage, and the separate early broker-clock discrepancy.
+
+## 2026-09-21 setup tracking correction and policy comparison
+
+Implemented locally after the user's approval; not deployed to DEMO. Setup and
+attempt IDs now follow signals, broker orders, and final closes. Loss limits
+persist for their originating H4 setup through rescans and restarts. A close
+from an older setup cannot retire a newer one. Pending cancellation is scoped
+to its setup and distinguishes unfilled orders from filled positions.
+
+Thirty sequential broker replays compared four cancellation policies against
+the original code, with all numeric parameters fixed and data after 14 July
+2026 excluded. Four further replays confirmed that the final implementation
+preserves the comparison's complete trade paths. All 114 unit tests pass.
+
+| Continuous 2020-2025 | Trades | Win % | Net R | PF | R/trade | Max DD R | W/L streak |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Original code | 114 | 26.3 | +32.54 | 1.36 | +0.285 | 28.98 | 3/23 |
+| Corrected, entry-hours cancellation | 113 | 27.4 | +37.52 | 1.43 | +0.332 | 25.78 | 3/20 |
+| Corrected, all-hours cancellation | 109 | 26.6 | +27.28 | 1.32 | +0.250 | 25.78 | 3/20 |
+
+Original and moving targets produced identical trade paths under both timing
+rules. Keep the existing `entry` and `moving` defaults. All five variants still
+lost eight of eight trades in January to 14 July 2026. These retrospective
+results support correct accounting, but do not establish a new reliable edge
+or approve a change to the protected forward-demo trial.
+
+See [the implementation and comparison report](ims_setup_tracking_20260919.md)
+for the separate windows, spread sensitivity, restart behavior, and legacy-order
+migration limits. The server remains on the last user-confirmed deployed
+revision until a separate rollout.
+
+## 2026-09-18 follow-up with newly collected broker candles
+
+**Decision: keep the existing numeric parameters frozen for the EURUSD demo
+trial.** The broker check does not support promoting the selected parameters or
+the combined lifecycle experiment. The earlier proxy improvement from the
+combined correction does not transfer to IC Markets.
+
+The fresh M5/M15/H4 EURUSD exports cover January 2016 onward. Eighteen sequential
+replays used native broker H4/M15 candles with M5 fills and excluded all candles
+closing after the 14 July 2026 cutoff. The previously selected parameters were
+fixed before viewing broker results. No new parameter fitting occurred.
+
+| IC Markets case, 2020-2025 | Trades | Win % | Net R | PF | R/trade | Max DD R | W/L streak |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Current parameters | 114 | 26.3 | +32.54 | 1.36 | +0.285 | 28.98 | 3/23 |
+| Previously selected parameters | 114 | 26.3 | +14.10 | 1.16 | +0.124 | 30.35 | 3/10 |
+| Retire losing bias only | 101 | 28.7 | +35.65 | 1.46 | +0.353 | 25.80 | 3/21 |
+| Combined lifecycle experiment | 97 | 27.8 | +25.41 | 1.34 | +0.262 | 25.80 | 3/21 |
+
+The selected-parameter row concatenates the three two-year validation runs.
+Other rows use continuous six-year runs; baseline and combined lifecycle R
+metrics also match their concatenated validation windows. Returns include
+modeled 0.1-pip spread and $7/lot commission. Drawdown is closed-trade net R.
+
+The baseline's 23-loss sequence ran from November 2022 to September 2023. At
+0.5% risk, its continuous simulation grew $10,000 to $11,683.98, with 15.06%
+maximum marked-to-market equity drawdown. A 1.0-pip constant spread leaves
++29.58R. The three biggest winners contribute 30.32R of the baseline's 32.54R.
+
+In the previously viewed January to 14 July 2026 period, the baseline and
+combined experiment each lost all eight trades for -8.67R. The stronger EMA
+filter lost all six trades for -6.44R. These small samples provide no positive
+case for an alternative setting.
+
+The loss-retirement component remains a modest research candidate. A complete
+fix still needs originating setup identity and restart persistence. Lower
+historical profit does not resolve the pending-cancellation semantics identified
+in the audit. Production code and demo configuration remain unchanged.
+
+See [the broker follow-up](ims_reversal_broker_review_20260918.md) for fold and
+component results, data-quality checks, cost assumptions, and reproduction.
+
+## 2026-09-18 logic audit and parameter revalidation
+
+**Decision: retain the frozen numeric parameters.** The bounded parameter search
+did not improve the combined later-period result. Setup-lifecycle corrections
+are a more promising research direction, but the experimental subclass is not
+ready for demo deployment. Production strategy code, symbol membership, and
+risk remain unchanged.
+
+The audit reproduced three discrepancies with the documented lifecycle rules:
+the same H4 bias can reactivate after its first loss; entry-hour blocking skips
+pending-target cancellation; and cancellation uses the moving H4 target rather
+than the submitted target. The last behavior needs an explicit policy decision.
+Close callbacks also lack the originating setup identity, allowing an older
+trade's loss to affect a newer active bias. A complete correction must preserve
+setup identity through execution, reconciliation, and restart.
+
+EURUSD research used the current engine, M5 fills, modeled spread and commission,
+and one worker. Thirteen settings changed one parameter at a time. Four-year
+training windows selected settings for the next two years, covering 2020-2025.
+No data after 14 July 2026 entered selection or replay. Earlier research already
+used portions of this history, so these are retrospective validation results.
+
+| Dukascopy case, 2020-2025 | Trades | Win % | Net R | PF | R/trade | Max DD R | W/L streak |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Frozen baseline | 112 | 26.8 | +31.80 | 1.36 | +0.284 | 16.51 | 2/13 |
+| Rolling parameter selection | 104 | 29.8 | +13.23 | 1.17 | +0.127 | 20.75 | 3/6 |
+| Isolated lifecycle experiment | 98 | 29.6 | +43.67 | 1.59 | +0.446 | 13.06 | 2/12 |
+
+The parameter rows combine three separate two-year test runs. The lifecycle
+experiment uses continuous state across six years and retains baseline numeric
+parameters. The continuous baseline happens to match the combined baseline
+trade sequence. Drawdown is measured on cumulative closed-trade net R. These are
+standalone tests without the full demo suite's daily-loss and position limits.
+
+Results remain sensitive to execution assumptions. A constant 1.0-pip spread
+reduces the baseline to +16.01R. Resampling the same proxy prices to broker-clock
+H4 boundaries produces +24.29R with 18.41R drawdown. The three largest baseline
+wins account for 34.60R; excluding them leaves -2.80R. Swaps and variable spreads
+are not modeled.
+
+The stored HistData results are diagnostic only. About two-thirds of their
+common candles match Dukascopy exactly, there are missing intervals in 2023,
+and a source-timezone/provenance inconsistency remains unresolved. They do not
+provide clean independent broker validation. Actual IC Markets exports are
+needed before changing the demo configuration.
+
+All 89 existing tests pass. `audit_ims_reversal_logic.py` reproduces the lifecycle
+discrepancies and verifies the isolated experiment against four synthetic
+scenarios. `research_ims_reversal.py` reproduces the sequential parameter study.
+Saved results passed trade-count, net-R, and cutoff checks across 69 runs.
+
+See [the full review](ims_reversal_review_20260918.md) for the concept walkthrough,
+fold results, limitations, and Windows broker-export instructions. Raw results,
+input hashes, and the chart are in `output/ims_reversal_review_20260918/`.
+The historical validation tables below used earlier engine behavior and should
+not be treated as current broker-performance estimates.
+
 ## Concept
 
 Reversal variant of IMS. Uses the same HTF dealing range and bias (fractal MSS + FVG on H4),
@@ -16,7 +188,7 @@ or buying from discount back up to equilibrium.
 Key difference from IMS: zone gate is REVERSED. IMS waits for retracement into range; IMSRev waits
 for extension into premium/discount. LTF detection direction is also reversed.
 
-## Validated Parameters
+## Historical validated parameters
 
 ```python
 ImsReversalStrategy(
@@ -43,7 +215,7 @@ ImsReversalStrategy(
 - `max_losses_per_bias=1`: expires the HTF bias after first loss. ml=2/3 identical to unlimited
   (bias expires naturally before a 2nd retry in practice). ml=1 improves IS expectancy +0.005R.
 
-## Validated Symbols (8)
+## Historical validated symbols (8)
 
 Removed via IS expectancy + loss streak analysis (weak edge, high streak contribution):
 - **CADJPY** (-0.026R IS, 8/10 worst streaks) — only negative IS expectancy

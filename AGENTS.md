@@ -91,7 +91,7 @@ Before changing demo membership, parameters, symbols, or risk, check all four so
 
 - Historical data is stored under `data/historical/` with names like `<SYMBOL>_<TF>_<YYYYMMDD>-<YYYYMMDD>.csv`.
 - Dukascopy data is preferred for long backtests and is natively UTC.
-- HistData is available as a free second source via `fetch_data_histdata.py`; raw M1 ZIPs are stored under `data/raw/histdata/`, converted from New York local market time to UTC, resampled, and written to `data/historical/histdata/`. Use `--data-source histdata` in `run_backtest.py` and `walk_forward.py`.
+- HistData is available via `fetch_data_histdata.py`. Raw M1 ZIPs live under `data/raw/histdata/`. Do not assume a universal source timezone: verified archive years can use different DST conventions despite the provider FAQ. Downloads need HTTPS receipts and hash-bound clock evidence from `audit_histdata_provenance.py` before conversion to UTC. Converted CSVs under `data/historical/histdata/` need matching `.meta.json` provenance; the loader rejects unverified or changed files. Use `--data-source histdata` in `run_backtest.py` and `walk_forward.py`. Similarity to Dukascopy means HistData must not automatically be described as an independent price feed.
 - MT5 data requires Windows/VPS and is converted from broker server time to UTC before strategies see it.
 - Backtest outputs and charts are written to `output/`.
 - Live logs are under `logs/`.

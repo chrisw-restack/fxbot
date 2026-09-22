@@ -22,8 +22,9 @@ from portfolio.portfolio_manager import PortfolioManager
 from execution.mt5_execution import MT5Execution
 from utils.trade_logger import TradeLogger
 from utils.trade_journal import TradeJournal
-from utils.live_reconciliation import recover_offline_journal_orders, apply_trade_updates
+from utils.live_reconciliation import recover_offline_journal_orders, apply_trade_updates, same_broker_position
 from utils.strategy_state import StrategyCheckpoint
+from utils.setup_ledger import SetupLedger
 from data.mt5_data import connect, disconnect, reconnect, get_latest_completed_bar, get_recent_bars
 from data.mt5_data import get_completed_bars_since
 from data.historical_loader import bar_close_time
@@ -65,12 +66,7 @@ def _sort_pairs(pairs: list[tuple[str, str]]) -> list[tuple[str, str]]:
 
 
 def _is_same_live_slot(a: dict, b: dict) -> bool:
-    return (
-        a.get('symbol') == b.get('symbol')
-        and (a.get('strategy_name') or a.get('comment')) == (b.get('strategy_name') or b.get('comment'))
-        and a.get('direction') == b.get('direction')
-        and a.get('state') != b.get('state')
-    )
+    return same_broker_position(a, b)
 
 
 def _reconcile_portfolio(portfolio: PortfolioManager, execution: MT5Execution) -> dict[int, dict]:
@@ -106,8 +102,11 @@ def main():
         return
 
     try:
+        setup_ledger = SetupLedger('logs/setup_ledger.json', {'login': login, 'server': server})
         execution    = MT5Execution(magic_numbers=config.MAGIC_NUMBERS,
-                                    expected_account={'expected_login': login, 'expected_server': server})
+                                    expected_account={'expected_login': login, 'expected_server': server},
+                                    setup_ledger=setup_ledger)
+        execution.recover_setup_intents()
         portfolio    = PortfolioManager()
         trade_logger = TradeLogger()
         trade_journal = TradeJournal()
@@ -144,6 +143,7 @@ def main():
             )
         for strategy, symbols in strategy_specs:
             event_engine.register(strategy, symbols)
+        pending_strategy_closes = setup_ledger.closed_trades()
 
         # ── Bar-detection state ───────────────────────────────────────────────
         # Tracks the timestamp of the last processed bar per (symbol, timeframe).
@@ -176,6 +176,7 @@ def main():
             last_bar_time[(symbol, timeframe)] = bars[-1].timestamp
         warmup_events.sort(key=lambda b: (bar_close_time(b), TF_RANK.get(b.timeframe, 99), b.symbol))
         for bar in warmup_events:
+            pending_strategy_closes = apply_trade_updates(event_engine, pending_strategy_closes, bar_close_time(bar))
             event_engine.warmup_bar(bar)
             warmup_count += 1
         logger.info(f"Warm-up complete: {warmup_count} bars processed across {len(subscribed_pairs)} pairs")
@@ -186,7 +187,8 @@ def main():
         close_pending_alerted: set[int] = set()
         last_duplicate_slots: list[tuple[str, str, list[int]]] = []
         logger.info(f"Reconciled {len(tracked_tickets)} existing MT5 positions/orders")
-        pending_strategy_closes = []
+        if restored is None:
+            pending_strategy_closes = apply_trade_updates(event_engine, pending_strategy_closes, datetime.now(timezone.utc))
         recovered_closes, recovered_cancellations, unresolved_open = recover_offline_journal_orders(
             execution,
             trade_journal,
@@ -194,12 +196,18 @@ def main():
             list(tracked_tickets.values()),
             logger,
             on_close=pending_strategy_closes.append,
+            on_cancel=event_engine.notify_order_cancelled,
         )
         if recovered_closes or recovered_cancellations:
             logger.info(
                 f"Startup journal recovery: closes={recovered_closes} "
                 f"cancellations={recovered_cancellations}"
             )
+        event_engine.sync_order_states(list(tracked_tickets.values()))
+        # A cancellation may already be durable while the checkpoint still says pending.
+        for order in setup_ledger.orders.values():
+            if order.get('state') == 'CANCELLED':
+                event_engine.notify_order_cancelled(order)
         if unresolved_open:
             message = (
                 "Unable to reconcile previously placed tickets: "
@@ -290,6 +298,8 @@ def main():
                             strategy_name = pos.get('strategy_name') or pos.get('comment') or ''
                             portfolio.record_close(pos['symbol'], 0.0, strategy_name)
                             trade_journal.log_order_cancelled(pos, reason='pending_missing_from_broker')
+                            setup_ledger.cancel(pos)
+                            event_engine.notify_order_cancelled(pos)
                             logger.info(
                                 f"Pending order no longer active: {pos['symbol']} "
                                 f"ticket={ticket} ({strategy_name})"

@@ -10,6 +10,7 @@ import MetaTrader5 as mt5
 
 from data.mt5_data import mt5_time_to_utc, validate_demo_account
 from execution.base_execution import BaseExecution
+from utils.setup_ledger import SetupLedger
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +30,7 @@ MT5_TIMEFRAME_MAP = {
 
 class MT5Execution(BaseExecution):
 
-    def __init__(self, magic_numbers: dict[str, int] | None = None, expected_account=None):
+    def __init__(self, magic_numbers: dict[str, int] | None = None, expected_account=None, setup_ledger=None):
         """
         magic_numbers: maps strategy NAME → MT5 magic integer.
         When provided, every order is tagged and get_open_positions filters
@@ -37,6 +38,7 @@ class MT5Execution(BaseExecution):
         """
         self._magic_numbers = magic_numbers or {}
         self._expected_account = expected_account
+        self.setup_ledger = setup_ledger if setup_ledger is not None else SetupLedger()
         if len(set(self._magic_numbers.values())) != len(self._magic_numbers):
             raise ValueError("MT5 magic numbers must be unique per strategy")
         self._known_magic: set[int] = set(self._magic_numbers.values())
@@ -171,6 +173,8 @@ class MT5Execution(BaseExecution):
         tp_locked: bool = False,              # informational — MT5 uses the tp price directly
         signal_time=None,                     # informational — not used by MT5 execution
         risk_budget: float | None = None,
+        setup_id: str | None = None,
+        attempt_id: str | None = None,
     ) -> int:
         self._last_order_details = None
         self._last_order_error = None
@@ -264,6 +268,17 @@ class MT5Execution(BaseExecution):
             self._last_order_error = {'stage': 'risk_validation', 'broker_comment': 'minimum lot exceeds risk budget'}
             return 0
 
+        if setup_id:
+            if any(r['symbol'] == symbol and r['strategy_name'] == strategy_name
+                   for r in self.setup_ledger.pending_intents().values()):
+                raise RuntimeError('Unresolved broker submission in this strategy slot; reconcile before submitting')
+            # Persist identity before the external side effect. An exact comment
+            # match can recover an acknowledgement lost to a process crash.
+            request['comment'] = self.setup_ledger.prepare(setup_id=setup_id, attempt_id=attempt_id,
+                symbol=symbol, strategy_name=strategy_name, direction=direction,
+                state='PENDING' if order_type == 'PENDING' else 'OPEN',
+                submitted_tp=request['tp'], sl=request['sl'], tp=request['tp'],
+                open_price=request['price'], volume=request['volume'])
         check_result = None
         if hasattr(mt5, 'order_check'):
             try:
@@ -302,6 +317,8 @@ class MT5Execution(BaseExecution):
                     break
 
         if result is None or result.retcode not in success_codes:
+            if setup_id and result is not None:
+                self.setup_ledger.reject_intent(request['comment'])
             code = result.retcode if result else 'None'
             comment = result.comment if result else ''
             self._last_order_error = {
@@ -357,6 +374,11 @@ class MT5Execution(BaseExecution):
             'ask': getattr(tick, 'ask', None),
             'spread_pips': round(spread_pips, 2) if spread_pips is not None else '',
         }
+        self.setup_ledger.accept(result.order, setup_id=setup_id, attempt_id=attempt_id,
+            symbol=symbol, strategy_name=strategy_name, direction=direction,
+            state='PENDING' if order_type == 'PENDING' else 'OPEN',
+            submitted_tp=request['tp'], sl=request['sl'], tp=request['tp'],
+            open_price=fill_price, volume=self._last_order_details['volume'])
         logger.info(f"Order placed: {symbol} {direction} {order_type} ticket={result.order}")
         return result.order
 
@@ -539,7 +561,71 @@ class MT5Execution(BaseExecution):
                 and (not self._known_magic or o.magic in self._known_magic)
             ])
 
-        return result
+        return [self._attach_setup_context(pos) for pos in result]
+
+    def _attach_setup_context(self, pos, deals=None):
+        # Older orders have no setup ID, but their entry deal can still prove an
+        # order-to-position transition. This prevents matching unrelated trades
+        # merely because they share a symbol and strategy.
+        position_id = pos.get('position_id')
+        if position_id and pos.get('state') == 'OPEN':
+            origins = getattr(self, '_position_origin_orders', {})
+            if position_id not in origins:
+                history = getattr(mt5, 'history_deals_get', None)
+                if deals is None and history is not None:
+                    deals = history(position=int(position_id))
+                tickets = {getattr(d, 'order', None) for d in deals or ()
+                           if getattr(d, 'entry', None) == getattr(mt5, 'DEAL_ENTRY_IN', 0)} - {None, 0}
+                if len(tickets) == 1:
+                    origins[position_id] = next(iter(tickets))
+                    self._position_origin_orders = origins
+            if position_id in origins:
+                pos = dict(pos, origin_order_ticket=origins[position_id])
+        context = self.setup_ledger.context(pos)
+        if not context and pos.get('state') == 'PENDING':
+            context = self.setup_ledger.recover_intent(pos['ticket'], pos.get('broker_comment'), pos)
+        if not context and position_id and (self.setup_ledger.orders or self.setup_ledger.intents):
+            if deals is None:
+                deals = mt5.history_deals_get(position=int(position_id))
+            candidates = {}
+            for deal in deals or ():
+                if getattr(deal, 'entry', None) != getattr(mt5, 'DEAL_ENTRY_IN', 0):
+                    continue
+                order_ticket = getattr(deal, 'order', None)
+                candidate = self.setup_ledger.context(dict(pos, ticket=order_ticket))
+                if not candidate:
+                    candidate = self.setup_ledger.recover_intent(order_ticket, getattr(deal, 'comment', ''), pos)
+                if candidate:
+                    candidates[order_ticket] = candidate
+            if len(candidates) == 1:
+                origin, context = next(iter(candidates.items()))
+                self.setup_ledger.bind(origin, position_id)
+        if context and position_id and pos.get('state') == 'OPEN':
+            self.setup_ledger.bind(context['origin_order_ticket'], position_id)
+        return dict(pos, **context)
+
+    def recover_setup_intents(self):
+        """Recover broker acknowledgements missing from local records after a crash."""
+        intents = self.setup_ledger.pending_intents()
+        if not intents:
+            return
+        start = min(datetime.fromisoformat(r['submitted_at']) for r in intents.values()) - timedelta(days=1)
+        history = mt5.history_orders_get(start, datetime.now(timezone.utc))
+        if history is None:
+            raise RuntimeError('Cannot recover setup submissions: broker order history unavailable')
+        buy_types = {mt5.ORDER_TYPE_BUY, mt5.ORDER_TYPE_BUY_LIMIT, mt5.ORDER_TYPE_BUY_STOP}
+        for order in history:
+            comment = getattr(order, 'comment', '')
+            if comment not in intents:
+                continue
+            pos = dict(ticket=order.ticket, symbol=order.symbol,
+                       strategy_name=self.strategy_name_for_magic(order.magic, comment),
+                       direction='BUY' if order.type in buy_types else 'SELL')
+            if self.setup_ledger.recover_intent(order.ticket, comment, pos):
+                self.setup_ledger.bind(order.ticket, getattr(order, 'position_id', 0))
+        # Unmatched intents remain explicit; no association by symbol or price.
+        if self.setup_ledger.pending_intents():
+            logger.warning('Unresolved setup submission intents: %s', list(self.setup_ledger.pending_intents()))
 
     def get_account_balance(self) -> float:
         info = mt5.account_info()
@@ -734,6 +820,29 @@ class MT5Execution(BaseExecution):
         if not exit_deals:
             return None
 
+        # A partial exit is not a completed trade. Resolve the stable identifier
+        # from the entry deals, because a pending ticket can differ from it.
+        entries = [d for d in matching if getattr(d, 'entry', None) == getattr(mt5, 'DEAL_ENTRY_IN', 0)]
+        position_ids = {getattr(d, 'position_id', None) for d in entries} - {None, 0}
+        if len(position_ids) == 1:
+            position_id = next(iter(position_ids))
+        positions = mt5.positions_get()
+        if positions is None:
+            raise RuntimeError('Cannot confirm final position closure: MT5 position query failed')
+        if any(getattr(p, 'identifier', p.ticket) == position_id or p.ticket == ticket for p in positions):
+            return None
+        entered = sum(float(getattr(d, 'volume', 0)) for d in entries)
+        exited = sum(float(getattr(d, 'volume', 0)) for d in exit_deals)
+        if entered > 0 and exited + 1e-8 < entered:
+            return None  # Final exit history is not yet complete.
+        attributed = self._attach_setup_context(dict(tracked_pos, position_id=position_id), matching)
+        if attributed.get('setup_id'):
+            remainder = mt5.orders_get(ticket=int(attributed['origin_order_ticket']))
+            if remainder is None:
+                raise RuntimeError('Cannot confirm final setup closure: MT5 order query failed')
+            if remainder:
+                return None  # A partially filled entry may still execute its remainder.
+
         # Net the full matched deal set, not only the exit deals. Entry commissions
         # are charged on the entry deal while realized price P/L appears on exit.
         pnl = sum(
@@ -783,8 +892,10 @@ class MT5Execution(BaseExecution):
                 r_multiple = round(move / risk, 2)
 
         result = 'WIN' if pnl > 0 else ('BE' if pnl == 0 else 'LOSS')
-        return {
+        trade = {
             'ticket': ticket,
+            'position_id': position_id,
+            'is_final': True,
             'symbol': symbol or getattr(latest, 'symbol', ''),
             'direction': direction,
             'strategy_name': strategy_name,
@@ -803,3 +914,6 @@ class MT5Execution(BaseExecution):
             'fee': round(fee, 2),
             'close_reason': close_reason,
         }
+        trade.update({k: attributed[k] for k in ('setup_id', 'attempt_id', 'origin_order_ticket', 'submitted_tp')
+                      if k in attributed})
+        return self.setup_ledger.close(trade)

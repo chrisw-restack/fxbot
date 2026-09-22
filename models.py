@@ -25,6 +25,8 @@ class Signal:
     timestamp: datetime
     take_profit: float | None = None    # optional, if set overrides risk manager TP
     entry_timeframe: str | None = None  # set automatically by engine from the bar that generated the signal
+    setup_id: str | None = None
+    attempt_id: str | None = None
 
 
 @dataclass
@@ -42,3 +44,5 @@ class EnrichedSignal:
     entry_timeframe: str | None = None
     tp_locked: bool = False  # True when TP is a strategy price level, not R:R calculated
     risk_budget: float | None = None  # maximum account-currency loss at submitted SL
+    setup_id: str | None = None
+    attempt_id: str | None = None

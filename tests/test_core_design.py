@@ -721,6 +721,7 @@ class MT5ExecutionTests(unittest.TestCase):
             ),
         ]
 
+        fake_mt5.positions_get = lambda **kwargs: []  # Confirm the position is fully closed.
         execution = MT5Execution(magic_numbers={'TestStrategy': 1001})
         closed = execution.get_recent_closed_trade({
             'ticket': 12345,
@@ -808,6 +809,7 @@ class MT5ExecutionTests(unittest.TestCase):
             ),
         ]
 
+        fake_mt5.positions_get = lambda **kwargs: []  # Confirm the position is fully closed.
         execution = MT5Execution(magic_numbers={'TestStrategy': 1001})
         closed = execution.get_recent_closed_trade({
             'ticket': 12345,
@@ -916,6 +918,7 @@ class MT5ExecutionTests(unittest.TestCase):
 
         from execution.mt5_execution import MT5Execution
 
+        fake_mt5.positions_get = lambda **kwargs: []  # Confirm the position is fully closed.
         execution = MT5Execution(magic_numbers={'TestStrategy': 1001})
         closed = execution.get_recent_closed_trade({
             'ticket': 12345,
@@ -1013,6 +1016,7 @@ class MT5ExecutionTests(unittest.TestCase):
 
         from execution.mt5_execution import MT5Execution
 
+        fake_mt5.positions_get = lambda **kwargs: []  # Confirm the position is fully closed.
         execution = MT5Execution(magic_numbers={'TestStrategy': 1001})
         closed = execution.get_recent_closed_trade({
             'ticket': 777,
