@@ -244,6 +244,7 @@ class EventEngine:
             if (pos['symbol'] == signal.symbol
                     and pos['strategy_name'] == signal.strategy_name
                     and (not getattr(signal, 'setup_id', None) or pos.get('setup_id') == signal.setup_id)
+                    and (not getattr(signal, 'attempt_id', None) or pos.get('attempt_id') == signal.attempt_id)
                     and pos.get('open_time') is None):
                 matched = True
                 if self._cancel_pending_order(pos['ticket']):
@@ -399,6 +400,11 @@ class EventEngine:
         for pos in positions:
             attempt = pos.get('attempt_id')
             if not attempt:
+                # Strategies may adopt legacy broker exposure without inventing
+                # a setup attribution. IMS deliberately ignores these records.
+                callback = getattr(self._strategies_by_name.get(pos.get('strategy_name')), 'sync_order_state', None)
+                if callback is not None:
+                    callback(pos)
                 continue
             state = pos.get('state') or ('OPEN' if pos.get('open_time') is not None else 'PENDING')
             previous = grouped.get(attempt, {})

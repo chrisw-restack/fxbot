@@ -2,6 +2,59 @@
 
 This file audits the IC Markets demo account. No entry in this file authorizes real-money trading. Older dated sections may use `live` to refer to the MT5 runner or `live_config.py`; current deployment status is DEMO.
 
+## EmaFib Retracement removed from new DEMO runs, 2026-09-25
+
+The user explicitly requested removal from new bot runs. `live_config.py` no longer
+constructs or registers EmaFibRetracement. Its strategy code, backtest registration,
+research settings, and magic number 1001 are retained. EmaFibRunning remains active.
+The decision follows the corrected six-pair broker result of -20.82R and 84.05R
+closed-trade drawdown. This supersedes the earlier unchanged-membership notes below.
+
+The local configuration change requires updating and restarting the trading-host
+bot before it takes effect. Deployment is not yet confirmed. Existing broker
+pending orders are not cancelled by removing the strategy; cancel any remaining
+EmaFibRetracement pending orders separately on the host. Filled positions retain
+their broker SL/TP and remain identifiable for reconciliation. Stop the old bot
+before starting the updated instance, and preserve the setup ledger.
+
+## EmaFib accepted-order tracking prepared locally, 2026-09-25
+
+The user authorized the EmaFib review recommendations. Local corrections separate
+unsubmitted proposals from accepted orders, preserve their original swing through
+the existing setup ledger, and use execution-confirmed pending/open/closed state.
+Recovery supports valid checkpoints and ledger-attributed orders. Legacy orders
+without setup metadata remain tracked but their origin is not inferred.
+
+Numeric parameters, seven-pair membership, and global 0.5% risk are unchanged.
+This is not a deployment or a promotion decision. The last confirmed server
+revision remains `4cdc9eb`, as recorded below. See the
+[correction and validation report](ema_fib_tracking_20260925.md) for test results,
+fixed-parameter source comparisons, rolling validation, and remaining broker-data
+requirements. Preserve `logs/setup_ledger.json` during any eventual update.
+
+All 150 tests pass. The 134 corrected historical replays show a weak,
+cost-sensitive baseline: +20.98R Dukascopy and +51.34R HistData over 2020 through
+2025, falling to -25.21R and +4.27R with a 1-pip spread. Both sources have a WEAK
+first rolling test and a losing second test. These are independent pair R sums,
+not account returns. The old MODERATE label does not validate this corrected
+implementation. No new parameters or symbol exclusions are approved by this study.
+
+The three additional broker M5 exports are now present. NZDUSD and USDCHF extend
+the long-history comparison to six matched pairs. USDCAD M5/H1/D1 begin in January
+2025, so only shorter comparisons are supported for that pair. See the
+[broker-history extension](ema_fib_broker_completion_20260925.md). This data update
+does not change DEMO settings or deployment status.
+
+The repeated USDCAD export again starts at 2025-01-01 22:00 UTC on M5, H1, and
+D1. Accept that as the current setup's available history limit and stop requesting
+further downloads. The completed long-history comparison remains six matched
+pairs, with USDCAD excluded from all sources.
+
+The extended six-pair broker result is -20.82R over 2020 through 2025, PF 0.91,
+with 84.05R closed-trade drawdown. The same pairs return +36.50R on Dukascopy and
++67.26R on HistData. This source discrepancy remains unresolved. The seven-pair
+broker result for January through 14 July 2026 is +1.78R from 23 trades.
+
 ## IMS Reversal setup tracking prepared locally - 2026-09-21
 
 The user authorized correcting setup tracking and testing the alternative

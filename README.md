@@ -36,7 +36,7 @@ fxbot/
 │   └── historical/               # CSVs: <SYMBOL>_<TF>_<YYYYMMDD>-<YYYYMMDD>.csv
 │
 ├── strategies/
-│   ├── ema_fib_retracement.py    # DEMO: D1/H1 EMA trend + fib entry
+│   ├── ema_fib_retracement.py    # Retired from DEMO; retained for backtesting
 │   ├── ema_fib_running.py        # DEMO: D1/H1 EMA trend + fib entry, running variant
 │   ├── three_line_strike.py      # DEMO: M5 engulfing, NY session, 2 FX pairs
 │   ├── ims.py                    # DEMO: H4/M15 ICT market structure, 9 symbols
@@ -251,14 +251,13 @@ Subscribe to multiple timeframes via `TIMEFRAMES = ['D1', 'H1']`. The strategy r
 
 ## Demo suite
 
-This is the configured IC Markets demo suite as of 2026-08-31. `live_config.py` is the executable source of truth.
+This is the configured IC Markets demo suite as of 2026-09-25. `live_config.py` is the executable source of truth. EmaFib Retracement has been retired from new runs after corrected broker validation; its code remains available for backtesting. Evidence labels for the remaining strategies refer to their earlier reviews.
 
 | Strategy | Timeframes | Type | Symbols | Current evidence |
 |----------|------------|------|---------|------------------|
-| EmaFibRetracement | D1, H1 | PENDING | 7 FX pairs | MODERATE walk-forward; positive IC Markets replay |
 | EmaFibRunning | D1, H1 | PENDING | 7 FX pairs | STRONG walk-forward; positive IC Markets replay |
 | Engulfing | M5 | MARKET | EURUSD, AUDUSD | Proxy walk-forward STRONG; IC Markets replay negative; pause under review |
-| IMS | H4, M15 | PENDING | 9 symbols | MODERATE walk-forward; IC Markets replay close to flat; XAUUSD removal proposed |
+| IMS | H4, M15 | PENDING | 8 symbols | XAUUSD excluded; see current strategy log for validation |
 | IMS Reversal | H4, M15 | PENDING | EURUSD | Frozen forward-demo research trial; not a promotion candidate yet |
 | Failed2 | D1, H4, H1, M5 | MARKET | USTEC | STRONG on Dukascopy and HistData; positive IC Markets replay |
 | NY Index Opening Drive | D1, H1, M5 | MARKET | USTEC | STRONG on Dukascopy and HistData; positive IC Markets replay; 0.25% risk |

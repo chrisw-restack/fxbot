@@ -1,13 +1,29 @@
 # EmaFibRetracement
 
-**Status:** DEMO. Walk-forward MODERATE. Not approved for real-money live trading.
+**Status:** RETIRED from the default DEMO suite on 2026-09-25 at the user's request. New bot runs using the updated configuration do not register this strategy. The code and historical settings remain available for research. Deployment to the trading server is not yet confirmed. Not approved for real-money live trading.
 **File:** `strategies/ema_fib_retracement.py`
 **Timeframes:** D1 (bias), H1 (entry)
 **Order type:** PENDING
 
 ---
 
-## Current Config (as of 2026-03-30)
+## Retirement decision, 2026-09-25
+
+Removed from `live_config.create_live_strategy_specs()` after the corrected six-pair broker backtest returned -20.82R with an 84.05R drawdown. The old apparent edge did not survive the combined tracking corrections and broker validation. EmaFibRunning remains a separate active strategy. Magic number 1001 is retained so existing EmaFibRetracement broker exposure and historical outcomes can still be identified.
+
+This configuration change prevents new strategy signals after an updated bot starts. It does not cancel existing broker pending orders or close positions. Any outstanding EmaFibRetracement pending orders need to be cancelled separately on the trading host; filled positions retain their broker SL/TP. Stop the old process before starting the updated bot.
+
+## Last DEMO settings, retained for research
+
+See [the current logic and repaired-HistData review](ema_fib_retracement_review_20260923.md). Production settings and deployment were not changed by that review. Older validation figures below refer to their original code, datasets, and periods.
+
+The [25 September correction and validation report](ema_fib_tracking_20260925.md) supersedes the earlier implementation findings. Accepted-order tracking now preserves the originating swing, uses execution-confirmed state, and recovers attributed orders through the existing ledger. That study held parameters, membership, and risk fixed; the subsequent retirement decision above removes the strategy from new DEMO runs. Legacy inherited orders without an origin remain explicitly unattributed.
+
+Corrected 2020 through 2025 totals are +20.98R on Dukascopy and +51.34R on verified HistData, with 66.82R and 49.39R drawdowns. Both sources have WEAK first rolling tests and losing second tests. At a 1-pip spread, totals fall to -25.21R and +4.27R. The old MODERATE label is not a current validation verdict. All 150 tests pass. No numerical optimization or deployment was performed.
+
+The additional broker M5 exports have arrived. NZDUSD and USDCHF cover the long-history comparison, but USDCAD M5/H1/D1 all start in January 2025, including on the repeated host export. This is the accepted history limit for the current setup; no further download is requested. See the [broker-history extension](ema_fib_broker_completion_20260925.md) for six matched pairs over 2020 through 2025 and seven pairs over the recent period. A seven-pair long-history broker comparison is unavailable.
+
+The six-pair broker result is **-20.82R**, PF 0.91, with 84.05R closed-trade drawdown, versus +36.50R Dukascopy and +67.26R HistData on the same pairs. Broker USDCHF loses all 23 trades. The seven-pair broker result for January through 14 July 2026 is +1.78R from 23 trades. These results weaken the historical case for the current settings; no promotion or parameter change follows from this comparison.
 
 ```python
 EmaFibRetracementStrategy(
@@ -18,12 +34,12 @@ EmaFibRetracementStrategy(
     ema_sep_pct=0.001,
     cooldown_bars=10,
     invalidate_swing_on_loss=True,
-    blocked_hours=(*range(20, 24), *range(0, 9)),  # allow 09:00–19:00 UTC only
+    blocked_hours=(*range(20, 24), *range(0, 9)),  # H1 opening-hour labels 09:00–19:00 UTC
 )
 ```
 
-Risk override: 0.7% per trade (default is 0.5%).
-Symbols: EURUSD, GBPUSD, AUDUSD, NZDUSD, USDJPY, USDCAD, USDCHF (7 pairs).
+Former DEMO risk: global 0.5% per trade, without an override.
+Former DEMO symbols: EURUSD, GBPUSD, AUDUSD, NZDUSD, USDJPY, USDCAD, USDCHF (7 pairs).
 
 **Changes from 2026-03-22 config:** `cooldown_bars` 0→10, `invalidate_swing_on_loss` False→True, `fib_tp` 2.5→3.0. All three changes driven by the 2026-03-30 walk-forward (WF chose these in 2/3 or all 3 folds) and confirmed by the full param sweep.
 
@@ -41,14 +57,14 @@ Net effect on trade count: ~33% fewer trades than pre-fixes (320 → 318 in IS s
 
 ## Strategy Logic
 
-- **Bias:** D1 EMA trend direction. Long if close > both EMAs (and EMAs separated by `ema_sep_pct`), short if below.
+- **Bias:** D1 and H1 EMA 10/20 directions must agree. Separation `ema_sep_pct` applies to H1. D1 also needs 14-bar simple ATR of at least 50 pips. There is no close-above-both-EMAs condition.
 - **Swing:** Fractal-based swing high/low detection on H1 (N bars each side). Must be at least `min_swing_pips` in size.
-- **Entry:** PENDING order at `fib_entry` level of the swing. Cancelled if H1 bias flips before fill.
-- **SL:** Beyond the swing high/low.
+- **Entry:** PENDING order at `fib_entry` level of the swing. Cancellation if D1 or H1 bias flips before fill, checked during H1 processing. An accepted pending/open order owns its slot until an authoritative terminal outcome; H1 candle touches do not establish fills.
+- **SL:** At the opposite swing high/low.
 - **TP:** `swing_low + fib_tp × swing_range` (BUY) or `swing_high − fib_tp × swing_range` (SELL). E.g. fib_tp=3.0 means TP at 3× the swing range from the swing origin.
-- **Session filter:** `blocked_hours` tuple — bars during these hours are skipped entirely.
-- **Cooldown:** `cooldown_bars` H1 bars skipped after a loss.
-- **Swing invalidation:** If `invalidate_swing_on_loss=True`, the swing that produced a losing trade is marked used and won't generate another entry.
+- **Session filter:** Restricts new proposals by H1 opening hour. Indicator updates and pending management still run. Allowed 09:00–19:00 candle labels imply decisions after approximately 10:00–20:00 UTC.
+- **Cooldown:** After a loss, entries wait until the H1 counter reaches its saved value plus `cooldown_bars`. This counts observed bars, not elapsed wall-clock hours.
+- **Swing invalidation:** A confirmed loss marks the accepted order's originating price pair as used. Rejected proposals cannot overwrite it. A legacy loss without a saved setup identity applies cooldown without guessing an origin.
 
 ---
 

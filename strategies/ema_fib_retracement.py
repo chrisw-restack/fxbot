@@ -1,6 +1,12 @@
 from collections import deque
+from datetime import datetime, timedelta, timezone
+import json
+import logging
+import math
 
 from models import BarEvent, Signal
+
+logger = logging.getLogger(__name__)
 
 
 class EmaFibRetracementStrategy:
@@ -8,8 +14,8 @@ class EmaFibRetracementStrategy:
     Multi-timeframe EMA + Fibonacci retracement strategy.
 
     D1 + H1 EMA bias must agree (10 EMA vs 20 EMA). When aligned, places
-    PENDING orders at the 61.8% Fibonacci retracement of the most recent
-    H1 swing. TP at 200% extension. Cancels pending orders when bias flips.
+    PENDING orders at a configured Fibonacci retracement of the latest H1
+    swings. Execution callbacks own order state; candle touches do not imply fills.
     """
 
     TIMEFRAMES = ['D1', 'H1']
@@ -95,9 +101,7 @@ class EmaFibRetracementStrategy:
 
         self._pending_entry: dict[str, float | None] = {}
         self._pending_direction: dict[str, str | None] = {}
-        # Swings active at the moment the pending was placed — used by
-        # notify_loss so the swing that *produced* the trade gets marked
-        # used, not whichever fractal happens to be current at close time.
+        # Diagnostic view of the pending order. Its permanent origin is in _orders.
         self._pending_swing_high: dict[str, float | None] = {}
         self._pending_swing_low: dict[str, float | None] = {}
         # H1 bar index at which the pending was placed — used for max-age check.
@@ -107,6 +111,14 @@ class EmaFibRetracementStrategy:
         self._cooldown_until: dict[str, int] = {}
         self._used_swing_high: dict[str, float | None] = {}
         self._used_swing_low: dict[str, float | None] = {}
+        self._orders = {}
+        self._proposals = {}
+        self._finished_orders = set()
+        self._processed_closes = set()
+        self._swing_high_time = {}
+        self._swing_low_time = {}
+        self._h1_close_times = {}
+        self._last_loss_time = {}
 
     def reset(self):
         """Clear all internal state."""
@@ -143,6 +155,14 @@ class EmaFibRetracementStrategy:
         self._cooldown_until.clear()
         self._used_swing_high.clear()
         self._used_swing_low.clear()
+        self._orders.clear()
+        self._proposals.clear()
+        self._finished_orders.clear()
+        self._processed_closes.clear()
+        self._swing_high_time.clear()
+        self._swing_low_time.clear()
+        self._h1_close_times.clear()
+        self._last_loss_time.clear()
 
     def generate_signal(self, event: BarEvent) -> Signal | None:
         symbol = event.symbol
@@ -195,6 +215,9 @@ class EmaFibRetracementStrategy:
         self._cooldown_until[symbol] = 0
         self._used_swing_high[symbol] = None
         self._used_swing_low[symbol] = None
+        self._swing_high_time[symbol] = None
+        self._swing_low_time[symbol] = None
+        self._h1_close_times[symbol] = deque(maxlen=max(1, self.cooldown_bars + 1))
 
     # ── EMA helpers ──────────────────────────────────────────────────────────
 
@@ -263,7 +286,7 @@ class EmaFibRetracementStrategy:
         self._pending_swing_low[symbol] = None
         self._pending_placed_bar[symbol] = None
 
-    def _cancel_signal(self, symbol: str, event: BarEvent) -> Signal:
+    def _cancel_signal(self, symbol: str, event: BarEvent, order: dict) -> Signal:
         return Signal(
             symbol=symbol,
             direction='CANCEL',
@@ -272,6 +295,8 @@ class EmaFibRetracementStrategy:
             stop_loss=0.0,
             strategy_name=self.NAME,
             timestamp=event.timestamp,
+            setup_id=order.get('setup_id'),
+            attempt_id=order.get('attempt_id'),
         )
 
     # ── D1 processing ────────────────────────────────────────────────────────
@@ -327,32 +352,18 @@ class EmaFibRetracementStrategy:
         # Increment H1 bar counter
         self._h1_counter[symbol] += 1
         bar_idx = self._h1_counter[symbol]
+        self._h1_close_times[symbol].append(self._utc(event.timestamp) + timedelta(hours=1))
 
         # Append to fractal window and check for new swings
         self._h1_window[symbol].append(event)
         self._detect_swings(symbol)
 
-        # Detect pending fill heuristically: bar range straddles the entry.
-        # This matches the simulator's fill rule exactly
-        # (simulated_execution.check_fills) for *real* fills. We do NOT use
-        # this to flag a position as open, because risk_manager can reject
-        # signals (e.g. SL distance < MIN_SL_PIPS) without the strategy
-        # knowing — leaving a phantom _pending_entry that the heuristic would
-        # otherwise treat as a fill. Letting the heuristic only clear the
-        # local pending-entry slot keeps the strategy in sync without
-        # dead-locking on phantoms; the portfolio manager already prevents
-        # actual duplicate orders.
-        pending = self._pending_entry[symbol]
-        if pending is not None:
-            if event.low <= pending <= event.high:
-                self._pending_entry[symbol] = None
-                self._pending_direction[symbol] = None
-                self._pending_placed_bar[symbol] = None
-                return None  # Pending consumed (filled or phantom-cleared)
-
-            # Pending still unfilled — cancel if either D1 or H1 bias has
-            # flipped against the pending direction (entry required both to
-            # agree), or if the pending has been sitting too long.
+        active = [o for o in self._orders.values() if o['symbol'] == symbol]
+        for order in active:
+            if order['state'] != 'PENDING' and not order.get('has_pending'):
+                continue
+            self._show_pending(symbol, order)
+            # Retain accepted state until execution confirms cancellation.
             h1_bias = self._get_bias(self._h1_ema_fast[symbol], self._h1_ema_slow[symbol])
             d1_bias = self._get_bias(self._d1_ema_fast[symbol], self._d1_ema_slow[symbol])
             pending_dir = self._pending_direction[symbol]
@@ -368,9 +379,9 @@ class EmaFibRetracementStrategy:
             price_stale = self._pending_stale_by_price(symbol, event)
 
             if h1_flipped or d1_flipped or aged_out or price_stale:
-                self._clear_pending(symbol)
-                return self._cancel_signal(symbol, event)
-            return None  # Pending still valid, wait
+                return self._cancel_signal(symbol, event, order)
+        if active:
+            return None  # Pending or filled exposure owns this symbol's slot.
 
         # ── Filter 1: Cooldown after stop-out ────────────────────────────────
         if bar_idx < self._cooldown_until[symbol]:
@@ -463,15 +474,15 @@ class EmaFibRetracementStrategy:
             stop_loss = swing_high
             take_profit = swing_high - self.fib_tp * swing_range
 
-        # Track the pending order. Snapshot the swings used to build it so
-        # notify_loss can mark the correct swing as used even if new fractals
-        # form between placement and close.
-        self._pending_entry[symbol] = entry_price
-        self._pending_direction[symbol] = direction
-        self._pending_swing_high[symbol] = swing_high
-        self._pending_swing_low[symbol] = swing_low
-        self._pending_placed_bar[symbol] = bar_idx
-
+        # Persist recoverable origin prices in the identity. Bar times distinguish
+        # later swings at identical prices; loss invalidation retains its existing
+        # price-pair rule. An unaccepted proposal never owns the order slot.
+        setup = self.NAME + '|v1|' + json.dumps([
+            symbol, swing_high, swing_low,
+            str(self._swing_high_time[symbol]), str(self._swing_low_time[symbol]),
+        ], separators=(',', ':'))
+        attempt = setup + '|' + self._utc(event.timestamp).isoformat()
+        self._proposals[attempt] = dict(symbol=symbol, swing=(swing_high, swing_low), placed_bar=bar_idx)
         return Signal(
             symbol=symbol,
             direction=direction,
@@ -481,46 +492,155 @@ class EmaFibRetracementStrategy:
             strategy_name=self.NAME,
             timestamp=event.timestamp,
             take_profit=take_profit if self.use_fib_tp else None,
+            setup_id=setup,
+            attempt_id=attempt,
         )
 
     # ── Post-trade feedback ──────────────────────────────────────────────────
 
     def notify_loss(self, symbol: str):
-        """
-        Called by the engine when a trade from this strategy closes at a loss.
-        Activates cooldown and marks the swing that produced the trade as
-        used (using the snapshot from placement so newer fractals don't
-        confuse which swing to invalidate).
-        """
-        bar_idx = self._h1_counter.get(symbol, 0)
-        self._cooldown_until[symbol] = bar_idx + self.cooldown_bars
-
-        if self.invalidate_swing_on_loss:
-            snap_high = self._pending_swing_high.get(symbol)
-            snap_low = self._pending_swing_low.get(symbol)
-            self._used_swing_high[symbol] = (
-                snap_high if snap_high is not None else self._swing_high.get(symbol)
-            )
-            self._used_swing_low[symbol] = (
-                snap_low if snap_low is not None else self._swing_low.get(symbol)
-            )
-
-        self._clear_position_state(symbol)
+        """Compatibility only: symbol-only feedback cannot identify an order."""
+        logger.warning('EmaFib loss needs ticket/setup attribution: %s', symbol)
 
     def notify_win(self, symbol: str):
-        """
-        Called by the engine when a trade from this strategy closes at a win
-        (or break-even). Clears the position-open flag and pending snapshot
-        so a fresh setup can form. Doesn't mark the swing as used — wins
-        leave the swing free to retrigger if conditions reappear.
-        """
-        self._clear_position_state(symbol)
+        """Compatibility only; confirmed closes must include order identity."""
+        logger.warning('EmaFib win needs ticket/setup attribution: %s', symbol)
 
-    def _clear_position_state(self, symbol: str):
-        """Reset per-symbol post-trade state. Called by notify_loss/notify_win."""
-        self._pending_swing_high[symbol] = None
-        self._pending_swing_low[symbol] = None
-        self._pending_placed_bar[symbol] = None
+    @staticmethod
+    def _utc(value):
+        if isinstance(value, str):
+            value = datetime.fromisoformat(value)
+        return value.astimezone(timezone.utc).replace(tzinfo=None) if value.tzinfo else value
+
+    def _origin_swing(self, order):
+        setup = order.get('setup_id') or ''
+        prefix = self.NAME + '|v1|'
+        if not setup.startswith(prefix):
+            return None
+        try:
+            symbol, high, low, _, _ = json.loads(setup[len(prefix):])
+            if symbol == order['symbol'] and all(math.isfinite(p) and p > 0 for p in (high, low)) and high > low:
+                return high, low
+        except (ValueError, TypeError):
+            pass
+        return None
+
+    @staticmethod
+    def _order_key(order):
+        origin = order.get('origin_order_ticket') or order.get('position_id') or order.get('ticket')
+        return order.get('attempt_id') or (f'legacy|{origin}' if origin else None)
+
+    def _find_order(self, order):
+        key = self._order_key(order)
+        if key in self._orders:
+            return key, self._orders[key]
+        ids = {str(order[k]) for k in ('ticket', 'origin_order_ticket', 'position_id') if order.get(k)}
+        for existing, record in self._orders.items():
+            if record['symbol'] == order['symbol'] and ids.intersection(
+                str(record[k]) for k in ('ticket', 'origin_order_ticket', 'position_id') if record.get(k)
+            ):
+                return existing, record
+        return key, None
+
+    @staticmethod
+    def _close_identities(order):
+        return {(order['symbol'], str(order[k])) for k in
+                ('ticket', 'origin_order_ticket', 'position_id') if order.get(k)}
+
+    def _show_pending(self, symbol, order):
+        swing = order.get('swing') or (None, None)
+        self._pending_entry[symbol] = order.get('entry_price', order.get('open_price'))
+        self._pending_direction[symbol] = order['direction']
+        self._pending_swing_high[symbol], self._pending_swing_low[symbol] = swing
+        self._pending_placed_bar[symbol] = order.get('placed_bar')
+
+    def _refresh_pending(self, symbol):
+        self._clear_pending(symbol)
+        for order in self._orders.values():
+            if order['symbol'] == symbol and (order['state'] == 'PENDING' or order.get('has_pending')):
+                self._show_pending(symbol, order)
+                break
+
+    def notify_order_accepted(self, signal, ticket, details=None):
+        proposal = self._proposals.pop(signal.attempt_id, {})
+        self.sync_order_state(dict(symbol=signal.symbol, direction=signal.direction,
+            setup_id=signal.setup_id, attempt_id=signal.attempt_id, ticket=ticket,
+            origin_order_ticket=ticket, state='PENDING', entry_price=signal.entry_price,
+            swing=proposal.get('swing'), placed_bar=proposal.get('placed_bar')))
+
+    def sync_order_state(self, order):
+        symbol = order['symbol']
+        self._init_symbol(symbol)
+        key, record = self._find_order(order)
+        if key is None or key in self._finished_orders or self._close_identities(order) & self._processed_closes:
+            return
+        canonical = self._order_key(order)
+        if order.get('attempt_id') and canonical != key:
+            self._orders.pop(key, None)
+            key = canonical
+        record = record if record is not None else {}
+        was_open = record.get('state') == 'OPEN'
+        state = order.get('state') or ('OPEN' if order.get('open_time') is not None else 'PENDING')
+        record.update({k: order[k] for k in ('symbol', 'direction', 'setup_id', 'attempt_id', 'ticket',
+            'origin_order_ticket', 'position_id', 'entry_price', 'open_price', 'placed_bar') if k in order})
+        record['state'] = 'OPEN' if was_open or state == 'OPEN' else 'PENDING'
+        record['has_pending'] = order.get('has_pending', state == 'PENDING')
+        if record.get('swing') is None:
+            record['swing'] = order.get('swing') or self._origin_swing(order)
+        self._orders[key] = record
+        self._refresh_pending(symbol)
+
+    def notify_proposal_rejected(self, signal):
+        # Execution can reject an accepted pending order at fill time, too.
+        attempt = getattr(signal, 'attempt_id', None)
+        if attempt in self._proposals:
+            self._proposals.pop(attempt)
+        elif getattr(signal, 'ticket', None):
+            self.notify_order_cancelled(vars(signal))
+
+    def notify_order_cancelled(self, order):
+        key, record = self._find_order(order)
+        if record is None:
+            if key:
+                self._finished_orders.add(key)
+            return
+        if record['state'] == 'OPEN':
+            record['has_pending'] = False  # A filled remainder still owns the slot.
+        else:
+            self._orders.pop(key)
+            self._finished_orders.add(key)
+        self._refresh_pending(order['symbol'])
+
+    def notify_trade_closed(self, trade):
+        if trade.get('is_final') is False or trade.get('remaining_volume', 0) > 0:
+            return
+        symbol = trade['symbol']
+        self._init_symbol(symbol)
+        key, record = self._find_order(trade)
+        identities = self._close_identities(trade) | (self._close_identities(record) if record else set())
+        if key is None or key in self._processed_closes or identities & self._processed_closes:
+            return
+        self._processed_closes.add(key)
+        self._processed_closes.update(identities)
+        self._finished_orders.add(key)
+        self._orders.pop(key, None)
+        self._refresh_pending(symbol)
+        if trade.get('result') != 'LOSS':
+            return
+        closed = self._utc(trade['close_time']) if trade.get('close_time') else None
+        previous = self._last_loss_time.get(symbol)
+        if closed is not None and previous is not None and closed < previous:
+            return
+        if closed is not None:
+            self._last_loss_time[symbol] = closed
+        elapsed = sum(t > closed for t in self._h1_close_times[symbol]) if closed else 0
+        self._cooldown_until[symbol] = max(self._cooldown_until[symbol],
+            self._h1_counter[symbol] + max(0, self.cooldown_bars - elapsed))
+        swing = record.get('swing') if record else self._origin_swing(trade)
+        if self.invalidate_swing_on_loss and swing is not None:
+            self._used_swing_high[symbol], self._used_swing_low[symbol] = swing
+        elif self.invalidate_swing_on_loss:
+            logger.warning('EmaFib legacy close has no originating swing: %s ticket=%s', symbol, trade.get('ticket'))
 
     # ── Diagnostics ─────────────────────────────────────────────────────────
 
@@ -549,7 +669,10 @@ class EmaFibRetracementStrategy:
         # Determine the blocking reason
         blocker = None
         if pending:
-            blocker = f'PENDING {pending} @ {self._pending_entry[symbol]:.5f}'
+            entry = self._pending_entry[symbol]
+            blocker = f'PENDING {pending} @ {entry:.5f}' if entry is not None else f'PENDING {pending}'
+        elif any(o['symbol'] == symbol for o in self._orders.values()):
+            blocker = 'OPEN POSITION'
         elif bar_idx < self._cooldown_until.get(symbol, 0):
             blocker = 'COOLDOWN'
         elif d1_atr is None or atr_pips < self.min_d1_atr_pips:
@@ -601,6 +724,7 @@ class EmaFibRetracementStrategy:
         if is_swing_high:
             self._swing_high[symbol] = mid_bar.high
             self._swing_high_bar[symbol] = self._h1_counter[symbol] - self.fractal_n
+            self._swing_high_time[symbol] = self._utc(mid_bar.timestamp)
 
         # Check fractal low: middle bar's low is below all N bars on each side
         is_swing_low = all(
@@ -611,6 +735,7 @@ class EmaFibRetracementStrategy:
         if is_swing_low:
             self._swing_low[symbol] = mid_bar.low
             self._swing_low_bar[symbol] = self._h1_counter[symbol] - self.fractal_n
+            self._swing_low_time[symbol] = self._utc(mid_bar.timestamp)
 
     # ── Pip size helper ───────────────────────────────────────────────────────
 
@@ -627,8 +752,4 @@ class EmaFibRetracementStrategy:
 
     def notify_signal_rejected(self, symbol: str):
         """Release an unsubmitted proposal, retaining indicators and setup context."""
-        self._pending_entry[symbol] = None
-        self._pending_direction[symbol] = None
-        self._pending_swing_high[symbol] = None
-        self._pending_swing_low[symbol] = None
-        self._pending_placed_bar[symbol] = None
+        self._proposals = {k: p for k, p in self._proposals.items() if p['symbol'] != symbol}
