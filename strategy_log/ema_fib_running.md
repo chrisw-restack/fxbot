@@ -1,13 +1,73 @@
 # EmaFibRunning
 
-**Status:** DEMO. Walk-forward STRONG as of 2026-04-30, with 83% average OOS retention and all three folds positive. Not approved for real-money live trading.
+**Status:** Removed from default DEMO startup on 2026-09-28 at the user's request. Corrected code remains available for research and backtesting. The latest historical rolling test FAILS on all three sources. Updating and restarting the trading host is still required; deployment is not confirmed. Not approved for real-money live trading.
 **File:** `strategies/ema_fib_running.py`
 **Timeframes:** D1 (bias), H1 (entry)
 **Order type:** PENDING
 
 ---
 
-## Current Config (as of 2026-03-30, params unchanged on 2026-04-28)
+## Corrections and revalidation, 2026-09-25
+
+The user authorized the review recommendations. See the
+[correction and validation report](ema_fib_running_corrections_20260925.md).
+Proposals and accepted orders are separated, execution confirms state changes,
+and the existing setup ledger preserves originating anchors across restarts.
+Partial fills remain owned when their unfilled remainder is cancelled. Unknown
+legacy origins are not inferred from current fractals. The running extreme now
+includes completed closes from the actual anchor through confirmation.
+
+All 172 tests pass, including 22 new Running regressions. Research completed
+204 sequential replays, two original-code controls, and six final-code broker
+controls. Numeric parameters, all seven symbols, and 0.5% risk remain unchanged.
+Nothing was deployed to the trading host.
+
+Six matched pairs over 2020 through 2025 return +27.03R on Dukascopy, +35.40R
+on verified HistData, and +13.26R on IC Markets after both corrections. Tracking
+alone barely changes those six-pair results. The corrected broker result has
+128 trades, 25.78% wins, PF 1.13, +0.104R/trade, 22.73R closed-trade drawdown,
+and 22 consecutive losses. One-pip broker spread stress returns +13.02R.
+
+The 2024 through 2025 broker test loses 15.10R with PF 0.59. The same test also
+fails on Dukascopy and HistData. The earlier long-history tests are WEAK for
+2020 through 2021 and STRONG for 2022 through 2023. Four trades and about +1.10R
+in January through 14 July 2026 are insufficient to establish recovery. These
+are reused historical periods, not fresh unseen evidence.
+
+Recommendation: pause Running in the default DEMO suite and retain its corrected
+code for research. This recommendation is not a membership change. No parameter
+search or pair selection was performed; any further tuning needs a separate
+train-only design and untouched evaluation data. Preserve `logs/setup_ledger.json`
+when eventually updating the host.
+
+## Initial review before corrections, 2026-09-25
+
+See the [logic and three-source performance review](ema_fib_running_review_20260925.md).
+The review holds current DEMO settings fixed and compares Dukascopy, verified
+HistData, and the available broker data. It does not change production logic or
+DEMO membership. USDCAD broker history starts in January 2025, so the long-period
+broker comparison excludes USDCAD from every source.
+
+Confirmed defects include H1 bid-touch fill inference, overwritten accepted
+anchors after rejected proposals, pending state surviving a final close, and
+state clearing before cancellation confirmation. Running extremes also omit
+known closes between a fractal and its confirmation. Valid checkpoints preserve
+state, but cold recovery cannot reconstruct accepted anchors from the setup ledger.
+The older claim below that a 30-pip stop prevents these tracking issues is
+superseded: portfolio rejections while another trade is open still trigger them.
+
+The current-code six-pair comparison over 2020 through 2025 returns +33.59R on
+Dukascopy, +42.41R on verified HistData, and +17.31R on IC Markets. Broker PF is
+1.17, max closed-trade drawdown 24.10R, and the longest losing streak is 23.
+Broker 2024 through 2025 loses 14.04R. The 1-pip spread replay remains positive
+at +17.10R, but these are results before correcting the newly confirmed defects.
+Sixty-four sequential replays and two observer controls are complete. Twelve
+deterministic audit cases reproduce the findings; the 150 existing tests still
+pass but do not cover these Running defects. Correct and retest before deciding
+whether to retire it. No parameter search, new walk-forward selection, or DEMO
+membership change was made by this review.
+
+## Current configuration, verified 2026-09-25
 
 ```python
 EmaFibRunningStrategy(

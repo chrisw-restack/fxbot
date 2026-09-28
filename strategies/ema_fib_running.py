@@ -1,6 +1,12 @@
 from collections import deque
+from datetime import datetime, timedelta, timezone
+import json
+import logging
+import math
 
 from models import BarEvent, Signal
+
+logger = logging.getLogger(__name__)
 
 
 class EmaFibRunningStrategy:
@@ -126,10 +132,7 @@ class EmaFibRunningStrategy:
 
         self._pending_entry: dict[str, float | None] = {}
         self._pending_direction: dict[str, str | None] = {}
-        # Anchor fractal snapshot at placement — used by notify_loss so the
-        # fractal that *produced* the trade gets marked used, not whichever
-        # fractal happens to be current at close time. Only the direction-
-        # relevant slot is set (low for BUY, high for SELL).
+        # Diagnostic pending view. Immutable accepted anchors live in _orders.
         self._pending_anchor_low: dict[str, float | None] = {}
         self._pending_anchor_high: dict[str, float | None] = {}
 
@@ -137,12 +140,21 @@ class EmaFibRunningStrategy:
         self._cooldown_until: dict[str, int] = {}
         self._used_fractal_high: dict[str, float | None] = {}
         self._used_fractal_low: dict[str, float | None] = {}
+        self._orders = {}
+        self._proposals = {}
+        self._finished_orders = set()
+        self._processed_closes = set()
+        self._cancelled_order_ids = set()
+        self._fractal_high_time = {}
+        self._fractal_low_time = {}
+        self._h1_close_times = {}
+        self._last_loss_time = {}
 
     def reset(self):
         """Clear all internal state."""
         for attr in vars(self):
             val = getattr(self, attr)
-            if isinstance(val, dict) and attr.startswith('_'):
+            if isinstance(val, (dict, set)) and attr.startswith('_'):
                 val.clear()
 
     def generate_signal(self, event: BarEvent) -> Signal | None:
@@ -204,6 +216,9 @@ class EmaFibRunningStrategy:
         self._cooldown_until[symbol] = 0
         self._used_fractal_high[symbol] = None
         self._used_fractal_low[symbol] = None
+        self._fractal_high_time[symbol] = None
+        self._fractal_low_time[symbol] = None
+        self._h1_close_times[symbol] = deque(maxlen=max(1, self.cooldown_bars + 1))
 
     # ── EMA helpers ──────────────────────────────────────────────────────────
 
@@ -270,6 +285,7 @@ class EmaFibRunningStrategy:
         # Increment H1 bar counter
         self._h1_counter[symbol] += 1
         bar_idx = self._h1_counter[symbol]
+        self._h1_close_times[symbol].append(self._utc(event.timestamp) + timedelta(hours=1))
 
         # Append to fractal window and detect fractal swings
         self._h1_window[symbol].append(event)
@@ -282,17 +298,12 @@ class EmaFibRunningStrategy:
         d1_bias = self._get_bias(self._d1_ema_fast[symbol], self._d1_ema_slow[symbol])
         h1_bias = self._get_bias(self._h1_ema_fast[symbol], self._h1_ema_slow[symbol])
 
-        # Check if pending order was filled
-        pending = self._pending_entry[symbol]
-        if pending is not None:
-            if event.low <= pending <= event.high:
-                # Filled — clear entry/dir but keep _pending_anchor_* so
-                # notify_loss can mark the actual triggering fractal as used.
-                # (cleared on close via notify_loss/notify_win.)
-                self._pending_entry[symbol] = None
-                self._pending_direction[symbol] = None
-                return None
-
+        active = [o for o in self._orders.values() if o['symbol'] == symbol]
+        for order in active:
+            if order['state'] != 'PENDING' and not order.get('has_pending'):
+                continue
+            self._show_pending(symbol, order)
+            pending = self._pending_entry[symbol]
             # Cancel if EITHER D1 or H1 bias flipped against the pending
             # direction. Entry required both to agree, so either disagreeing
             # invalidates the setup.
@@ -300,23 +311,16 @@ class EmaFibRunningStrategy:
             h1_flipped = h1_bias is not None and h1_bias != pending_dir
             d1_flipped = d1_bias is not None and d1_bias != pending_dir
             if h1_flipped or d1_flipped:
-                self._pending_entry[symbol] = None
-                self._pending_direction[symbol] = None
-                self._pending_anchor_low[symbol] = None
-                self._pending_anchor_high[symbol] = None
-                return self._cancel_signal(symbol, event)
+                return self._cancel_signal(symbol, event, order)
 
             # Check if running extreme changed → update pending order
             new_entry, new_sl, new_tp = self._calc_entry(symbol, pending_dir)
-            if new_entry is not None and abs(new_entry - pending) > self._pip_size(symbol):
+            if new_entry is not None and pending is not None and abs(new_entry - pending) > self._pip_size(symbol):
                 # Cancel old, will re-place with updated levels on next bar
-                self._pending_entry[symbol] = None
-                self._pending_direction[symbol] = None
-                self._pending_anchor_low[symbol] = None
-                self._pending_anchor_high[symbol] = None
-                return self._cancel_signal(symbol, event)
+                return self._cancel_signal(symbol, event, order)
 
-            return None  # Pending still valid
+        if active:
+            return None  # Accepted pending or filled exposure owns the slot.
 
         # ── Filters ────────────────────────────────────────────────────────────
         if bar_idx < self._cooldown_until[symbol]:
@@ -383,17 +387,14 @@ class EmaFibRunningStrategy:
         if sl_pips < self.min_swing_pips:
             return None
 
-        # Track and place pending. Snapshot the anchor fractal that built
-        # this trade so notify_loss can mark the correct one as used even
-        # if a new fractal forms before the trade closes.
-        self._pending_entry[symbol] = entry_price
-        self._pending_direction[symbol] = direction
-        if direction == 'BUY':
-            self._pending_anchor_low[symbol] = self._fractal_low[symbol]
-            self._pending_anchor_high[symbol] = None
-        else:
-            self._pending_anchor_high[symbol] = self._fractal_high[symbol]
-            self._pending_anchor_low[symbol] = None
+        # A proposal owns no broker slot until execution accepts it. Keep the
+        # anchor recoverable in the setup ledger even without a checkpoint.
+        body = self._fractal_low_body[symbol] if direction == 'BUY' else self._fractal_high_body[symbol]
+        anchor_time = self._fractal_low_time[symbol] if direction == 'BUY' else self._fractal_high_time[symbol]
+        setup = self.NAME + '|v1|' + json.dumps(
+            [symbol, direction, anchor_val, body, str(anchor_time)], separators=(',', ':'))
+        attempt = setup + '|' + self._utc(event.timestamp).isoformat()
+        self._proposals[attempt] = dict(symbol=symbol, anchor=anchor_val)
 
         return Signal(
             symbol=symbol,
@@ -404,6 +405,8 @@ class EmaFibRunningStrategy:
             strategy_name=self.NAME,
             timestamp=event.timestamp,
             take_profit=take_profit if self.use_fib_tp else None,
+            setup_id=setup,
+            attempt_id=attempt,
         )
 
     # ── Entry calculation ────────────────────────────────────────────────────
@@ -473,6 +476,11 @@ class EmaFibRunningStrategy:
 
     # ── Fractal detection ────────────────────────────────────────────────────
 
+    def _initial_running_extreme(self, window, direction):
+        """Include completed closes from the anchor through its confirmation."""
+        closes = [bar.close for bar in list(window)[self.fractal_n:]]
+        return max(closes) if direction == 'BUY' else min(closes)
+
     def _detect_fractals(self, symbol: str):
         window = self._h1_window[symbol]
         if len(window) < self._window_size:
@@ -491,8 +499,9 @@ class EmaFibRunningStrategy:
             self._fractal_high[symbol] = mid_bar.high
             self._fractal_high_body[symbol] = max(mid_bar.open, mid_bar.close)
             self._fractal_high_bar[symbol] = self._h1_counter[symbol] - self.fractal_n
+            self._fractal_high_time[symbol] = self._utc(mid_bar.timestamp)
             # Reset running low and bearish FVG flag
-            self._running_low[symbol] = None
+            self._running_low[symbol] = self._initial_running_extreme(window, 'SELL')
             self._fvg_since_fractal_high[symbol] = False
 
         # Check fractal low
@@ -505,58 +514,179 @@ class EmaFibRunningStrategy:
             self._fractal_low[symbol] = mid_bar.low
             self._fractal_low_body[symbol] = min(mid_bar.open, mid_bar.close)
             self._fractal_low_bar[symbol] = self._h1_counter[symbol] - self.fractal_n
+            self._fractal_low_time[symbol] = self._utc(mid_bar.timestamp)
             # Reset running high and bullish FVG flag
-            self._running_high[symbol] = None
+            self._running_high[symbol] = self._initial_running_extreme(window, 'BUY')
             self._fvg_since_fractal_low[symbol] = False
 
     # ── Post-trade feedback ──────────────────────────────────────────────────
 
     def notify_loss(self, symbol: str):
-        """Engine calls this when a trade from this strategy closes at a loss.
-        Marks the *anchor fractal that produced the trade* as used, using the
-        snapshot taken at placement (live fractals may have moved during the
-        trade). Falls back to live fractals if the snapshot is missing.
-        """
-        bar_idx = self._h1_counter.get(symbol, 0)
-        self._cooldown_until[symbol] = bar_idx + self.cooldown_bars
-
-        if self.invalidate_swing_on_loss:
-            snap_low = self._pending_anchor_low.get(symbol)
-            snap_high = self._pending_anchor_high.get(symbol)
-            # Only the direction-relevant slot was set at placement; mark
-            # only that one as used. Fall back to live fractal if snapshot
-            # is missing (defensive).
-            if snap_low is not None:
-                self._used_fractal_low[symbol] = snap_low
-            elif snap_high is None:
-                self._used_fractal_low[symbol] = self._fractal_low.get(symbol)
-            if snap_high is not None:
-                self._used_fractal_high[symbol] = snap_high
-            elif snap_low is None:
-                self._used_fractal_high[symbol] = self._fractal_high.get(symbol)
-
-        self._clear_pending_state(symbol)
+        """Symbol-only feedback cannot identify the accepted trade."""
+        logger.warning('Running loss needs order attribution: %s', symbol)
 
     def notify_win(self, symbol: str):
-        """Engine calls this on win/break-even close. Clears the pending-
-        snapshot state so the next setup starts clean. Doesn't mark the
-        fractal as used — wins leave it free to retrigger if conditions
-        reappear."""
-        self._clear_pending_state(symbol)
+        """Confirmed outcomes must include order identity."""
+        logger.warning('Running win needs order attribution: %s', symbol)
 
     def _clear_pending_state(self, symbol: str):
-        """Reset per-symbol post-trade pending-snapshot state. Called by
-        notify_loss / notify_win."""
+        """Clear the diagnostic view; accepted anchors live in _orders."""
+        self._pending_entry[symbol] = None
+        self._pending_direction[symbol] = None
         self._pending_anchor_low[symbol] = None
         self._pending_anchor_high[symbol] = None
 
+    @staticmethod
+    def _utc(value):
+        if isinstance(value, str):
+            value = datetime.fromisoformat(value)
+        return value.astimezone(timezone.utc).replace(tzinfo=None) if value.tzinfo else value
+
+    def _origin_anchor(self, order):
+        setup = order.get('setup_id') or ''
+        prefix = self.NAME + '|v1|'
+        if not setup.startswith(prefix):
+            return None
+        try:
+            symbol, direction, wick, body, _ = json.loads(setup[len(prefix):])
+            if (symbol == order['symbol'] and direction == order.get('direction')
+                    and direction in ('BUY', 'SELL')
+                    and all(math.isfinite(p) and p > 0 for p in (wick, body))
+                    and (wick <= body if direction == 'BUY' else wick >= body)):
+                return wick
+        except (TypeError, ValueError):
+            pass
+        return None
+
+    @staticmethod
+    def _order_key(order):
+        origin = order.get('origin_order_ticket') or order.get('position_id') or order.get('ticket')
+        return order.get('attempt_id') or (f'legacy|{origin}' if origin else None)
+
+    @staticmethod
+    def _identities(order):
+        return {(order['symbol'], str(order[k])) for k in
+                ('ticket', 'origin_order_ticket', 'position_id') if order.get(k)}
+
+    def _find_order(self, order):
+        key = self._order_key(order)
+        if key in self._orders:
+            return key, self._orders[key]
+        ids = self._identities(order)
+        for existing, record in self._orders.items():
+            if ids & self._identities(record):
+                return existing, record
+        return key, None
+
+    def _show_pending(self, symbol, order):
+        self._pending_entry[symbol] = order.get('entry_price', order.get('open_price'))
+        self._pending_direction[symbol] = order['direction']
+        self._pending_anchor_low[symbol] = order.get('anchor') if order['direction'] == 'BUY' else None
+        self._pending_anchor_high[symbol] = order.get('anchor') if order['direction'] == 'SELL' else None
+
+    def _refresh_pending(self, symbol):
+        self._clear_pending_state(symbol)
+        for order in self._orders.values():
+            if order['symbol'] == symbol and (order['state'] == 'PENDING' or order.get('has_pending')):
+                self._show_pending(symbol, order)
+                break
+
+    def notify_order_accepted(self, signal, ticket, details=None):
+        proposal = self._proposals.pop(signal.attempt_id, {})
+        self.sync_order_state(dict(symbol=signal.symbol, direction=signal.direction,
+            setup_id=signal.setup_id, attempt_id=signal.attempt_id, ticket=ticket,
+            origin_order_ticket=ticket, state='PENDING', entry_price=signal.entry_price,
+            anchor=proposal.get('anchor')))
+
+    def sync_order_state(self, order):
+        symbol = order['symbol']
+        self._init_symbol(symbol)
+        key, record = self._find_order(order)
+        ids = self._identities(order)
+        state = order.get('state') or ('OPEN' if order.get('open_time') is not None else 'PENDING')
+        if key is None or key in self._processed_closes or ids & self._processed_closes:
+            return
+        # Removing a remainder can race with a partial fill. A confirmed OPEN
+        # snapshot must still be adopted after cancellation; stale pending
+        # snapshots stay blocked. A final close blocks both states above.
+        if state != 'OPEN' and (key in self._finished_orders or ids & self._cancelled_order_ids):
+            return
+        canonical = self._order_key(order)
+        if order.get('attempt_id') and canonical != key:
+            self._orders.pop(key, None)
+            key = canonical
+        record = record if record is not None else {}
+        was_open = record.get('state') == 'OPEN'
+        record.update({k: order[k] for k in ('symbol', 'direction', 'setup_id', 'attempt_id', 'ticket',
+            'origin_order_ticket', 'position_id', 'entry_price', 'open_price') if order.get(k) is not None})
+        record['state'] = 'OPEN' if was_open or state == 'OPEN' else 'PENDING'
+        record['has_pending'] = order.get('has_pending', state == 'PENDING')
+        if record.get('anchor') is None:
+            record['anchor'] = order.get('anchor') or self._origin_anchor(record)
+        self._orders[key] = record
+        self._refresh_pending(symbol)
+
+    def notify_proposal_rejected(self, signal):
+        attempt = getattr(signal, 'attempt_id', None)
+        if attempt in self._proposals:
+            self._proposals.pop(attempt)
+        elif getattr(signal, 'ticket', None):
+            self.notify_order_cancelled(vars(signal))
+
+    def notify_order_cancelled(self, order):
+        key, record = self._find_order(order)
+        if record is not None and record['state'] == 'OPEN':
+            record['has_pending'] = False  # Cancelling a remainder does not close its filled part.
+        else:
+            if key:
+                self._orders.pop(key, None)
+                self._finished_orders.add(key)
+            self._cancelled_order_ids.update(self._identities(order))
+            if record:
+                self._cancelled_order_ids.update(self._identities(record))
+        self._refresh_pending(order['symbol'])
+
+    def notify_trade_closed(self, trade):
+        if trade.get('is_final') is False or trade.get('remaining_volume', 0) > 0:
+            return
+        symbol = trade['symbol']
+        self._init_symbol(symbol)
+        key, record = self._find_order(trade)
+        ids = self._identities(trade) | (self._identities(record) if record else set())
+        if key is None or key in self._processed_closes or ids & self._processed_closes:
+            return
+        self._processed_closes.add(key)
+        self._processed_closes.update(ids)
+        self._finished_orders.add(key)
+        self._orders.pop(key, None)
+        self._refresh_pending(symbol)
+        if trade.get('result') != 'LOSS':
+            return
+        direction = record['direction'] if record else trade.get('direction')
+        closed = self._utc(trade['close_time']) if trade.get('close_time') else None
+        previous = self._last_loss_time.get((symbol, direction))
+        if closed is not None and previous is not None and closed < previous:
+            return
+        if closed is not None:
+            self._last_loss_time[(symbol, direction)] = closed
+        elapsed = sum(t > closed for t in self._h1_close_times[symbol]) if closed else 0
+        self._cooldown_until[symbol] = max(self._cooldown_until[symbol],
+            self._h1_counter[symbol] + max(0, self.cooldown_bars - elapsed))
+        anchor = record.get('anchor') if record else self._origin_anchor(trade)
+        if self.invalidate_swing_on_loss and anchor is not None:
+            used = self._used_fractal_low if direction == 'BUY' else self._used_fractal_high
+            used[symbol] = anchor
+        elif self.invalidate_swing_on_loss:
+            logger.warning('Running legacy close has no originating anchor: %s ticket=%s', symbol, trade.get('ticket'))
+
     # ── Helpers ──────────────────────────────────────────────────────────────
 
-    def _cancel_signal(self, symbol: str, event: BarEvent) -> Signal:
+    def _cancel_signal(self, symbol: str, event: BarEvent, order: dict) -> Signal:
         return Signal(
             symbol=symbol, direction='CANCEL', order_type=self.ORDER_TYPE,
             entry_price=0.0, stop_loss=0.0,
             strategy_name=self.NAME, timestamp=event.timestamp,
+            setup_id=order.get('setup_id'), attempt_id=order.get('attempt_id'),
         )
 
     def _pip_size(self, symbol: str) -> float:
@@ -587,6 +717,9 @@ class EmaFibRunningStrategy:
 
         bar_idx = self._h1_counter.get(symbol, 0)
         pending = self._pending_direction.get(symbol)
+        price = self._pending_entry.get(symbol)
+        blocker = (f'PENDING {pending} @ {price:.5f}' if price is not None else f'PENDING {pending}') if pending else (
+            'OPEN POSITION' if any(o['symbol'] == symbol for o in self._orders.values()) else 'READY')
 
         return {
             'd1_bias': d1_bias,
@@ -599,12 +732,11 @@ class EmaFibRunningStrategy:
             'running_low_close': run_l,
             'fvg_bull': self._fvg_since_fractal_low.get(symbol, False),
             'fvg_bear': self._fvg_since_fractal_high.get(symbol, False),
-            'blocker': f'PENDING {pending} @ {self._pending_entry[symbol]:.5f}' if pending else 'READY',
+            'blocker': blocker,
         }
 
     def notify_signal_rejected(self, symbol: str):
-        """Release an unsubmitted proposal, retaining indicators and setup context."""
-        self._pending_entry[symbol] = None
-        self._pending_direction[symbol] = None
-        self._pending_anchor_low[symbol] = None
-        self._pending_anchor_high[symbol] = None
+        """Legacy callback: release proposals without clearing accepted exposure."""
+        for attempt, proposal in list(self._proposals.items()):
+            if proposal['symbol'] == symbol:
+                self._proposals.pop(attempt)

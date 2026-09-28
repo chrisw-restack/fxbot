@@ -25,6 +25,7 @@ from utils.trade_journal import TradeJournal
 from utils.live_reconciliation import recover_offline_journal_orders, apply_trade_updates, same_broker_position
 from utils.strategy_state import StrategyCheckpoint
 from utils.setup_ledger import SetupLedger
+from utils.warmup import warmup_counts
 from data.mt5_data import connect, disconnect, reconnect, get_latest_completed_bar, get_recent_bars
 from data.mt5_data import get_completed_bars_since
 from data.historical_loader import bar_close_time
@@ -157,16 +158,13 @@ def main():
             logger.info('Restored strategy state and bar timestamps from checkpoint')
 
         # ── Warm-up: feed historical bars so EMAs/ATR/fractals are seeded ────
-        # D1 needs ~50 bars for EMA(20) + ATR(14) with margin.
-        # H4/H1 need ~100 bars for fractal window + swing detection.
-        # M15 needs ~200 bars for fractal window + swing detection on faster TF.
-        WARMUP_BARS = {'D1': 50, 'H4': 100, 'H1': 100, 'M15': 200, 'M5': 250}
+        required_history = warmup_counts(strategy_specs)
         logger.info("Warming up strategy state with historical bars...")
         warmup_count = 0
         warmup_events = []
         warmup_pairs = [] if restored is not None else subscribed_pairs
         for symbol, timeframe in warmup_pairs:
-            count = WARMUP_BARS.get(timeframe, 50)
+            count = required_history[(symbol, timeframe)]
             bars = get_recent_bars(symbol, timeframe, count)
             if len(bars) < count:
                 raise RuntimeError(f'Insufficient warm-up history for {symbol} {timeframe}: '

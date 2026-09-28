@@ -1,5 +1,6 @@
 from collections import deque
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
+import json
 
 from models import BarEvent, Signal
 
@@ -60,6 +61,8 @@ class Failed2Strategy:
             raise ValueError("entry_mode must be 'market' or 'fvg'")
         if mss_fractal_n < 1 or sl_fractal_n < 1:
             raise ValueError('fractal parameters must be >= 1')
+        if d1_range_lookback < 1:
+            raise ValueError('d1_range_lookback must be >= 1')
         rr = tp_rr_ratio if tp_rr_ratio is not None else rr_ratio
         if rr < 1.0:
             raise ValueError('rr_ratio must be >= 1.0')
@@ -139,6 +142,22 @@ class Failed2Strategy:
         self._d1_range_percentile: dict[str, float | None] = {}
         self._d1_range_blocked: dict[str, bool] = {}
         self._last_signal_context: dict[str, dict | None] = {}
+        self._market_proposals: dict[str, str] = {}
+        self._accepted_market_attempts: dict[str, str] = {}
+        self._consumed_market_setups: set[str] = set()
+        if entry_mode != 'market':
+            # FVG continues to use the engine's occupied-slot-aware legacy hook.
+            self.notify_proposal_rejected = None
+
+    def warmup_requirements(self) -> dict[str, int]:
+        """Seed the full range comparison and allow EMA seed error to decay."""
+        required = {}
+        if self.d1_range_filter != 'off' or self.use_d1_diagnostics:
+            required['D1'] = self.d1_range_lookback + 1
+        if self.trend_filter != 'off':
+            tf = 'D1' if self.trend_filter == 'd1_ema' else self.tf_bias
+            required[tf] = max(required.get(tf, 0), 5 * max(self.ema_fast, self.ema_slow))
+        return required
 
     def reset(self):
         for d in (
@@ -153,6 +172,9 @@ class Failed2Strategy:
             self._last_signal_context,
         ):
             d.clear()
+        self._market_proposals.clear()
+        self._accepted_market_attempts.clear()
+        self._consumed_market_setups.clear()
 
     def generate_signal(self, event: BarEvent) -> Signal | None:
         self._init_symbol(event.symbol)
@@ -324,6 +346,8 @@ class Failed2Strategy:
             return None
         if self._traded_setup_id[symbol] == setup['id']:
             return None
+        if self.entry_mode == 'market' and self._market_setup_id(symbol, setup) in self._consumed_market_setups:
+            return None
         if self._pending_entry[symbol] is not None:
             return None
         if bar.timestamp.hour in self.blocked_hours:
@@ -339,7 +363,10 @@ class Failed2Strategy:
 
         if signal is not None:
             self._last_signal_context[symbol] = self._build_signal_context(symbol, signal, bar)
-            self._traded_setup_id[symbol] = setup['id']
+            if self.entry_mode == 'market':
+                self._market_proposals[symbol] = signal.attempt_id
+            else:
+                self._traded_setup_id[symbol] = setup['id']
             if signal.order_type == 'PENDING':
                 self._pending_entry[symbol] = signal.entry_price
                 self._pending_setup_id[symbol] = setup['id']
@@ -420,6 +447,7 @@ class Failed2Strategy:
     ) -> Signal:
         risk = abs(entry - stop_loss)
         take_profit = entry + self.rr_ratio * risk if direction == 'BUY' else entry - self.rr_ratio * risk
+        setup_id = self._market_setup_id(symbol, setup) if self.entry_mode == 'market' else None
         return Signal(
             symbol=symbol,
             direction=direction,
@@ -429,7 +457,68 @@ class Failed2Strategy:
             take_profit=take_profit,
             strategy_name=self.NAME,
             timestamp=bar.timestamp,
+            setup_id=setup_id,
+            attempt_id=setup_id + '|' + self._utc_stamp(bar.timestamp) if setup_id else None,
         )
+
+    @staticmethod
+    def _utc_stamp(value):
+        if value.tzinfo is not None:
+            value = value.astimezone(timezone.utc).replace(tzinfo=None)
+        return value.isoformat()
+
+    def _market_setup_id(self, symbol, setup):
+        return self.NAME + '|market-v1|' + json.dumps(
+            [symbol, setup['direction'], self._utc_stamp(setup['timestamp'])], separators=(',', ':'))
+
+    def _valid_market_setup(self, order):
+        setup_id = order.get('setup_id') or ''
+        prefix = self.NAME + '|market-v1|'
+        if self.entry_mode != 'market' or not setup_id.startswith(prefix):
+            return None
+        try:
+            symbol, direction, stamp = json.loads(setup_id[len(prefix):])
+            datetime.fromisoformat(stamp)
+        except (ValueError, TypeError):
+            return None
+        if symbol != order.get('symbol') or direction != order.get('direction'):
+            return None
+        if order.get('strategy_name', self.NAME) != self.NAME or direction not in ('BUY', 'SELL'):
+            return None
+        return setup_id
+
+    def notify_order_accepted(self, signal, ticket, details=None):
+        if self.entry_mode == 'market':
+            self.sync_order_state(dict(symbol=signal.symbol, direction=signal.direction,
+                strategy_name=self.NAME, setup_id=signal.setup_id, attempt_id=signal.attempt_id))
+            if self._market_proposals.get(signal.symbol) == signal.attempt_id:
+                self._market_proposals.pop(signal.symbol, None)
+
+    def sync_order_state(self, order):
+        """Adopt confirmed attribution; never guess the setup for a legacy order."""
+        setup_id = self._valid_market_setup(order)
+        if setup_id is not None:
+            self._consumed_market_setups.add(setup_id)
+            if order.get('attempt_id'):
+                self._accepted_market_attempts[order['attempt_id']] = setup_id
+
+    def notify_trade_closed(self, trade):
+        if self.entry_mode == 'market':
+            # Closing a trade does not make its H1 setup eligible again.
+            self.sync_order_state(trade)
+        else:
+            self.notify_win(trade['symbol'])
+
+    def notify_proposal_rejected(self, signal):
+        attempt = getattr(signal, 'attempt_id', None)
+        if self._market_proposals.get(signal.symbol) == attempt:
+            self._market_proposals.pop(signal.symbol, None)
+        # The simulator may accept a queued market order then reject its next-open
+        # fill. Only that identified, unfilled attempt can release consumption.
+        if getattr(signal, 'ticket', None) is not None:
+            setup_id = self._accepted_market_attempts.pop(attempt, None)
+            if setup_id and setup_id not in self._accepted_market_attempts.values():
+                self._consumed_market_setups.discard(setup_id)
 
     def _check_pending_fill_or_cancel(self, symbol: str, bar: BarEvent) -> Signal | None:
         entry = self._pending_entry[symbol]
@@ -457,6 +546,9 @@ class Failed2Strategy:
         self._traded_setup_id[symbol] = None
 
     def _passes_entry_filters(self, symbol: str, direction: str) -> bool:
+        if self.d1_range_filter != 'off':
+            if self._d1_ema_count[symbol] < self.d1_range_lookback + 1:
+                return False
         if self.d1_range_filter == 'block_top_pct' and self._d1_range_blocked[symbol]:
             return False
         if self.trend_filter == 'off':
@@ -631,6 +723,9 @@ class Failed2Strategy:
 
     def notify_signal_rejected(self, symbol: str):
         """Release an unsubmitted proposal, retaining indicators and setup context."""
+        if self.entry_mode == 'market':
+            self._market_proposals.pop(symbol, None)
+            return
         self._traded_setup_id[symbol] = None
         self._pending_entry[symbol] = None
         self._pending_setup_id[symbol] = None

@@ -2,7 +2,45 @@
 
 ## Status
 
-DEMO on USTEC as `Failed2_H4_H1_M5_market`. The USA100 candidate family passed STRONG walk-forward validation on Dukascopy and HistData in May 2026. The configured session is 13:00-16:00 UTC. Not approved for real-money live trading.
+DEMO on USTEC as `Failed2_H4_H1_M5_market`. The configured session is 13:00-16:00 UTC, with a 4R signal-price target and global 0.5% risk. Startup history and market setup tracking were corrected locally on 28 September with user approval. Numeric settings and membership are unchanged. The May STRONG label is historical; latest retention varies by source. Not approved for real-money live trading. See the [correction report](failed2_corrections_20260928.md) for current results and host-update requirements.
+
+## Corrections and revalidation - 2026-09-28
+
+Implemented the authorized warm-up and market setup-tracking corrections.
+Current settings now request 250 completed D1 bars at cold startup. Entry is
+blocked until the full daily-range comparison is available. Accepted market
+setups retain their identities through order and closed-trade recovery.
+
+Corrected 2020 through 2025 results are +103.00R Dukascopy, +99.68R HistData,
+and +53.29R broker data. Broker PF remains 1.48 and drawdown 10.14R. Latest broker
+test retention remains STRONG at 71.6%; latest long-history tests remain positive
+but WEAK. All 186 tests pass. No numeric optimization or host deployment occurred.
+Preserve the setup ledger when updating the trading host. See the
+[full correction report](failed2_corrections_20260928.md).
+
+## Review before corrections - 2026-09-28
+
+Thirty-two sequential replays and three observer controls are complete. Current
+2020–2025 returns are +105.00R on Dukascopy, +101.68R on verified HistData, and
++53.29R on IC Markets data. Broker PF is 1.48 and closed-trade drawdown is 10.14R.
+The broker 2024–2025 historical test earns +17.28R with 71.6% expectancy retention
+(STRONG); the same test is profitable on the long-history sources but retains only
+31–32% (WEAK). HistData and Dukascopy share 99.95% identical M5 OHLC on overlapping
+timestamps, so comparable performance is not independent-feed confirmation.
+
+The runner warms up only 50 daily candles, while the range filter needs at least
+61. Reconstructing the 14 July restart reproduces the logged 15:05 UTC entry with
+50 bars; 61 bars blocks it. Also, rejected proposals can consume H1 setups while
+another position is open, and cold reconstruction loses consumed setup identity.
+Fix these operational issues and compare with the baseline before optimization.
+The research-only fresh-cross rule has mixed returns and increases drawdown on
+all three sources; it is not recommended for adoption from this evidence.
+
+The copied DEMO export has eight closed positions, one winner, and -$778.31 net.
+One weekend gap lost about 3.45 times its reported initial stop risk. This is a
+small sample spanning older code and settings. Production Failed2 code, settings,
+risk, and membership remain unchanged. See the
+[full review and comparison tables](failed2_review_20260928.md).
 
 ## Rules
 
@@ -15,7 +53,7 @@ DEMO on USTEC as `Failed2_H4_H1_M5_market`. The USA100 candidate family passed S
   - 2 candle: closes below the previous candle body low without taking the previous high.
   - 3 candle: takes the previous high and closes below the previous candle body low.
   - failed2 candle: wicks above the previous high and closes back below the previous candle body high.
-- Bias remains active until an opposite HTF bias signal replaces it.
+- Every qualifying HTF bias signal replaces the active bias and clears the H1 setup and M5 bars, including a same-direction signal. With no qualifying signal, the existing bias remains active by default.
 - `invalidate_on_bias_extreme` exists for testing, default `False`.
 
 ## Confirmation And Entry
@@ -26,11 +64,11 @@ DEMO on USTEC as `Failed2_H4_H1_M5_market`. The USA100 candidate family passed S
 - LTF entry uses `M5` by default after the H1 failed2 candle has closed.
 - BUY MSS: M5 closes above a confirmed swing high.
 - SELL MSS: M5 closes below a confirmed swing low.
-- `entry_mode='market'`: enter at the MSS candle close.
+- `entry_mode='market'`: propose entry at the MSS candle close; backtests fill at the next matching M5 open and the host uses an executable quote.
 - `entry_mode='fvg'`: place a pending order in the nearest FVG from the MSS leg.
-- SL uses the previous confirmed opposite fractal swing point.
-- TP is strategy-set from `rr_ratio`, default `2.0`.
-- One trade is allowed per confirmed H1 failed2 setup.
+- SL uses the confirmed opposite fractal whose pivot precedes the selected broken MSS pivot; a newer opposite pivot after it is ignored.
+- TP is strategy-set from `rr_ratio`, constructor default `2.0`, current DEMO setting `4.0`. Actual fill reward/risk can differ.
+- Market mode consumes an H1 setup only on accepted submission. Rejection leaves it eligible, while accepted open and closed orders retain consumption through the setup ledger. Older orders without setup identities cannot recover their original H1 attribution.
 
 ## Sweep Candidates
 

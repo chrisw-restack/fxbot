@@ -2,6 +2,103 @@
 
 This file audits the IC Markets demo account. No entry in this file authorizes real-money trading. Older dated sections may use `live` to refer to the MT5 runner or `live_config.py`; current deployment status is DEMO.
 
+## Failed2 market corrections, 2026-09-28
+
+The user authorized the review recommendations. Failed2 market proposals now
+carry setup/attempt identities. Only accepted submissions consume a setup;
+rejections while another position is open do not. The existing setup ledger
+restores consumed identities from attributed open orders and closed trades.
+Old orders without identity remain unattributed. Preserve logs/setup_ledger.json.
+
+Cold startup now uses strategy-specific history requirements. Current Failed2
+settings request 250 completed USTEC D1 bars, covering the 61-bar range minimum
+and allowing EMA initialization error to decay. Missing required history stops
+startup; the strategy also blocks entries with incomplete daily range history.
+Changed code invalidates the previous checkpoint and starts a fresh warm-up.
+
+Corrected 2020 through 2025 results are +103.00R Dukascopy, +99.68R HistData,
+and +53.29R broker data. The last broker historical test remains +17.28R with
+71.6% expectancy retention. Latest long-history retention remains WEAK, although
+those test periods are profitable. All 186 unit tests pass. Parameters were not
+optimized; fresh corrected DEMO evidence is still needed.
+
+Numeric parameters, USTEC membership, and 0.5% risk remain unchanged. EmaFibRunning
+remains removed from new runs. No code was deployed or MT5 account accessed here.
+See the [correction report](failed2_corrections_20260928.md) for validation.
+
+## Failed2 market review before corrections, 2026-09-28
+
+Failed2 remains configured for DEMO on USTEC with unchanged logic, parameters,
+and global 0.5% risk. Current 2020–2025 replays earn +105.00R Dukascopy,
++101.68R verified HistData, and +53.29R broker data. The last 2024–2025 broker
+test earns +17.28R with STRONG retention; the same long-history tests remain
+profitable but have WEAK retention. The evidence supports correction and further
+validation rather than retirement or parameter promotion.
+
+The 50-D1-bar startup history is insufficient for the 60-prior-day range filter.
+An isolated reconstruction of the actual 14 July restart reproduces its logged
+15:05 entry with 50 bars and blocks it with 61. Proposed/accepted setup tracking
+and cold-restart recovery also need correction. These issues were audited, not
+changed. The copied DEMO export shows eight trades and -$778.31 net, including a
+weekend gap loss exceeding its reported stop risk. See the
+[full review](failed2_review_20260928.md). No host deployment occurred.
+
+## EmaFib Running removed from new DEMO runs, 2026-09-28
+
+The user explicitly requested removal. `live_config.py` no longer constructs or
+registers EmaFibRunning. Its corrected strategy code, backtest registration,
+historical research settings, and magic number 1002 remain available.
+
+The trading host must be updated and its old bot stopped before starting the new
+version. Removal prevents new strategy signals; it does not cancel orders already
+held by MT5. Cancel any remaining EmaFibRunning pending orders on the host. Filled
+positions retain their broker SL/TP and remain identifiable for reconciliation.
+Preserve `logs/setup_ledger.json`. No host deployment or MT5 interaction occurred here.
+
+## EmaFib Running corrected locally, latest validation fails, 2026-09-25
+
+The user authorized the Running review recommendations. Local code now tracks
+accepted orders by setup/attempt, recovers their original anchors through the
+setup ledger, handles partial-fill cancellation races, and initializes running
+extremes from all known closes since the anchor. All 172 tests pass.
+
+Research completed 204 sequential replays, two original-code controls, and six
+final-code broker controls. Corrected six-pair 2020 through 2025 returns are
++27.03R Dukascopy, +35.40R HistData, and +13.26R broker. Broker PF is 1.13,
+closed-trade drawdown 22.73R, and the maximum losing streak is 22. The latest
+2024 through 2025 broker test loses 15.10R with PF 0.59; that test fails on all
+three sources. Earlier long-history tests are mixed. The historical STRONG
+label no longer describes current validation.
+
+Pausing new Running entries in the default DEMO suite is recommended, but no
+membership, numeric parameter, symbol, or risk change has been made. There was
+no deployment or restart on the trading host. Preserve `logs/setup_ledger.json`
+for eventual recovery; old orders without origin metadata cannot acquire a
+reliable historical anchor. See the
+[full correction report](ema_fib_running_corrections_20260925.md).
+
+## EmaFib Running initial review, before corrections, 2026-09-25
+
+The user requested the same logic/performance analysis for EmaFibRunning.
+Sixty-four sequential replays and two observer controls are complete, using
+current numeric settings. Six matched pairs over 2020 through 2025 return
++33.59R Dukascopy, +42.41R HistData, and +17.31R broker data. Broker PF is 1.17,
+max closed-trade drawdown 24.10R, and the longest losing streak is 23. The broker
+2024 through 2025 slice loses 14.04R.
+
+These are current-code results, not corrected results. Reproduced defects include
+bid-touch fill inference, overwritten accepted anchors, stale pending state after
+close, premature state clearing on cancellation, missing cold-recovery attribution,
+and omitted known closes when initializing the running extreme. The old STRONG
+label is historical. Correct and compare these changes before tuning parameters
+or deciding retirement. Running remains in the default DEMO suite unchanged.
+
+The copied DEMO export contains two wins totaling $1,300.76 net. Of that,
+$1,205.46 came from EURUSD ticket 1689274839, whose 7 June cancellation failed
+with retcode 10018 while the old engine incorrectly logged success. It later
+filled and won. This predates the September execution fixes and does not validate
+the intended strategy. See the [full Running review](ema_fib_running_review_20260925.md).
+
 ## EmaFib Retracement removed from new DEMO runs, 2026-09-25
 
 The user explicitly requested removal from new bot runs. `live_config.py` no longer

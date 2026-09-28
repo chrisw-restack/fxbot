@@ -37,7 +37,7 @@ fxbot/
 │
 ├── strategies/
 │   ├── ema_fib_retracement.py    # Retired from DEMO; retained for backtesting
-│   ├── ema_fib_running.py        # DEMO: D1/H1 EMA trend + fib entry, running variant
+│   ├── ema_fib_running.py        # Retired from DEMO; retained for backtesting
 │   ├── three_line_strike.py      # DEMO: M5 engulfing, NY session, 2 FX pairs
 │   ├── ims.py                    # DEMO: H4/M15 ICT market structure, 9 symbols
 │   ├── ims_reversal.py           # FORWARD DEMO: EURUSD-only frozen research trial
@@ -251,15 +251,14 @@ Subscribe to multiple timeframes via `TIMEFRAMES = ['D1', 'H1']`. The strategy r
 
 ## Demo suite
 
-This is the configured IC Markets demo suite as of 2026-09-25. `live_config.py` is the executable source of truth. EmaFib Retracement has been retired from new runs after corrected broker validation; its code remains available for backtesting. Evidence labels for the remaining strategies refer to their earlier reviews.
+This is the configured IC Markets demo suite as of 2026-09-28. `live_config.py` is the executable source of truth. EmaFib Retracement and EmaFib Running have been retired from new runs after corrected validation; their code remains available for backtesting. Evidence labels for the remaining strategies refer to their earlier reviews.
 
 | Strategy | Timeframes | Type | Symbols | Current evidence |
 |----------|------------|------|---------|------------------|
-| EmaFibRunning | D1, H1 | PENDING | 7 FX pairs | STRONG walk-forward; positive IC Markets replay |
 | Engulfing | M5 | MARKET | EURUSD, AUDUSD | Proxy walk-forward STRONG; IC Markets replay negative; pause under review |
 | IMS | H4, M15 | PENDING | 8 symbols | XAUUSD excluded; see current strategy log for validation |
 | IMS Reversal | H4, M15 | PENDING | EURUSD | Frozen forward-demo research trial; not a promotion candidate yet |
-| Failed2 | D1, H4, H1, M5 | MARKET | USTEC | STRONG on Dukascopy and HistData; positive IC Markets replay |
+| Failed2 | D1, H4, H1, M5 | MARKET | USTEC | Startup history and market setup tracking corrected; fixed-parameter validation in the [correction report](strategy_log/failed2_corrections_20260928.md) |
 | NY Index Opening Drive | D1, H1, M5 | MARKET | USTEC | STRONG on Dukascopy and HistData; positive IC Markets replay; 0.25% risk |
 | Candle Confirmation USDJPY | D1, H1, M5 | MARKET | USDJPY | MODERATE validation; IC Markets net edge near zero; pause under review |
 | Candle Confirmation GBPUSD | D1, H1, M5 | MARKET | GBPUSD | Fixed candidate positive OOS; weak IC Markets net edge; pause under review |

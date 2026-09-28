@@ -5,7 +5,6 @@ this file authorizes real-money trading.
 """
 
 import config
-from strategies.ema_fib_running import EmaFibRunningStrategy
 from strategies.three_line_strike import ThreeLineStrikeStrategy
 from strategies.ims import ImsStrategy
 from strategies.ims_reversal import ImsReversalStrategy
@@ -28,16 +27,7 @@ CANDLE_CONFIRMATION_GBPUSD_SYMBOLS = ['GBPUSD']
 def create_live_strategy_specs():
     """Return strategy and symbol pairs for the current demo suite."""
     # EmaFibRetracement retired from DEMO on 2026-09-25 after corrected broker validation.
-    ema_fib_running = EmaFibRunningStrategy(
-        fib_entry=0.786,
-        fib_tp=2.5,
-        fractal_n=2,
-        min_swing_pips=30,
-        ema_sep_pct=0.0,
-        cooldown_bars=0,
-        invalidate_swing_on_loss=True,
-        blocked_hours=(*range(20, 24), *range(0, 9)),
-    )
+    # EmaFibRunning retired from DEMO on 2026-09-28 after corrected rolling validation.
     engulfing = ThreeLineStrikeStrategy(
         sl_mode='fractal',
         fractal_n=3,
@@ -162,7 +152,6 @@ def create_live_strategy_specs():
         pip_sizes={s: config.PIP_SIZE[s] for s in CANDLE_CONFIRMATION_GBPUSD_SYMBOLS if s in config.PIP_SIZE},
     )
     return [
-        (ema_fib_running, config.SYMBOLS),
         (engulfing, ENGULFING_SYMBOLS),
         (ims, IMS_SYMBOLS),
         (ims_reversal, IMS_REV_SYMBOLS),
