@@ -2,6 +2,21 @@
 
 This file audits the IC Markets demo account. No entry in this file authorizes real-money trading. Older dated sections may use `live` to refer to the MT5 runner or `live_config.py`; current deployment status is DEMO.
 
+## Failed2 parameter study, 2026-09-29
+
+The user requested parameter comparisons after the tracking corrections.
+Completed 128 sequential replays across 19 configurations with 16 exact baseline
+controls. The search ranks by training total R with predeclared trade-count,
+profit-factor, and drawdown limits. Three alternatives passed to later-period
+evaluation alongside current settings.
+
+Keep the current configuration. Extending the session to 17:00 weakens later
+broker performance substantially. Lookbacks of 40 or 90 days offer no convincing
+overall improvement. Rolling selection also underperforms unchanged parameters
+on the combined independent Dukascopy test folds. No DEMO parameter, risk,
+membership, production-code, or host change occurred. See the
+[parameter report](failed2_parameters_20260928.md) for evidence and limitations.
+
 ## Failed2 market corrections, 2026-09-28
 
 The user authorized the review recommendations. Failed2 market proposals now

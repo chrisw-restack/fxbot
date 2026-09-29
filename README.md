@@ -258,7 +258,7 @@ This is the configured IC Markets demo suite as of 2026-09-28. `live_config.py` 
 | Engulfing | M5 | MARKET | EURUSD, AUDUSD | Proxy walk-forward STRONG; IC Markets replay negative; pause under review |
 | IMS | H4, M15 | PENDING | 8 symbols | XAUUSD excluded; see current strategy log for validation |
 | IMS Reversal | H4, M15 | PENDING | EURUSD | Frozen forward-demo research trial; not a promotion candidate yet |
-| Failed2 | D1, H4, H1, M5 | MARKET | USTEC | Startup history and market setup tracking corrected; fixed-parameter validation in the [correction report](strategy_log/failed2_corrections_20260928.md) |
+| Failed2 | D1, H4, H1, M5 | MARKET | USTEC | Startup and tracking corrected; 19-choice [parameter study](strategy_log/failed2_parameters_20260928.md) supports keeping current settings |
 | NY Index Opening Drive | D1, H1, M5 | MARKET | USTEC | STRONG on Dukascopy and HistData; positive IC Markets replay; 0.25% risk |
 | Candle Confirmation USDJPY | D1, H1, M5 | MARKET | USDJPY | MODERATE validation; IC Markets net edge near zero; pause under review |
 | Candle Confirmation GBPUSD | D1, H1, M5 | MARKET | GBPUSD | Fixed candidate positive OOS; weak IC Markets net edge; pause under review |

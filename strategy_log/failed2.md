@@ -4,6 +4,25 @@
 
 DEMO on USTEC as `Failed2_H4_H1_M5_market`. The configured session is 13:00-16:00 UTC, with a 4R signal-price target and global 0.5% risk. Startup history and market setup tracking were corrected locally on 28 September with user approval. Numeric settings and membership are unchanged. The May STRONG label is historical; latest retention varies by source. Not approved for real-money live trading. See the [correction report](failed2_corrections_20260928.md) for current results and host-update requirements.
 
+## Parameter study - 2026-09-29
+
+Completed 128 serial replays across 19 configurations, varying one parameter at
+a time. Sixteen controls exactly reproduce the corrected review. The study tests
+targets from 2.5R to 5R, structure/stop fractals, daily-range thresholds and
+lookbacks, session extensions, and removal of the daily trend filter. Training
+selection is separate from later historical evaluation.
+
+Recommendation: keep the current parameters. The broker 2024–2025 test returns
++17.28R at current settings, versus +4.28R with a 17:00 session end, +17.26R with
+a 90-day lookback, and +15.27R with a 40-day lookback. A 90-day lookback gains only
+1R in the small recent broker slice and reduces long-feed returns. Rolling
+parameter selection on Dukascopy yields +98.40R and 16R drawdown, versus +100.79R
+and 13.04R for unchanged settings across the same independent test folds.
+
+No parameter, risk, membership, or production-code change was made. The periods
+are reused historical evidence. See the [full parameter study](failed2_parameters_20260928.md)
+for all choices, exclusions, comparisons, and cost scenarios.
+
 ## Corrections and revalidation - 2026-09-28
 
 Implemented the authorized warm-up and market setup-tracking corrections.
