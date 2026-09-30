@@ -21,6 +21,7 @@ import logging
 from types import SimpleNamespace
 
 import config
+from utils.warmup import warmup_days
 from engine import EventEngine
 from risk.risk_manager import RiskManager
 from portfolio.portfolio_manager import PortfolioManager
@@ -104,6 +105,11 @@ class BacktestEngine:
             self.portfolio.record_close(rejected['symbol'], 0.0, rejected['strategy_name'])
             self.trade_logger.discard_unfilled(rejected['ticket'])
             self.event_engine.reject_signal(SimpleNamespace(**rejected))
+            if self.event_engine.trade_journal:
+                self.event_engine.trade_journal.log_rejected(SimpleNamespace(**dict(rejected,
+                    stop_loss=rejected['sl'], take_profit=rejected['tp'],
+                    timestamp=rejected.get('signal_time'))),
+                    rejected.get('rejection_reason', 'market_fill_rejected'))
         self.event_engine.process_bar(bar)
         return closed
 
@@ -118,7 +124,10 @@ class BacktestEngine:
         chronological order (correct for multi-symbol / multi-timeframe testing).
         start_date / end_date: optional date range filter [start, end).
         """
-        load_start = start_date - timedelta(days=180) if start_date else None
+        specs = [(s, [symbol for symbol, tf in self.event_engine.get_subscribed_pairs()
+                      if s in self.event_engine._subscriptions[(symbol, tf)]])
+                 for s in self.event_engine._strategies_by_name.values()]
+        load_start = start_date - timedelta(days=warmup_days(specs)) if start_date else None
         if isinstance(csv_paths, str):
             bars = load_csv(csv_paths, start=load_start, end=end_date)
         else:

@@ -1616,9 +1616,10 @@ def test_oos(all_bars, test_start, test_end, strategy_class,
              best_params, fixed_params, symbols):
     """Test best parameters on out-of-sample window."""
     from datetime import timedelta
-    test_bars = filter_bars(all_bars, start=test_start - timedelta(days=180), end=test_end)
     full_params = {**fixed_params, **best_params}
     strategy, rr = build_strategy(strategy_class, full_params)
+    from utils.warmup import warmup_days
+    test_bars = filter_bars(all_bars, start=test_start - timedelta(days=warmup_days([(strategy, symbols)])), end=test_end)
 
     return run_backtest(
         test_bars, strategy, symbols,

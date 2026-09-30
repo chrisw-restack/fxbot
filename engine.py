@@ -194,6 +194,8 @@ class EventEngine:
                 risk_budget=enriched.risk_budget,
                 **({'setup_id': enriched.setup_id, 'attempt_id': enriched.attempt_id}
                    if enriched.setup_id else {}),
+                **({'min_stop_distance': enriched.min_stop_distance}
+                   if enriched.min_stop_distance is not None else {}),
             )
 
             if ticket:

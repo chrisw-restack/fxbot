@@ -4,7 +4,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from collections import defaultdict
 import config
-from risk.validation import positive, valid_levels, floor_volume
+from risk.validation import positive, valid_levels, valid_stop_distance, floor_volume
 
 import MetaTrader5 as mt5
 
@@ -175,6 +175,7 @@ class MT5Execution(BaseExecution):
         risk_budget: float | None = None,
         setup_id: str | None = None,
         attempt_id: str | None = None,
+        min_stop_distance: float | None = None,
     ) -> int:
         self._last_order_details = None
         self._last_order_error = None
@@ -258,6 +259,12 @@ class MT5Execution(BaseExecution):
             )
         if not valid_levels(direction, request['price'], request['sl'], request['tp'], config.MIN_RR_RATIO):
             self._last_order_error = {'stage': 'risk_validation', 'broker_comment': 'executable levels violate minimum R:R'}
+            return 0
+        if not valid_stop_distance(request['price'], request['sl'], min_stop_distance):
+            self._last_order_error = {'stage': 'risk_validation',
+                'broker_comment': 'executable stop distance below strategy minimum',
+                'min_stop_distance': min_stop_distance,
+                'actual_stop_distance': abs(request['price']-request['sl'])}
             return 0
         if risk_budget is not None:
             if not positive(risk_budget):
@@ -354,21 +361,36 @@ class MT5Execution(BaseExecution):
             )
             return 0
 
-        fill_price = getattr(result, 'price', None) or price
+        reported_fill = getattr(result, 'price', None)
+        fill_price = reported_fill if positive(reported_fill) else request['price']
         fill_risk = abs(fill_price - request['sl'])
         fill_reward = request['tp'] - fill_price if direction == 'BUY' else fill_price - request['tp']
         fill_rr = fill_reward / fill_risk if fill_risk else 0.0
         if order_type == 'MARKET' and fill_rr + 1e-10 < config.MIN_RR_RATIO:
             logger.error('Actual fill R:R below minimum: %s ticket=%s rr=%s', symbol, result.order, fill_rr)
+        fill_stop_valid = valid_levels(direction, fill_price, request['sl']) and valid_stop_distance(
+            fill_price, request['sl'], min_stop_distance)
+        if order_type == 'MARKET' and not positive(reported_fill):
+            fill_stop_valid = None  # The request quote is not proof of a broker fill.
+            if min_stop_distance is not None:
+                logger.warning('Actual fill price unavailable for stop validation: %s ticket=%s',
+                               symbol, result.order)
+        if order_type == 'MARKET' and fill_stop_valid is False:
+            logger.error('Actual fill stop distance below strategy minimum: %s ticket=%s distance=%s minimum=%s',
+                         symbol, result.order, fill_risk, min_stop_distance)
         self._last_order_details = {
             'ticket': result.order,
             'deal': getattr(result, 'deal', 0),
             'fill_price': fill_price,
-            'request_price': price,
+            'request_price': request['price'],
+            'fill_price_source': 'broker' if positive(reported_fill) else 'request',
             'volume': getattr(result, 'volume', 0) or request['volume'],
             'sl': request['sl'],
             'tp': request['tp'],
             'fill_rr': fill_rr,
+            'min_stop_distance': min_stop_distance,
+            'fill_stop_distance_valid': fill_stop_valid,
+            'actual_stop_distance': abs(reported_fill-request['sl']) if positive(reported_fill) else None,
             'risk_budget': risk_budget,
             'bid': getattr(tick, 'bid', None),
             'ask': getattr(tick, 'ask', None),

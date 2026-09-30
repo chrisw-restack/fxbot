@@ -73,6 +73,16 @@ class StrategyPipDefaultsTests(unittest.TestCase):
 
 
 class LiveConfigTests(unittest.TestCase):
+    def test_candle_demo_keeps_gbpusd_and_retires_usdjpy(self):
+        specs = {s.NAME: (s, symbols) for s, symbols in live_config.create_live_strategy_specs()}
+        self.assertNotIn('CandleConfirmation_USDJPY_H1_M5', specs)
+        strategy, symbols = specs['CandleConfirmation_GBPUSD_H1_M5']
+        self.assertEqual(symbols, ['GBPUSD'])
+        self.assertEqual((strategy.fractal_n, strategy.tp_range_pct, strategy.sl_rr_ratio), (3, 1.5, 2.0))
+        self.assertEqual((strategy.ema_sep_pct, strategy.min_engulf_body_pct, strategy.min_sl_pips), (.001, .6, 8))
+        self.assertEqual(config.MAGIC_NUMBERS['CandleConfirmation_USDJPY_H1_M5'], 1009)
+        self.assertNotIn(strategy.NAME, live_config.live_risk_pct_overrides())
+
     def test_ims_demo_excludes_failed_xauusd_symbol(self):
         specs = {
             strategy.NAME: symbols

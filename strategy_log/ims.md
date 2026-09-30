@@ -1,9 +1,62 @@
 # IMS (ICT Market Structure)
 
-**Status:** DEMO. Walk-forward MODERATE for the original nine-symbol proxy-data portfolio. XAUUSD failed the 2026-08-31 broker revalidation and was removed from the IMS demo scope with user approval. The remaining parameters are frozen. Not approved for real-money live trading.
+**Status:** DEMO configuration retained. Setup/order tracking and invalidation corrections were implemented on 2026-09-29; the trading host has not been updated by this work. Corrected broker evidence is weak, and the old nine-symbol MODERATE label does not validate the corrected eight-symbol suite. XAUUSD remains excluded. Not approved for real-money live trading.
 **File:** `strategies/ims.py`
 **Timeframes:** H4 (HTF) + M15 (LTF)
 **Order type:** PENDING
+
+---
+
+## Tracking corrections, 2026-09-29
+
+Implemented the user's authorized fixes. Setup and attempt identities now
+follow accepted orders through the existing durable ledger. Expired origins
+cannot silently return; old trade outcomes cannot reset newer setups. Failed
+cancellations keep their accepted-order records, and filled exposure remains
+protected. Cold startup requests 300 H4 and 4,800 M15 bars with current settings.
+All 206 tests pass, including 20 IMS regressions.
+
+Corrected 2020-2025 results for the current eight symbols are +22.70R on
+Dukascopy and +12.44R on verified HistData. The matched four-symbol broker
+comparison is -24.56R, down from -4.86R before correction, with 31.65R closed-trade
+drawdown. The recent five-symbol broker window falls from +10.64R to +1.20R
+across 30 trades. This does not establish a dependable broker edge.
+
+Combined broker test windows from July 2020 through June 2026 also remain
+negative: current settings -17.89R, all-hours cancellation -15.58R, fresh-break
+requirement -14.99R, and training-selected policies -17.87R. Neither alternative
+establishes a profitable replacement. These historical windows have appeared in
+earlier research and are not untouched out-of-sample evidence.
+
+Risk, symbols, the 2.5R target, and entry hours remain unchanged. Optional
+all-hours target cancellation and a fresh-break requirement are research
+alternatives, disabled by default. See the [correction report](ims_trend_corrected_20260929.md)
+for the rolling historical comparisons and host instructions. Full eight-symbol
+broker validation still needs M5 exports for EURAUD, CADJPY, and GBPCAD.
+
+## Review before correction, 2026-09-29
+
+The unchanged eight-symbol configuration remains positive over 2020-2025 with
+M5 execution: Dukascopy 246 trades, +27.11R, PF 1.16; corrected HistData 231
+trades, +22.91R, PF 1.14. These are fixed-parameter historical diagnostics,
+not a fresh walk-forward result. The two sources have almost identical
+prices at matching M5 timestamps and are not independent confirmation.
+
+For the four symbols with long broker M5 coverage, 2020-2025 is +25.21R
+Dukascopy, +19.62R HistData, and -4.86R broker. The recent five-symbol broker
+window is +10.64R across 30 trades. Results are mixed, and three cross pairs
+still need broker M5 exports for a complete eight-symbol comparison.
+
+The audit reproduces an expired H4 origin being recreated after its price
+level has already broken. Trade results can also reset a newer setup, and
+the strategy clears local tracking before cancellation is confirmed. Target
+cancellation outside entry hours is a separate policy choice to compare.
+
+Recommendation: correct setup/order attribution and candidate validity first,
+then rerun the same parameters before searching alternatives or deciding on
+retirement. No DEMO code, configuration, risk, membership, or host change was
+made. See [the full review](ims_trend_review_20260929.md) for broker comparisons,
+per-symbol results, costs, gaps, audit evidence, and the missing broker data.
 
 ---
 

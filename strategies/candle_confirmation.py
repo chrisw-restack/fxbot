@@ -19,9 +19,10 @@ from collections import deque
 from math import fabs
 
 from models import BarEvent, Signal
+from strategies.candle_confirmation_tracking import CandleConfirmationTracking
 
 
-class CandleConfirmationStrategy:
+class CandleConfirmationStrategy(CandleConfirmationTracking):
     ORDER_TYPE = 'MARKET'
 
     def __init__(
@@ -135,6 +136,18 @@ class CandleConfirmationStrategy:
         self._d1_vol_pct: dict[str, float | None] = {}
         self._d1_vol_blocked: dict[str, bool] = {}
         self._d1_close_pos: dict[str, float | None] = {}
+        self._init_tracking()
+
+    def warmup_requirements(self):
+        minutes = {'M1': 1, 'M5': 5, 'M15': 15, 'M30': 30, 'H1': 60, 'H4': 240, 'D1': 1440}
+        bias_bars = 100
+        requirements = {self.tf_bias: bias_bars,
+            self.tf_entry: max(1000, bias_bars * minutes[self.tf_bias] // minutes[self.tf_entry])}
+        if self.tf_trend:
+            requirements[self.tf_trend] = max(requirements.get(self.tf_trend, 0), 5 * self.ema_slow)
+        if self.d1_vol_filter != 'off' or self.d1_location_filter != 'off':
+            requirements['D1'] = max(requirements.get('D1', 0), self.d1_vol_lookback + 1)
+        return requirements
 
     def reset(self):
         self._prev_bias_bar.clear()
@@ -151,16 +164,9 @@ class CandleConfirmationStrategy:
         self._d1_vol_pct.clear()
         self._d1_vol_blocked.clear()
         self._d1_close_pos.clear()
+        self._init_tracking()
 
-    def notify_loss(self, symbol: str):
-        self._bias[symbol] = None
-        self._signal_fired[symbol] = False
-
-    def notify_win(self, symbol: str):
-        self._bias[symbol] = None
-        self._signal_fired[symbol] = False
-
-    def generate_signal(self, event: BarEvent) -> Signal | None:
+    def _generate_signal(self, event: BarEvent) -> Signal | None:
         symbol = event.symbol
         if symbol not in self._bias:
             self._prev_bias_bar[symbol] = None
@@ -188,7 +194,7 @@ class CandleConfirmationStrategy:
             bullish_engulf = bar.close > max(prev.open, prev.close)
             bearish_engulf = bar.close < min(prev.open, prev.close)
 
-            if not self._signal_fired[symbol]:
+            if not self._signal_fired[symbol] and not self._active_orders(symbol):
                 if bullish_engulf:
                     if self._valid_engulf_quality(symbol, 'BUY', bar):
                         self._set_bias(symbol, 'BUY', bar)
@@ -234,7 +240,10 @@ class CandleConfirmationStrategy:
             'retrace_level': retrace_level,
             'tp': tp,
             'in_zone': False,
+            'timestamp': bar.timestamp,
         }
+        if self._setup_id(symbol) in self._finished_setups:
+            self._bias[symbol] = None
         self._signal_fired[symbol] = False
         self._entry_bars[symbol].clear()
 
@@ -247,7 +256,7 @@ class CandleConfirmationStrategy:
         if bias is None:
             return None
 
-        if self._signal_fired[symbol]:
+        if self._signal_fired[symbol] or self._active_orders(symbol):
             return None
 
         if self._blocked and bar.timestamp.hour in self._blocked:
@@ -317,6 +326,7 @@ class CandleConfirmationStrategy:
         if not self._valid_sl_distance(symbol, entry, sl):
             return None
 
+        self._record_signal_context(symbol, bias, bars, sh_idx, leg_start)
         self._signal_fired[symbol] = True
         return Signal(
             symbol=symbol,
@@ -361,6 +371,7 @@ class CandleConfirmationStrategy:
         if not self._valid_sl_distance(symbol, entry, sl):
             return None
 
+        self._record_signal_context(symbol, bias, bars, sl_idx, leg_start)
         self._signal_fired[symbol] = True
         return Signal(
             symbol=symbol,
@@ -410,8 +421,11 @@ class CandleConfirmationStrategy:
     def _valid_sl_distance(self, symbol: str, entry: float, sl: float) -> bool:
         if self.min_sl_pips <= 0:
             return True
-        pip_size = self._pip_sizes.get(symbol, 0.01 if symbol == 'USDJPY' else 0.0001)
+        pip_size = self._pip_size(symbol)
         return abs(entry - sl) / pip_size >= self.min_sl_pips
+
+    def _pip_size(self, symbol):
+        return self._pip_sizes.get(symbol, 0.01 if symbol == 'USDJPY' else 0.0001)
 
     def _valid_engulf_quality(self, symbol: str, direction: str, bar: BarEvent) -> bool:
         rng = bar.high - bar.low
@@ -563,7 +577,3 @@ class CandleConfirmationStrategy:
     @staticmethod
     def _has_bearish_fvg(leg: list[BarEvent]) -> bool:
         return any(leg[i + 2].high < leg[i].low for i in range(len(leg) - 2))
-
-    def notify_signal_rejected(self, symbol: str):
-        """Release an unsubmitted proposal, retaining indicators and setup context."""
-        self._signal_fired[symbol] = False

@@ -6,6 +6,13 @@ def positive(value) -> bool:
     return isinstance(value, (int, float)) and isfinite(value) and value > 0
 
 
+def valid_stop_distance(entry, sl, minimum=None) -> bool:
+    if minimum is None:
+        return True
+    return (isinstance(minimum, (int, float)) and isfinite(minimum) and minimum >= 0
+            and positive(entry) and positive(sl) and abs(entry-sl) + 1e-10 >= minimum)
+
+
 def valid_levels(direction, entry, sl, tp=None, minimum_rr=1.0) -> bool:
     if direction not in ('BUY', 'SELL') or not all(positive(v) for v in (entry, sl)):
         return False

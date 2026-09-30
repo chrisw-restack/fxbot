@@ -79,6 +79,8 @@ class StrategyCheckpoint:
                                                 'portfolio/portfolio_manager.py',
                                                 'utils/live_reconciliation.py',
                                                 'utils/setup_ledger.py', 'strategies/ims_setup_tracking.py',
+                                                'strategies/ims_trend_tracking.py',
+                                                'strategies/candle_confirmation_tracking.py',
                                                 'main_live.py', 'utils/warmup.py', 'utils/strategy_state.py'))
         for source in sorted(sources):
             digest.update(source.read_bytes())

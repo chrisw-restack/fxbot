@@ -2,7 +2,122 @@
 
 ## Status
 
-DEMO on USDJPY and GBPUSD. USDJPY walk-forward validation is MODERATE for the fixed conservative candidate, and the GBPUSD fixed D1 candidate was positive in all three OOS folds. The 2026-08-12 IC Markets replay found little net edge after commission, so pausing both variants is under review. Neither variant is approved for real-money live trading.
+GBPUSD remains in DEMO at the user's explicit 2026-09-30 request, with its existing parameters and 0.5% planned risk. USDJPY Candle Confirmation is removed from new runs because corrected broker results are negative. Its magic number 1009 remains for existing-position reconciliation; other strategies may still trade USDJPY. The removal takes effect on the trading host after updating the code and restarting the bot. Neither variant is approved for real-money live trading. Older MODERATE labels describe earlier code and validation.
+
+The 2026-09-30 implementation adds the user-requested setup/order tracking,
+longer warmup, and minimum-stop checks at executable entry. The subsequent
+GBPUSD recovery study keeps those corrections. Entry parameters and GBPUSD
+risk remain unchanged; recovery gates are research-only.
+
+## User decision and GBPUSD recovery test, 2026-09-30
+
+Implemented the user's decision to keep GBPUSD and retire USDJPY Candle
+Confirmation from new DEMO runs. Existing broker trades are not automatically
+closed. This supersedes the earlier recommendation to pause both variants.
+
+Full January 2017-July 14, 2026 broker replay gives current GBPUSD 397 trades,
++4.95R, PF 1.018 and closed drawdown 23.28R. Requiring a prior opposite-extreme
+touch gives 205 trades, +15.34R, PF 1.114 and drawdown 12.39R. Additionally
+requiring a signal close inside the engulf range gives 190 trades and -2.14R.
+These are full replays with changed subsequent opportunities, not trade-list
+filters. The touch rule retains the original 181 recovery trades (+28.61R),
+but also introduces 24 trades totaling -13.27R.
+
+Recovery touch returns +18.13R on Dukascopy and +8.85R on verified HistData,
+less total R than their current baselines (+27.82R and +16.84R). On broker
+data it falls to -0.20R at one-pip spread and -10.31R at two pips. Three
+separate later two-year broker windows combine to +20.78R versus current
++12.15R, but July 2024-June 2026 alone is only +0.29R and account growth
+is -0.11%. These windows are retrospective because the hypothesis came from
+already-seen full-period data; they are not untouched OOS validation.
+
+Keep GBPUSD DEMO unchanged as requested. Retain touch-only for further
+research; neither recovery gate is promoted. Completed 24 sequential research
+cases, three extra plain-production controls, six exact baseline comparisons,
+and all 234 tests. Source/data hashes and order attribution reconcile. No
+commit, push or trading-host deployment occurred. See the
+[full recovery report](candle_gbpusd_recovery_20260930.md).
+
+## GBPUSD review, 2026-09-30
+
+Reviewed current fixed GBPUSD settings using the corrected shared Candle class.
+Across January 2017-July 2026, Dukascopy produces 399 trades and +27.82R,
+verified HistData 399 and +16.84R, and IC Markets 397 and +4.95R. Broker
+account growth is only +1.58% at 0.5% planned risk, with 11.60% equity drawdown.
+The broker 2020-2025 total is +4.77R; January-July 2026 loses -1.12R.
+
+Tracking-only economic trades match the frozen original on all three feeds.
+Observation runs match plain production exactly. No future-bar use was found;
+all corrected fills respect the eight-pip minimum and at least 1:1 R:R.
+
+Requiring a fresh swing crossing reduces broker results to -2.16R. Expiring at
+the opposite engulf extreme gives -23.91R. Both were tested individually and
+remain research-only. At a constant one-pip spread, current settings lose
+-20.53R; two pips produce -41.10R. No robust replacement was identified.
+
+Recovery setups that crossed the opposite extreme contribute +28.61R in the
+current broker trade list, while other setups contribute -23.66R. This is a
+descriptive research lead, not a tested recovery-only strategy or an approved
+filter. Use training-only selection and full later-period replay to study it.
+
+HistData has substantial 2023 provider gaps and matching prices are nearly
+identical to Dukascopy from 2019 onward. Broker daily candle boundaries differ.
+Swap and actual slippage are absent from the CSV model. The copied older DEMO
+sample has five trades and -$354.15 net, all reconciled to the journal.
+
+Completed 21 sequential research cases plus three extra production controls;
+six exact comparisons and all 228 tests pass. Recommend pausing new GBPUSD
+DEMO entries pending stronger validation. No membership, settings, risk, or
+host changes were made. See the [GBPUSD review](candle_gbpusd_review_20260930.md).
+
+## USDJPY tracking implementation, 2026-09-30
+
+Setup and attempt IDs now bind proposals, accepted orders, confirmed cancellations,
+and final closes to the originating H1 candle. Old outcomes cannot clear new
+setups. Durable ledger/checkpoint recovery retains attribution, while legacy
+orders remain conservatively unassigned. Journal context records the engulf,
+retracement, pivot, fresh-cross observation, trend alignment, and execution checks.
+
+Current D1 EMA20/50 settings request 250 D1, 100 H1, and 1,200 M5 bars. CSV and
+OOS warmup respect declared history requirements. The eight-pip USDJPY minimum
+is checked at the simulated next-open fill and the final rounded MT5 quote.
+Broker-reported fills are checked after acknowledgement; violations retain their
+real exposure and are logged. Missing broker prices are marked unknown.
+
+Nine matched sequential replays cover January 2017-July 2026 after sufficient
+2016 warmup. Tracking alone matches every economic trade field of the original
+class on all three feeds. Adding the executable-stop correction yields 577
+trades and +7.58R Dukascopy, 563 and -6.06R HistData, and 597 and -12.77R
+IC Markets. All 228 tests pass. The shared GBPUSD class inherits the correctness
+changes, but GBPUSD performance was not reassessed. No trading-host deployment
+occurred. See the [corrected baseline](candle_usdjpy_corrected_20260930.md).
+
+## USDJPY review, 2026-09-30
+
+Current fixed settings over July 2016-July 2026 produce 620 trades and +32.60R
+on Dukascopy, 600 and -7.72R on verified HistData, and 641 and -9.59R on
+IC Markets. The three instrumented runs exactly match production controls.
+The broker test windows from July 2020 through June 2026 total -15.33R.
+
+Dukascopy's R total includes one +27.21R trade whose favorable entry gap shrinks
+its filled stop to 0.73 pip. Its $116.02 profit is only about 2.29 times planned
+account risk. Overall Dukascopy account growth is +2.98% at 0.5% planned risk,
+versus 14.09% marked-to-market drawdown. A full replay enforcing an 8-pip stop
+minimum at fill reduces the result to +7.98R; broker remains negative.
+
+A separate fresh-break requirement improves broker full history to +4.42R,
+PF 1.01, but combined later test windows still lose -5.64R. A 1-pip spread
+stress case also loses. HistData has substantial February-July 2023 coverage
+gaps and nearly identical prices to Dukascopy at matching timestamps from 2019
+onward; it is not independent confirmation.
+
+The copied DEMO report has 12 USDJPY trades, six wins, and +$136.89 net. All 12
+reconcile to journal closes. This is positive but too small to establish an edge.
+Recommendations are to pause USDJPY from new DEMO runs and retain research code;
+add durable setup/order attribution and adequate cold warmup; validate minimum
+stop distance at actual fill; and report planned-budget R alongside filled-stop
+R and account growth before reconsidering it. No production configuration or
+trading-host change was made. See the [full review](candle_usdjpy_review_20260930.md).
 
 ## Concept
 

@@ -68,7 +68,7 @@ MAGIC_NUMBERS: dict[str, int] = {
     'LondonBreakout':    1006,
     'Failed2_H4_H1_M5_market': 1007,
     'CandleConfirmation_H1_M5': 1008,
-    'CandleConfirmation_USDJPY_H1_M5': 1009,
+    'CandleConfirmation_USDJPY_H1_M5': 1009,  # Retired; retain identity for existing broker trades.
     'CandleConfirmation_GBPUSD_H1_M5': 1010,
     'NYIndexOpeningDrive': 1011,
 }

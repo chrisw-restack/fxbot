@@ -187,7 +187,8 @@ class TradeJournal:
             rr_ratio = abs(take_profit - signal.entry_price) / risk
 
         context = dict(context or {})
-        context.update({key: getattr(signal, key) for key in ('setup_id', 'attempt_id') if getattr(signal, key, None)})
+        context.update({key: getattr(signal, key) for key in ('setup_id', 'attempt_id', 'min_stop_distance')
+                        if getattr(signal, key, None) is not None})
         return {
             'journal_time_utc': _utc_now_iso(),
             'symbol': signal.symbol,

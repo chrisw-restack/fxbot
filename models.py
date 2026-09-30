@@ -27,6 +27,7 @@ class Signal:
     entry_timeframe: str | None = None  # set automatically by engine from the bar that generated the signal
     setup_id: str | None = None
     attempt_id: str | None = None
+    min_stop_distance: float | None = None  # optional price distance required at executable entry
 
 
 @dataclass
@@ -46,3 +47,4 @@ class EnrichedSignal:
     risk_budget: float | None = None  # maximum account-currency loss at submitted SL
     setup_id: str | None = None
     attempt_id: str | None = None
+    min_stop_distance: float | None = None

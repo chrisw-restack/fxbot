@@ -3,7 +3,7 @@ from typing import Callable
 
 import config
 from models import Signal, EnrichedSignal
-from risk.validation import positive, valid_levels, floor_volume
+from risk.validation import positive, valid_levels, valid_stop_distance, floor_volume
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +32,8 @@ class RiskManager:
         entry = self._entry_price(signal) if self._entry_price else signal.entry_price
         sl = signal.stop_loss
         if not valid_levels(signal.direction, entry, sl):
+            return None
+        if not valid_stop_distance(entry, sl, signal.min_stop_distance):
             return None
         sl_pips = abs(entry - sl) / pip_size
         if sl_pips + 1e-10 < config.MIN_SL_PIPS:
@@ -76,4 +78,5 @@ class RiskManager:
             entry_timeframe=signal.entry_timeframe, tp_locked=tp_locked,
             risk_budget=budget,
             setup_id=signal.setup_id, attempt_id=signal.attempt_id,
+            min_stop_distance=signal.min_stop_distance,
         )

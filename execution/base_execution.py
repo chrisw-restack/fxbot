@@ -20,6 +20,7 @@ class BaseExecution(ABC):
         risk_budget: float | None = None,
         setup_id: str | None = None,
         attempt_id: str | None = None,
+        min_stop_distance: float | None = None,
     ) -> int:
         """Place an order. Returns ticket ID (> 0) on success, 0 on failure."""
         ...

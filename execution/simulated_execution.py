@@ -5,7 +5,7 @@ import config
 from execution.base_execution import BaseExecution
 from models import BarEvent
 from data.historical_loader import bar_close_time
-from risk.validation import valid_levels, floor_volume
+from risk.validation import valid_levels, valid_stop_distance, floor_volume
 
 logger = logging.getLogger(__name__)
 
@@ -65,8 +65,10 @@ class SimulatedExecution(BaseExecution):
         risk_budget: float | None = None,
         setup_id: str | None = None,
         attempt_id: str | None = None,
+        min_stop_distance: float | None = None,
     ) -> int:
-        if not valid_levels(direction, entry_price, sl, tp, config.MIN_RR_RATIO):
+        if not valid_levels(direction, entry_price, sl, tp, config.MIN_RR_RATIO) or not valid_stop_distance(
+            entry_price, sl, min_stop_distance):
             return 0
         ticket = self._next_ticket
         self._next_ticket += 1
@@ -75,6 +77,7 @@ class SimulatedExecution(BaseExecution):
             'origin_order_ticket': ticket,
             'setup_id': setup_id,
             'attempt_id': attempt_id,
+            'min_stop_distance': min_stop_distance,
             'submitted_tp': tp,
             'symbol':          symbol,
             'direction':       direction,
@@ -178,6 +181,10 @@ class SimulatedExecution(BaseExecution):
                 fill = opening if at_open and subtype else entry
             pos['entry_price'] = fill
             if pos['order_type'] == 'MARKET':
+                if not valid_stop_distance(fill, pos['sl'], pos.get('min_stop_distance')):
+                    pos['rejection_reason'] = 'minimum_stop_distance_at_fill'
+                    self._rejected_orders.append(self._pending.pop(ticket))
+                    continue
                 self._recalc_tp(pos)
                 budget = pos.get('risk_budget')
                 if budget is not None and valid_levels(pos['direction'], fill, pos['sl']):
