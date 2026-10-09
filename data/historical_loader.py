@@ -53,6 +53,13 @@ def load_csv(
 
     metadata_path = Path(str(filepath) + '.meta.json')
     metadata = json.loads(metadata_path.read_text(encoding='utf-8')) if metadata_path.exists() else {}
+    if (metadata.get('research_status') == 'raw_unreviewed' or
+            metadata.get('provider') in ('Exness', 'XM') and
+            metadata.get('research_status') != 'approved_native_resolution'):
+        raise ValueError('Raw broker history has not passed its timeframe-resolution audit')
+    if metadata.get('provider') == 'XM' or any(part.lower().startswith(('mt5_xm', 'xm_processed', 'xm_inspection')) for part in Path(filepath).parts[:-1]):
+        from data.xm_provenance import validate_xm_output
+        validate_xm_output(filepath, metadata, start=start, end=end, time_basis=time_basis)
     if any(part.lower().startswith('histdata') for part in Path(filepath).parts[:-1]) or metadata.get('provider') == 'HistData':
         from data.histdata_provenance import validate_output_metadata
         validate_output_metadata(filepath, metadata)
@@ -105,7 +112,7 @@ def load_csv(
         raise ValueError(f'Unknown time_basis {basis!r} for {filepath}')
     is_utc_normalized_mt5 = (
         'mt5_icmarkets_utc' in path_parts or basis == 'icmarkets'
-        or metadata.get('session_origin') == 'icmarkets'
+        or metadata.get('session_origin') in ('icmarkets', 'exness', 'xm')
     )
     if df['time'].dt.tz is not None:
         if basis != 'utc':
@@ -115,6 +122,7 @@ def load_csv(
         df['time'] = df['time'].apply(lambda t: _server_to_utc(t.to_pydatetime()))
     logger.info('CSV %s time basis: %s', filename, basis)
 
+    # Preserve native broker D1 sessions, including Exness's short Sunday bar.
     # Filter out weekend D1 bars from non-MT5 data.
     # Dukascopy generates D1 bars for Saturdays/Sundays with minimal volume.
     # UTC-normalized IC Markets D1 candles are different: the broker's Monday

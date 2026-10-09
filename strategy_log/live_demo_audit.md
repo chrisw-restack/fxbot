@@ -2,6 +2,115 @@
 
 This file audits the IC Markets demo account. No entry in this file authorizes real-money trading. Older dated sections may use `live` to refer to the MT5 runner or `live_config.py`; current deployment status is DEMO.
 
+## IMS Reversal XM comparison, 2026-10-02
+
+Completed 36 local fixed-parameter EURUSD replays on audited XM, Dukascopy,
+repaired HistData, and IC Markets files. All sources share the valid XM replay
+boundaries and 180-day warmups; each segment starts with fresh strategy and
+account state. The protected forward period after 14 July 2026 stays excluded.
+
+With a common 1.1-pip spread and zero commission on all feeds, matched 2020-2025
+segments return XM +11.55R, Dukascopy +15.74R, HistData +40.64R, and IC Markets
++30.59R. XM has 97 trades, PF 1.16, 16.26R maximum within-segment drawdown, and
+a 14-trade losing streak. Its three largest historical trades account for more
+than its total profit. XM loses all nine trades in the previously viewed 2026
+stress period, leaving +2.55R when the independent historical and recent results
+are summed. HistData's higher result is not independent evidence because common
+prices nearly match Dukascopy while quote coverage differs.
+
+This does not establish a convincing transferable edge. No DEMO parameters,
+membership, risk, credentials, account, or broker changed. No MT5 calls, parameter
+selection, migration, real-money promotion, commit, or push occurred.
+See `strategy_log/ims_reversal_xm_comparison_20261002.md` for identical-cost
+comparisons, the usual raw-account cost scenario, dates, and limitations.
+
+## XM historical data preparation, 2026-10-01
+
+Audited all 55 raw XM files and prepared bounded UTC research files under
+`output/xm_processed_20261001/history/`. Raw inputs remain unchanged. Every
+excluded row retains its server timestamp and exclusion flags. Gap inventories
+distinguish closure candidates, overnight pauses, small quote gaps, and long
+unexplained gaps. Native parent candles are compared against available M5 prices.
+The loader enforces output/sidecar hashes and rejects replay across excluded
+intervals or outside measured clock coverage. This does not change the IC Markets
+DEMO suite, risk, or trading account.
+
+The recent accepted windows align with European UTC+2/+3. Older EURUSD evidence
+is materially different: most verified 2012/2013 windows fit UTC+1/+2, and June
+2013 contains mixed daily offsets. All pre-2016 rows remain quarantined pending
+per-instrument clock reconstruction. Daily/hourly substitutes in lower-timeframe
+files and conservative coarse-month exclusions are also held out. Zero recorded
+volume and zero historical spread must not be treated as verified absence of
+activity or free trading.
+
+Use independent replay segments with fresh state and warmup. D1/H4 candles whose
+UTC duration changes at DST are excluded because the current replay assumes
+fixed durations. No interpolation, strategy replay, parameter selection, broker
+migration, real-money promotion, commit, or push occurred. Detailed findings and
+reproduction steps are in `strategy_log/xm_data_audit_20261001.md`.
+
+## XM research demo data inspection, 2026-10-01
+
+Connected explicitly to the user's separate XM Global MT5 installation and
+verified account 318785505 on `XMGlobal-MT5 7`, USD $10,000 virtual balance,
+hedging mode. Collected the Ultra Low `#` FX instruments and `US100Cash#`
+for Nasdaq cash. The IC Markets strategy suite, credentials, and risk are
+unchanged. No orders, cancellations, preflights, or strategy replays occurred.
+
+Saved 55 raw timeframe files containing 16,212,221 records through the
+conservative July 14 research boundary. M5/M15 regularly populated history
+starts in 2008 for EURUSD, GBPUSD, USDJPY, USDCAD, USDCHF, and CADJPY;
+late September 2018 for AUDUSD, NZDUSD, EURAUD, and GBPCAD; and late October
+2016 for Nasdaq cash. Older daily/hourly substitutes and several coarse
+2018 intervals remain unsuitable for lower-timeframe replay.
+
+The saved 100,000,000 chart limit initially left existing timeframe caches
+at about 100,000 bars. After confirming zero positions/orders, restarted only
+XM gracefully. An identical EURUSD M5 2010 probe changed from no rows to
+1,368 five-minute records. The final snapshot follows that restart.
+
+Native UTC Dukascopy comparisons identify European DST in verified XM
+windows. Initial IC Markets reference comparisons gave a misleading clock
+interpretation; direct native-UTC checks show the existing IC Markets
+EURUSD/GBPUSD/USDJPY export is one hour early in sampled March and
+October-November 2016 and March 2017 disagreement weeks. Later sampled
+periods align. Audit historical IC Markets conversion before treating old
+broker session results as settled; no existing data/result was altered here.
+XM years before available UTC references also remain unverified.
+
+Keep XM raw files outside approved datasets. The loader rejects unreviewed
+XM exports and preserves native Sunday sessions for explicitly reviewed UTC
+broker files. Two later quote samples document widening around 12:30 UTC
+and calmer conditions afterward; they do not establish full execution costs.
+No broker migration or parameter selection is authorized by this inspection.
+All 249 tests pass. See [the complete XM report](xm_inspection_20261001.md).
+
+## Exness demo data inspection, 2026-10-01
+
+At the user's request, connected explicitly to the separate Exness terminal
+and verified demo account 81753094 on `Exness-MT5Trial10`, USD, hedging mode.
+The symbols are in the Raw groups. No trades or account switching occurred;
+the current IC Markets strategy configuration, `.env`, and risk remain unchanged.
+
+Downloaded 55 M5/M15/H1/H4/D1 files across eleven instruments through July 14,
+2026, totaling 6,086,931 rows. Older lower-timeframe records contain copied
+daily/hourly candles. A fresh EURUSD M5 probe in January 2019 returns only five
+daily records over five days, while July 2021 returns a normal five-minute grid.
+Regularly populated M5/M15 history begins around July 2021 on this server.
+This improves our USDCAD coverage and supplies the missing crosses, but does
+not exceed our IC Markets intraday history for most existing instruments.
+
+Raw snapshots remain outside approved historical data. The loader rejects
+unreviewed Exness exports and preserves Sunday D1 candles in reviewed broker
+data. A 60-second current spread sample is promising but does not establish
+NY-session, rollover, commission or realized execution costs. USTEC's 0.05
+minimum lot and displayed long swap require attention on the $500 account.
+
+No strategy performance replay, optimization or broker migration was done.
+The production feed and execution history conversion still assume IC Markets
+server time; they must not be pointed at Exness unchanged. All 240 tests pass.
+See the [connection and coverage report](exness_inspection_20261001.md).
+
 ## Candle user decision and recovery research, 2026-09-30
 
 The user explicitly chose to keep GBPUSD DEMO enabled and remove USDJPY

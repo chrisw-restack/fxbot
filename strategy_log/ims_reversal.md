@@ -4,6 +4,46 @@
 
 The old eight-symbol proxy-data configuration validated STRONG but failed to transfer cleanly to IC Markets. Since 2026-07-15, `live_config.py` has run a frozen EURUSD-only forward trial. Do not tune against data after the 2026-07-14 cutoff. The strategy is not approved for real-money live trading.
 
+## 2026-10-02 frozen XM comparison
+
+Completed 36 sequential replays using the current EURUSD configuration and
+audited XM M5/M15/H4 intervals. All four sources use identical segment bounds,
+independent account/state resets, and 180-day warmups. No parameter search or
+post-14-July-2026 replay occurred. DEMO membership, parameters, and risk remain
+unchanged.
+
+| Comparable 2020-2025, 1.1-pip spread / zero commission on every feed | Trades | Win % | Net R | PF | R/trade | Max segment DD R | W/L streak |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| XM | 97 | 23.7 | +11.55 | 1.16 | +0.119 | 16.26 | 3/14 |
+| Dukascopy | 92 | 26.1 | +15.74 | 1.23 | +0.171 | 14.74 | 2/13 |
+| Repaired HistData | 84 | 31.0 | +40.64 | 1.72 | +0.484 | 13.00 | 2/13 |
+| IC Markets | 93 | 25.8 | +30.59 | 1.44 | +0.329 | 23.90 | 3/20 |
+
+These are common research costs, not each broker's actual historical costs.
+The XM quote sample supports testing that spread but does not establish a full
+historical average. Using the usual 0.1-pip spread and $7/lot commission instead
+gives XM +14.89R, Dukascopy +8.99R, HistData +34.62R, and IC Markets +27.60R.
+Earlier continuous results cover different days and state and are not direct
+comparisons. Maximum drawdown and streaks above are measured within segments.
+
+At 1.1 pip / zero commission, XM loses nine of nine trades in the previously
+viewed January-to-14-July-2026 period, totaling -9.00R. The combined independent
+XM runs sum to +2.55R across 106 trades. Removing the three largest historical
+XM trades leaves -12.27R. HistData is missing 10,375 reference M5 candles in the
+matched historical windows but matches 99.979% of common Dukascopy OHLC, so its
+higher profit is not independent confirmation. These results leave a convincing
+transferable edge unproven. See [the full comparison](ims_reversal_xm_comparison_20261002.md)
+for both cost scenarios, valid dates, concentration, and reproduction.
+
+Two further fixed-parameter controls diagnose the variance. Removing timestamps
+absent from HistData while retaining all other Dukascopy OHLC flips 2023 from
+-5.87R to +11.02R, versus actual HistData +19.03R. Rebuilding only Dukascopy H4
+from its own M5 prices on XM's observed H4 openings flips the viewed 2026 period
+from +3.23R to -10.00R. Missing bars and H4 construction materially affect this
+strategy; the profit range is not merely harmless broker quote noise. No engine
+bug explaining the overall variance was established. See [the focused diagnosis](ims_reversal_feed_variance_20261002.md)
+for control limitations and the proposed common-grid comparison.
+
 ## 2026-09-22 performance rerun on repaired HistData
 
 Completed 25 sequential EURUSD replays with fixed parameters and the protected
